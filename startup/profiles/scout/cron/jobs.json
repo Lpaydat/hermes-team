@@ -1,0 +1,50 @@
+{
+  "jobs": [
+    {
+      "id": "7e61dcc3ccdc",
+      "name": "Daily AI Research Scout",
+      "prompt": "Run the daily AI scout.\n\nFirst, check the guard script output above.\n\n- If `STATUS:ALREADY_SCOUTED` \u2192 respond \"Already scouted for [date]. Skipping.\" and STOP. Do nothing else.\n- If `STATUS:NEEDS_SCOUTING` \u2192 run the full scout:\n\n1. Load skill: `research-scout`.\n2. `export WIKI_PATH=\"$HOME/vault\"`.\n3. Read `~/vault/meta/sources.md` for the source registry.\n4. Execute the scout workflow (6 phases from the skill):\n   - **Fetch**: Poll all tiered sources (arXiv, HuggingFace, blog RSS, HN, GitHub trending, Reddit, YouTube). Load `references/operational-details.md` for endpoints.\n   - **Dedup**: Check every item against SQLite with `scout-db.py dedup-check`.\n   - **Triage**: Sort into deep-research / notable / signal / drop.\n   - **File kanban tasks**: \n     (a) Per-item deep-research tasks for breakthrough items.\n     (b) Topic-level deep-research tasks when you spot high-value themes (\u22653 sources converging on same concept, trending topics with no wiki note yet, or field shifts that will matter for weeks). This is your own judgment call \u2014 you decide what's worth deep research for the field.\n     All tasks: `kanban_create(title=\"...\", assignee=\"researcher\", body=\"...\")`.\n   - **Catalog** notable + signal items in SQLite.\n   - **Deliver**: Format digest per `references/digest-format.md`, send to Telegram.\n   - **Discover**: Add new sources, prune stale ones.\n5. Write the marker: `date +%Y-%m-%d > ~/vault/meta/.last-scout`.\n\nIMPORTANT: You are the SCOUT. You do NOT read papers fully, you do NOT write Obsidian wiki notes, you do NOT do deep analysis. You scan, triage, catalog, file tasks (both per-item and topic-level), and deliver. The researcher profile handles the deep work.\n\nYou have editorial judgment \u2014 if you believe a topic is high-value for the field and worth deep research, file a task for it even if no single item individually meets the deep-research threshold. Your job is to spot patterns and gaps, not just react to individual items.\n\nFocus: Agentic AI + Generative AI. Adapt topics as the field evolves.",
+      "skills": [
+        "research-scout",
+        "arxiv",
+        "blogwatcher",
+        "messaging-delivery"
+      ],
+      "skill": "research-scout",
+      "model": "deepseek-v4-flash",
+      "provider": "deepseek",
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "scout-guard.sh",
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 1,4,7,10,13,16,19,22 * * *",
+        "display": "30 1,4,7,10,13,16,19,22 * * *"
+      },
+      "schedule_display": "30 1,4,7,10,13,16,19,22 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 39
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-01T21:08:04.640008+07:00",
+      "next_run_at": "2026-07-08T04:30:00+07:00",
+      "last_run_at": "2026-07-08T01:30:14.755751+07:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: Provider 'deepseek' is set in config.yaml but no API key was found. Set the DEEPSEEK_API_KEY environment variable, or switch to a different provider with `hermes model`.",
+      "last_delivery_error": null,
+      "deliver": "telegram",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    }
+  ],
+  "updated_at": "2026-07-08T01:30:14.756317+07:00"
+}

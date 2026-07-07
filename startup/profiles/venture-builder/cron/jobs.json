@@ -1,0 +1,137 @@
+{
+  "jobs": [
+    {
+      "id": "9493ebf6c4e2",
+      "name": "Daily Demand Signal Scan",
+      "prompt": "You are the venture-builder running a daily demand signal scan. This is Stage 1 of your kill-gate pipeline.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:ALREADY_SCANNED \u2192 exit immediately. Return \"Already scanned for [DATE].\" and stop.\n- If STATUS:NEEDS_SCANNING \u2192 run the full scan workflow below.\n\n== SCAN WORKFLOW ==\n\nQuickly scan key communities for fresh complaints, unmet needs, and willingness-to-pay signals. This is a LIGHT pass \u2014 10-15 minutes of targeted searching, not an exhaustive deep dive. Append findings to the signal buffer.\n\nScan these sources via web_search and browser tools:\n- Reddit: r/SideProject, r/Entrepreneur, r/SaaS, r/smallbusiness, r/startups, r/IndieBusiness\n- Hacker News: front page + \"Ask HN\" posts from the last 24h\n- Product Hunt: recent launches and their comment sections\n- X/Twitter: search for \"I wish there was\", \"I'd pay for\", \"is there a tool for\"\n\nFor each signal found, capture: source URL, quote (exact words), platform, topic/category, pain type (complaint / feature-request / workaround / willingness-to-pay).\n\nAppend all findings to ~/vault/ventures/signals/daily-scan.md:\n\n```markdown\n## [YYYY-MM-DD]\n\n### Signal: [Brief description]\n- **Source:** [URL]\n- **Platform:** [Reddit/HN/X/etc]\n- **Quote:** \"[exact words]\"\n- **Category:** [developer-tools/saas/creator-economy/productivity/etc]\n- **Pain type:** [complaint / feature-request / workaround / willingness-to-pay]\n```\n\nDo NOT score or filter \u2014 just capture raw signals. The pipeline cycle handles scoring.\n\nQuality over quantity \u2014 a single \"I'd pay $50/mo for...\" signal is worth 20 vague complaints. Aim for 5-15 new signals per day. If zero actionable signals, append \"## [DATE] \u2014 No significant signals today.\" and finish.\n\n== COMPLETION ==\n\nAfter appending findings, update the guard marker:\n```bash\necho \"$(date +%Y-%m-%d)\" > ~/vault/ventures/.last-scan\n```\n\nDo not deliver any output. This runs silent \u2014 the signal buffer is read by the pipeline cron.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "zai",
+      "model_snapshot": "glm-5.2",
+      "base_url": null,
+      "script": "scan-guard.sh",
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 */3 * * *",
+        "display": "30 */3 * * *"
+      },
+      "schedule_display": "30 */3 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 35
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-03T13:08:22.790689+07:00",
+      "next_run_at": "2026-07-08T03:30:00+07:00",
+      "last_run_at": "2026-07-08T00:41:43.431478+07:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "web",
+        "terminal",
+        "file"
+      ],
+      "workdir": "/home/lpaydat/.hermes/profiles/venture-builder",
+      "fire_claim": null
+    },
+    {
+      "id": "a9b7d447f13e",
+      "name": "RequestHunt Weekly Deep Scan",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "scan-requesthunt.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 5 * * 1,3,5",
+        "display": "0 5 * * 1,3,5"
+      },
+      "schedule_display": "0 5 * * 1,3,5",
+      "repeat": {
+        "times": null,
+        "completed": 1
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-03T13:08:28.575542+07:00",
+      "next_run_at": "2026-07-08T05:00:00+07:00",
+      "last_run_at": "2026-07-06T05:00:28.299688+07:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": "/home/lpaydat/.hermes/profiles/venture-builder",
+      "fire_claim": null
+    },
+    {
+      "id": "7872dbc93ab1",
+      "name": "Pipeline + Build Cycle",
+      "prompt": "You are the venture-builder running the pipeline + build cycle. Load your venture-pipeline and lean-startup skills and follow them.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:RECENT \u2192 CHECK URGENT conditions first (see below). If none, skip.\n- If STATUS:DUE \u2192 run the full pipeline cycle below.\n\n== URGENT CONDITIONS (override the cooldown) ==\n\nEven if the pipeline ran recently, you MUST run if either is true:\n1. Any completed build tasks on the kanban board (product-owner/tech-lead finished work that needs review/verification)\n2. Any gate feedback comments on your tasks (the human responded to a product review and you need to process it)\n\nTo check: use kanban_list to look for completed tasks assigned to product-owner/tech-lead, and read comments on your tasks.\n\nIf no urgent conditions and STATUS:RECENT \u2192 exit with \"Pipeline ran [N]d ago, no urgent work. Skipping.\" and stop.\n\n== FULL PIPELINE CYCLE (when DUE) ==\n\nPHASE 1: INGEST SIGNALS\nRead the signal buffer:\n- ~/vault/ventures/signals/daily-scan.md (daily agent findings)\n- ~/vault/ventures/signals/requesthunt_*.json (weekly deep scan dumps)\n- Any signals from scout's output on the kanban board\nCompile all unprocessed signals into a working list.\n\nPHASE 2: FILTER & RANK (Kill 90%)\nScore every signal on your 5-dimension rubric (pain intensity, frequency, willingness-to-pay, competition density, \"why now\"). Apply kill rules:\n- Score < 15/25 \u2192 KILL\n- Pain intensity \u2264 2 \u2192 KILL\n- No WTP path \u2192 KILL\n- No \"why now\" \u2192 KILL\nRecord killed ideas in ~/vault/ventures/killed-ideas.md.\n\nPHASE 3: DEEP DIVE SURVIVORS\nFor each survivor: lean canvas, assumption map, riskiest assumption, experiment design, why-now defense, monetization path. Use lean-startup and startup-validator skills.\nKill if: no defensible why-now, no monetization path, unfalsifiable riskiest assumption, too niche, too broad.\n\nPHASE 4: BUILD ORCHESTRATION\nFor validated survivors with no build in progress:\n1. Design the project spec (use templates/project-spec.md from venture-pipeline skill)\n2. Create kanban tasks assigned to product-owner and tech-lead for the MVP build\n3. Link tasks as dependencies (spec \u2192 build \u2192 test)\n4. Record the product in ~/vault/ventures/portfolio.md\n\nFor products already in the build loop:\n1. Check kanban for completed build tasks from product-owner/tech-lead\n2. If build complete: verify deliverable exists (URL/repo/artifact path)\n3. If gate feedback received: translate into revised kanban tasks\n4. Create follow-up tasks for the next iteration\n\nPHASE 5: GATE NOTIFICATION\nThe ONLY times you deliver output:\nA) PRODUCT READY FOR REVIEW (build complete and testable):\n```\n# \ud83d\ude80 Product Ready for Review \u2014 [Idea name]\n**Live URL / repo / artifact:** [Where to interact with it]\n## What I built (this iteration)\n[What's working right now]\n## What changed since last review\n[If iteration 2+]\n## What I need you to test\n[Specific hypothesis this tests]\n## Known gaps / intentionally out of scope\n## My ask\n[Specific testing instruction]\n```\nB) HITL BLOCKER (need human judgment):\n```\n# \u26a0\ufe0f Need Your Input \u2014 [Issue]\n**Context:** [What's blocking you]\n**Why I can't decide:** [Reason]\n**My preliminary take:** [What you'd do without response]\n**Options:** [A/B/C]\n```\nC) SILENT \u2014 if nothing ready and no blocker \u2192 EMPTY output (nothing to deliver).\n\n== COMPLETION ==\nAfter running the full cycle, update the guard marker:\n```bash\necho \"$(date +%s)\" > ~/vault/ventures/.last-pipeline\n```\n\n== RULES ==\n- Never deliver a pre-build digest. Build first, then show the product.\n- Never show raw ideas or unfinished work. Only built products or blockers.\n- Never spin silently \u2014 surface blockers.\n- Label confidence: [Analysis] / [Judgment] / [Speculation].\n- Keep ~/vault/ventures/portfolio.md updated.\n- Be brutal in the kill-gate. 90% should die at Phase 2.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "zai",
+      "model_snapshot": "glm-5.2",
+      "base_url": null,
+      "script": "pipeline-guard.sh",
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 2,8,14,20 * * *",
+        "display": "0 2,8,14,20 * * *"
+      },
+      "schedule_display": "0 2,8,14,20 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 18
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-03T13:08:28.935656+07:00",
+      "next_run_at": "2026-07-08T08:00:00+07:00",
+      "last_run_at": "2026-07-07T20:22:35.519645+07:00",
+      "last_status": "error",
+      "last_error": "TimeoutError: Cron job 'Pipeline + Build Cycle' idle for 603s (limit 600s) \u2014 last activity: executing tool: process",
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "web",
+        "terminal",
+        "file",
+        "kanban",
+        "delegation"
+      ],
+      "workdir": "/home/lpaydat/.hermes/profiles/venture-builder",
+      "fire_claim": null
+    }
+  ],
+  "updated_at": "2026-07-08T02:00:58.127697+07:00"
+}

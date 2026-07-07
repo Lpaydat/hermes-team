@@ -1,0 +1,126 @@
+{
+  "jobs": [
+    {
+      "id": "adc76c798cd4",
+      "name": "Weekly Sprint Report",
+      "prompt": "You are the Weekly Sprint Steward. Produce a concise weekly briefing across all active projects listed in ~/.hermes-teams/startup/profiles/product-owner/config/active-projects.json.\n\nIf active_projects is empty, do nothing \u2014 exit silently.\n\nFor each active project:\n1. Read .driver/goal.md, .driver/progress.md, .driver/gaps.md\n2. Check git log --since=\"7 days ago\" for recent work\n3. Check bd list for open/closed issues this week\n4. Summarize: what was done, what's in progress, what's next, any blockers\n\nWrite the full report to ~/.hermes-teams/startup/profiles/product-owner/reports/sprint-{YYYY-MM-DD}.md\n\nDo NOT deliver to Discord or any messaging platform. The report is a local file only.",
+      "skills": [
+        "project-discovery"
+      ],
+      "skill": "project-discovery",
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "zai",
+      "model_snapshot": "glm-5.2",
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 19 * * 0",
+        "display": "0 19 * * 0"
+      },
+      "schedule_display": "0 19 * * 0",
+      "repeat": {
+        "times": null,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-07T21:32:47.119397+07:00",
+      "next_run_at": "2026-07-12T19:00:00+07:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
+    },
+    {
+      "id": "5421d37938f5",
+      "name": "Task Hygiene Watchdog",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "hygiene-guard.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 240,
+        "display": "every 240m"
+      },
+      "schedule_display": "every 240m",
+      "repeat": {
+        "times": null,
+        "completed": 1
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-07T21:34:18.270864+07:00",
+      "next_run_at": "2026-07-08T05:34:29.030379+07:00",
+      "last_run_at": "2026-07-08T01:34:29.030379+07:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "5838e048ae7f",
+      "name": "Dev Workflow Engine \u2014 bead-sync + dispatch + scanner",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "workflow-engine.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "* * * * *",
+        "display": "* * * * *"
+      },
+      "schedule_display": "* * * * *",
+      "repeat": {
+        "times": null,
+        "completed": 263
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-07T21:44:57.246903+07:00",
+      "next_run_at": "2026-07-08T02:08:00+07:00",
+      "last_run_at": "2026-07-08T02:07:10.255700+07:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    }
+  ],
+  "updated_at": "2026-07-08T02:07:10.256009+07:00"
+}

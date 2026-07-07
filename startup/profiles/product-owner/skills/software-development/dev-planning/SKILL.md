@@ -66,7 +66,6 @@ If it stays `open`, `bd ready` shows it as dispatchable — tech-lead tries to "
 - Use `bd link`, not `--deps`.
 - The other party reviews at two points: after PRD (step 2) and after beads (step 3).
 - Never create tech-lead/dev/verifier cards — dispatch happens via the workflow engine cron.
-- When the user has already given a clear instruction, execute it. Do not ask "want me to do X?" — they already told you to.
 
 ## Reference
 

@@ -73,4 +73,3 @@ Dispatched N bead(s):
 - `--idempotency-key "bead-<bead-id>"` is the dedup — always include it.
 - `--workspace worktree:<path>` gives each card its own `.worktrees/<task-id>/` — required for parallel execution.
 - Never create dev/verifier cards — tech-lead does that via `kanban_delegate`.
-- When the user has already given a clear instruction, execute it. Do not ask "want me to do X?" — they already told you to.

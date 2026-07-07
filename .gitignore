@@ -85,3 +85,14 @@ shared-skills/ponytail
 startup/profiles/*/skills/mattpocock
 startup/profiles/*/skills/ponytail
 startup/hermes-agent
+
+# Re-include: cron jobs
+!startup/profiles/*/cron/
+!startup/profiles/*/cron/**
+
+# Exclude cron runtime state (keep only jobs.json)
+startup/profiles/*/cron/.jobs.lock
+startup/profiles/*/cron/.tick.lock
+startup/profiles/*/cron/ticker_*
+startup/profiles/*/cron/output/
+startup/profiles/*/cron/output/**
