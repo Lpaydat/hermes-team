@@ -1,0 +1,64 @@
+model:
+  default: glm-5.2
+  provider: zai
+  base_url: https://api.z.ai/api/coding/paas/v4
+  context_length: 1000000
+  rate_limit_delay: 30
+toolsets:
+- hermes-cli
+- kanban
+kanban:
+  max_in_progress_per_profile: 3
+  dispatch_stale_timeout_seconds: 14400
+skills:
+  disabled:
+  - ask-matt
+  - codebase-design
+  - decision-mapping
+  - design-an-interface
+  - diagnosing-bugs
+  - domain-modeling
+  - edit-article
+  - git-guardrails-claude-code
+  - handoff
+  - implement
+  - improve-codebase-architecture
+  - migrate-to-shoehorn
+  - ponytail
+  - ponytail-audit
+  - ponytail-debt
+  - ponytail-gain
+  - ponytail-help
+  - ponytail-review
+  - prototype
+  - qa
+  - request-refactor-plan
+  - resolving-merge-conflicts
+  - review
+  - scaffold-exercises
+  - setup-matt-pocock-skills
+  - setup-pre-commit
+  - tdd
+  - teach
+  - to-issues
+  - to-prd
+  - triage
+  - ubiquitous-language
+  - wizard
+  - writing-beats
+  - writing-fragments
+  - writing-shape
+  - find-skills
+  - grill-me
+  - grill-with-docs
+  - grilling
+  - loop-me
+  - obsidian-vault
+  - writing-great-skills
+_config_version: 33
+agent:
+  api_max_retries: 10  # Z.AI overload patience — unlocks 30/60/90/120s long-backoff ladder
+onboarding:
+  seen:
+    tool_progress_prompt: true
+fallback_model: []

@@ -1,0 +1,124 @@
+# Kanban-Native Loops: The Card-as-Loop-State-Machine
+
+When the generator and evaluator are separate Hermes profiles (not in-session sub-agents or harness subprocesses), the five-phase loop still runs — but the Iterate mechanics change fundamentally. This document covers how.
+
+> Status: architectural pattern validated through design discussion. Not yet battle-tested in production. Treat as provisional.
+
+## The async iterate problem
+
+In harness-direct mode, the Iterate phase works because everything is synchronous and in-session:
+
+1. Tech-lead delegates to harness → output returns to tech-lead's context
+2. Tech-lead reads the raw transcript, finds where judgment diverged
+3. Tech-lead re-delegates with surgical, evidence-based feedback
+
+In kanban-native mode, this breaks:
+
+- Tech-lead creates a card and moves on. Developer picks it up on the next dispatch tick.
+- Developer works in ITS OWN session. The execution trace lives there, not in tech-lead's context.
+- When validation fails, tech-lead can't read the developer's trace — it's in an ephemeral session.
+
+Without the trace, iteration becomes "create another card with generic feedback" — the Retry Blindness pitfall.
+
+## The solution: card-as-loop-state-machine
+
+The loop lives in the CARD, not in tech-lead's session. The card carries everything the participants need:
+
+### What's embedded in the card
+
+- **Contract**: testable assertions (the same contract.md from Plan phase)
+- **Evals**: structured assertions about behavior
+- **Bead reference**: link to the source bead (card references it, doesn't copy criteria)
+- **Accumulated comments**: the iteration memory — developer reads prior findings before each attempt
+
+### The flow
+
+```
+bead ready
+  → watchdog → tech-lead task
+  → tech-lead (in-session): Discover + Plan
+    → contract, evals, decomposition
+    → create developer card with contract + evals embedded
+    → create reviewer card (parent: developer card)
+  → developer works card, commits
+  → reviewer validates against contract, files findings as comment
+    → pass? → bead closed, done
+    → fail? → card back to developer with specific findings (trace-evidenced)
+    → 3 failures? → escalate to tech-lead
+      → tech-lead reads accumulated comments, re-contracts or abandons
+```
+
+### Who plays which role
+
+| Role | In harness-direct | In kanban-native |
+|------|------------------|-----------------|
+| Planner | Tech-lead (in-session) | Tech-lead (in-session, at card creation) |
+| Generator | Harness subprocess | Developer profile (own session) |
+| Evaluator | Review sub-agent (delegate_task) | Reviewer profile (own session) |
+| Trace-reader | Tech-lead reads raw transcript | Reviewer reads committed output, files evidence-based findings |
+
+### How trace-first iteration survives
+
+The reviewer doesn't see the developer's reasoning process — only the committed output (git diff, files). It reads that output adversarially against the contract and files findings with line numbers and evidence. These findings ARE the trace-equivalent: specific, evidenced, actionable.
+
+The developer reads prior findings (card comments) before starting each iteration. This is the external memory that replaces the lost session context.
+
+### Spec gaps vs code bugs
+
+If the reviewer identifies a spec gap (not just a code bug), the card blocks for tech-lead. Developer and reviewer cannot re-contract the user. Tech-lead picks it up, reads accumulated comments, and decides: update the contract, re-delegate, or escalate to user.
+
+### Retry cap and escalation
+
+Retry count tracked on the card (via comments or metadata). At 3 failures on the same issue, card escalates to tech-lead with all accumulated comments as context. Tech-lead applies the re-contract rule: is this a spec gap, an agent capability issue, or a harness problem?
+
+## Beads/kanban ownership contract
+
+Two task systems covering overlapping scope will drift, duplicate, and confuse. This contract prevents that.
+
+| System | Layer | Source of truth for |
+|--------|-------|-------------------|
+| Beads | Planning | WHAT: scope, acceptance criteria, ordering, milestones |
+| Kanban | Execution | WHO and WHEN: which agent, card lifecycle, handoffs |
+
+### Rules
+
+1. **One bead = one kanban card** (or one parent card + child review card). Never many-to-many.
+2. **Card body REFERENCES the bead** — it doesn't copy acceptance criteria. Developer reads from beads.
+3. **Only the completion boundary writes back to beads.** No mid-work status syncing.
+4. **Beads-watchdog is the only beads→kanban bridge.** Nobody creates kanban cards from beads ad-hoc.
+5. **Beads reflects committed scope, not real-time execution status.** Kanban reflects real-time execution. Different purposes.
+
+### The boundary problem
+
+When a developer card gets blocked, or review fails and work goes back, the kanban card lifecycle is complex (blocked → unblocked → re-review). Beads doesn't model this — it has simple states. Accept that beads becomes stale during active work and kanban is the granular execution record. This is fine as long as nobody expects beads to reflect real-time status.
+
+## When to use kanban-native vs harness-direct
+
+| Factor | Harness-direct | Kanban-native |
+|--------|---------------|--------------|
+| Iterate speed | Seconds per round | Minutes to tens of minutes per round |
+| Context cleanliness | Tech-lead sees all output | Tech-lead context stays clean |
+| Durability | Ephemeral (dies with session) | Durable (kanban cards persist) |
+| Auditability | Manual (journal entries) | Automatic (card lifecycle) |
+| Parallelism | Limited by tech-lead context | Multiple developer cards concurrent |
+| Persistent memory | None (harness starts from zero) | Developer accumulates knowledge |
+| Vendor coding loops | Preserved | Lost (unless developer invokes harness as tool) |
+
+**Default**: harness-direct for tight dev loops. Switch to kanban-native when the work needs durable history, parallelism, or persistent memory across sessions.
+
+## Hybrid: developer profile invoking harness as tool
+
+The developer profile can invoke a harness (Claude Code, Codex) as a tool within its own session. This preserves vendor-tuned coding loops while gaining kanban coordination:
+
+- Simple work (1-line fix, config): developer uses terminal/patch directly
+- Complex work (multi-file feature, refactor): developer invokes harness as tool
+- The developer validates harness output before completing the card
+
+This is NOT the old indirection problem (tech-lead spawning harness directly, polluting its context). The developer profile has its own clean context, receives the kanban card, invokes the harness, validates, reports back through kanban.
+
+## Open questions (unvalidated)
+
+1. Is reviewer output-only review (reading committed code, not developer reasoning) sufficient for adversarial evaluation? Or does losing the reasoning trace degrade quality?
+2. Does the beads/kanban contract hold up across autonomous agents, or will they drift?
+3. Is the async iterate speed (minutes per round) acceptable for real-world tasks, or does it kill momentum?
+4. Should the developer invoke harnesses as a tool (hybrid), or run raw with terminal/patch?

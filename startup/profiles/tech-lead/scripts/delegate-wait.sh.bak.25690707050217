@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# delegate-wait.sh — Create maker/checker chains and block tech-lead until
+# ALL verifiers complete. Supports parallel dev: one tech-lead can fan out
+# N independent dev→verifier chains and wait for all of them.
+#
+# Usage:
+#   delegate-wait.sh --link-only <my_card_id> <verifier_id> [<verifier_id> ...]
+#   delegate-wait.sh <my_card_id> <project_dir> <contract_body>
+#
+# Multiple verifiers example (parallel dev):
+#   delegate-wait.sh --link-only t_techlead t_ver1 t_ver2 t_ver3
+#   → tech-lead blocks, auto-promotes only when ALL 3 verifiers are done
+#
+# Single chain example:
+#   delegate-wait.sh --link-only t_techlead t_ver1
+#   → tech-lead blocks, auto-promotes when t_ver1 is done
+
+set -euo pipefail
+
+BOARD="${HERMES_KANBAN_BOARD:-startup}"
+
+if [ "${1:-}" = "--link-only" ]; then
+  # Link-only mode: verifiers already exist, link + block
+  shift
+  MY_CARD_ID="${1:-}"
+  shift
+  VERIFIERS="$@"
+
+  if [ -z "$MY_CARD_ID" ] || [ -z "$VERIFIERS" ]; then
+    echo "Usage: delegate-wait.sh --link-only <my_card_id> <verifier_id> [<verifier_id> ...]" >&2
+    exit 1
+  fi
+
+  VER_COUNT=0
+  for VER_ID in $VERIFIERS; do
+    hermes kanban --board "$BOARD" link "$VER_ID" "$MY_CARD_ID"
+    VER_COUNT=$((VER_COUNT + 1))
+    echo "✓ Linked: $MY_CARD_ID depends on $VER_ID"
+  done
+
+  # Block once — recompute_ready checks ALL parents
+  hermes kanban --board "$BOARD" block "$MY_CARD_ID" --kind dependency \
+    "waiting for $VER_COUNT verifier(s) to complete: $VERIFIERS" 2>&1
+  echo "✓ Blocked $MY_CARD_ID as dependency — auto-promotes when all $VER_COUNT verifier(s) reach done"
+  exit 0
+fi
+
+# Full mode: create ONE dev + ONE verifier, then link + block
+# (for parallel, call --link-only with multiple verifier IDs after creating them separately)
+MY_CARD_ID="${1:-}"
+PROJECT_DIR="${2:-}"
+CONTRACT="${3:-}"
+
+if [ -z "$MY_CARD_ID" ] || [ -z "$PROJECT_DIR" ]; then
+  echo "Usage: delegate-wait.sh <my_card_id> <project_dir> [contract_body]" >&2
+  echo "       delegate-wait.sh --link-only <my_card_id> <verifier_id> [<verifier_id> ...]" >&2
+  exit 1
+fi
+
+if [ -z "$CONTRACT" ]; then
+  echo "ERROR: contract body required (3rd arg or stdin)" >&2
+  exit 1
+fi
+
+# Create developer card
+DEV_RESULT=$(hermes kanban --board "$BOARD" create \
+  "[dev] Build from contract" \
+  --assignee developer \
+  --body "$CONTRACT" \
+  --workspace "dir:$PROJECT_DIR" \
+  --json 2>&1)
+
+DEV_ID=$(echo "$DEV_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+if [ -z "$DEV_ID" ]; then
+  echo "ERROR: Failed to create developer card" >&2
+  echo "$DEV_RESULT" >&2
+  exit 1
+fi
+echo "✓ Developer card: $DEV_ID"
+
+# Create verifier card (parented on developer)
+VER_RESULT=$(hermes kanban --board "$BOARD" create \
+  "[verify] Adversarial review" \
+  --assignee verifier \
+  --parent "$DEV_ID" \
+  --body "Verify developer card $DEV_ID. Contract: $CONTRACT" \
+  --json 2>&1)
+
+VER_ID=$(echo "$VER_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+if [ -z "$VER_ID" ]; then
+  echo "ERROR: Failed to create verifier card" >&2
+  echo "$VER_RESULT" >&2
+  exit 1
+fi
+echo "✓ Verifier card: $VER_ID (parent: $DEV_ID)"
+
+# Link tech-lead as child of verifier + block
+hermes kanban --board "$BOARD" link "$VER_ID" "$MY_CARD_ID"
+echo "✓ Dependency: $MY_CARD_ID depends on $VER_ID"
+
+hermes kanban --board "$BOARD" block "$MY_CARD_ID" --kind dependency \
+  "waiting for verifier $VER_ID to complete adversarial review" 2>&1
+echo "✓ Blocked $MY_CARD_ID — auto-promotes when $VER_ID reaches done"

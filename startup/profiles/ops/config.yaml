@@ -1,0 +1,74 @@
+model:
+  default: glm-5.2
+  provider: zai
+  base_url: https://api.z.ai/api/coding/paas/v4
+  context_length: 1000000
+  rate_limit_delay: 30
+toolsets:
+- terminal
+- file
+- skills
+- memory
+- session_search
+- web
+- kanban
+- todo
+- cronjob
+- delegation
+- code_execution
+- clarify
+agent:
+  api_max_retries: 10
+  reasoning_effort: xhigh
+skills:
+  disabled:
+  - computer-use
+  - dogfood
+  - github-code-review
+  - github-issues
+  - github-pr-workflow
+  - himalaya
+  - jupyter-live-kernel
+  - node-inspect-debugger
+  - plan
+  - python-debugpy
+  - requesting-code-review
+  - simplify-code
+  - spike
+  - test-driven-development
+command_allowlist:
+- systemctl --user status *
+- systemctl --user is-active *
+- systemctl --user is-enabled *
+- systemctl --user list-units *
+- df *
+- du *
+- free *
+- which *
+- command -v *
+- ls *
+- cat /proc/*
+- hermes profile list
+- hermes profile describe *
+- hermes auth status *
+- hermes gateway status *
+- hermes cron list
+- git status
+- git log *
+- git diff *
+- git remote -v
+- git check-ignore *
+- git rev-parse *
+- bd --version
+- pi --version
+- zz --version
+- codegraph --help
+- graphify --version
+- node --version
+- npm ls *
+- pip show *
+- python3 --version
+_config_version: 33
+fallback_model: []
+approvals:
+  mode: smart

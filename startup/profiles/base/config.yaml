@@ -1,0 +1,71 @@
+model:
+  default: glm-5.2
+  provider: zai
+  base_url: https://api.z.ai/api/coding/paas/v4
+  context_length: 1000000
+toolsets:
+  - hermes-cli
+  - kanban
+agent:
+  api_max_retries: 10  # Z.AI overload patience — unlocks 30/60/90/120s long-backoff ladder
+  reasoning_effort: xhigh
+skills:
+  disabled:
+    - ask-matt
+    - claude-code
+    - codebase-design
+    - codex
+    - decision-mapping
+    - design-an-interface
+    - diagnosing-bugs
+    - domain-modeling
+    - edit-article
+    - git-guardrails-claude-code
+    - handoff
+    - implement
+    - improve-codebase-architecture
+    - migrate-to-shoehorn
+    - opencode
+    - ponytail
+    - ponytail-audit
+    - ponytail-debt
+    - ponytail-gain
+    - ponytail-help
+    - ponytail-review
+    - prototype
+    - qa
+    - request-refactor-plan
+    - resolving-merge-conflicts
+    - review
+    - scaffold-exercises
+    - setup-matt-pocock-skills
+    - setup-pre-commit
+    - tdd
+    - teach
+    - to-issues
+    - to-prd
+    - triage
+    - ubiquitous-language
+    - wizard
+    - writing-beats
+    - writing-fragments
+    - writing-shape
+command_allowlist:
+  - script execution via -e/-c flag
+_config_version: 32
+fallback_model: []
+# ── Security ──────────────────────────────────────────────────────────
+# Secret redaction is ON by default — strings that look like API keys,
+# tokens, and passwords are masked in tool output, logs, and chat
+# responses before the model or user ever sees them. Set redact_secrets
+# to false to disable (e.g. when developing the redactor itself).
+# tirith pre-exec scanning is enabled by default when the tirith binary
+# is available. Configure via security.tirith_* keys or env vars
+# (TIRITH_ENABLED, TIRITH_BIN, TIRITH_TIMEOUT, TIRITH_FAIL_OPEN).
+#
+# security:
+#   redact_secrets: true
+#   tirith_enabled: true
+#   tirith_path: "tirith"
+#   tirith_timeout: 5
+#   tirith_fail_open: true

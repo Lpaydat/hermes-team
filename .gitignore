@@ -1,0 +1,87 @@
+# ── Exclude everything by default ───────────────────────────────
+*
+
+# ── Re-include: profile configs, skills, plugins, scripts ───────
+!startup/
+!startup/profiles/
+!startup/profiles/*/
+!startup/profiles/*/config.yaml
+!startup/profiles/*/config/
+!startup/profiles/*/config/**
+!startup/profiles/*/skills/
+!startup/profiles/*/skills/**
+!startup/profiles/*/plugins/
+!startup/profiles/*/plugins/**
+!startup/profiles/*/scripts/
+!startup/profiles/*/scripts/**
+!startup/profiles/*/SOUL.md
+!startup/profiles/*/SPECIALTY.md
+
+# ── Re-include: global config ───────────────────────────────────
+!startup/config.yaml
+!startup/kanban/
+!startup/kanban/boards/
+!startup/kanban/boards/*/
+!startup/kanban/boards/*/kanban.db
+
+# ── Re-include: shared skills ───────────────────────────────────
+!shared-skills/
+!shared-skills/**
+
+# ── Re-include: hermes-agent source ─────────────────────────────
+!startup/hermes-agent/
+!startup/hermes-agent/**
+
+# ── Re-include: gitignore itself ────────────────────────────────
+!.gitignore
+
+# ── Now exclude the bad stuff even inside re-included dirs ──────
+# Database state files (keep kanban.db, exclude state.db)
+startup/profiles/*/state.db
+startup/profiles/*/state.db-*
+startup/state.db
+startup/state.db-*
+
+# Sessions and logs
+startup/profiles/*/sessions/
+startup/profiles/*/logs/
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+
+# Node modules
+**/node_modules/
+
+# .env (secrets)
+**/.env
+
+# Worktrees
+**/.worktrees/
+
+# Binaries
+startup/bin/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Large assets
+*.mp4
+*.mp3
+*.wav
+*.pdf
+
+# External installed repos (reinstallable, not our config)
+shared-skills/mattpocock/
+shared-skills/mattpocock-hub/
+shared-skills/ponytail/
+shared-skills/ponytail-hub/
+startup/hermes-agent/
+
+# Symlinks to shared skills (recreated by hermes skills install)
+shared-skills/mattpocock
+shared-skills/ponytail
+startup/profiles/*/skills/mattpocock
+startup/profiles/*/skills/ponytail
+startup/hermes-agent

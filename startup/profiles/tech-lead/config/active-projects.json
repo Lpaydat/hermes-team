@@ -1,0 +1,5 @@
+{
+  "active_projects": [],
+  "paused_projects": [],
+  "note": "Projects are discovered dynamically at runtime by scanning for .beads/ directories. This file is for manual overrides only."
+}

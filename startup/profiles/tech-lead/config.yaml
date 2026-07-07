@@ -1,0 +1,98 @@
+model:
+  default: glm-5.2
+  provider: zai
+  base_url: https://api.z.ai/api/coding/paas/v4
+  context_length: 1000000
+  rate_limit_delay: 30
+toolsets:
+  - hermes-cli
+  - kanban
+agent:
+  api_max_retries: 10
+  reasoning_effort: xhigh
+browser:
+  allow_private_urls: true
+kanban:
+  max_in_progress_per_profile: 3
+  dispatch_stale_timeout_seconds: 14400
+skills:
+  disabled:
+    - ask-matt
+    - edit-article
+    - git-guardrails-claude-code
+    - migrate-to-shoehorn
+    - scaffold-exercises
+    - teach
+    - wizard
+    - writing-beats
+    - writing-fragments
+    - writing-shape
+approvals:
+  mode: smart
+command_allowlist:
+  - copy/move file into system config path
+  - script execution via -e/-c flag
+  - execute_code
+security:
+  allow_private_urls: true
+onboarding:
+  seen:
+    tool_progress_prompt: true
+_config_version: 32
+fallback_model: []
+platform_toolsets:
+  cli:
+    - kanban
+    - memory
+    - session_search
+    - skills
+    - terminal
+    - todo
+known_plugin_toolsets:
+  cli:
+    - spotify
+plugins:
+  enabled:
+    - dev_workflow
+  disabled: []
+  entries:
+    dev_workflow:
+      allow_tool_override: false
+
+# ── Security ──────────────────────────────────────────────────────────
+# Secret redaction is ON by default — strings that look like API keys,
+# tokens, and passwords are masked in tool output, logs, and chat
+# responses before the model or user ever sees them. Set redact_secrets
+# to false to disable (e.g. when developing the redactor itself).
+# tirith pre-exec scanning is enabled by default when the tirith binary
+# is available. Configure via security.tirith_* keys or env vars
+# (TIRITH_ENABLED, TIRITH_BIN, TIRITH_TIMEOUT, TIRITH_FAIL_OPEN).
+#
+# security:
+#   redact_secrets: true
+#   tirith_enabled: true
+#   tirith_path: "tirith"
+#   tirith_timeout: 5
+#   tirith_fail_open: true
+
+# ── Fallback Model ────────────────────────────────────────────────────
+# Automatic provider failover when primary is unavailable.
+# Uncomment and configure to enable. Triggers on rate limits (429),
+# overload (529), service errors (503), or connection failures.
+#
+# Supported providers:
+#   openrouter   (OPENROUTER_API_KEY)  — routes to any model
+#   openai-codex (OAuth — hermes auth) — OpenAI Codex
+#   nous         (OAuth — hermes auth) — Nous Portal
+#   zai          (ZAI_API_KEY)         — Z.AI / GLM
+#   kimi-coding  (KIMI_API_KEY)        — Kimi / Moonshot
+#   kimi-coding-cn (KIMI_CN_API_KEY)   — Kimi / Moonshot (China)
+#   minimax      (MINIMAX_API_KEY)     — MiniMax
+#   minimax-cn   (MINIMAX_CN_API_KEY)  — MiniMax (China)
+#   bedrock      (AWS IAM / boto3)     — AWS Bedrock (Converse API)
+#
+# For custom OpenAI-compatible endpoints, add base_url and key_env.
+#
+# fallback_model:
+#   provider: openrouter
+#   model: anthropic/claude-sonnet-4

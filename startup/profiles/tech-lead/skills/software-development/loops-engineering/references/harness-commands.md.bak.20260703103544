@@ -1,0 +1,108 @@
+# Harness Commands — Reference
+
+Quick CLI reference for the three coding-agent harnesses. Load when selecting a harness or writing delegation commands.
+
+## Claude Code (`claude`)
+
+Preferred for most tasks. v2.x.
+
+### Print mode (non-interactive — preferred for loops)
+```bash
+terminal(command="claude -p 'task description' --allowedTools 'Read,Edit,Bash' --max-turns 10", workdir="/project", timeout=120)
+```
+- Skips all interactive dialogs. Ideal for automation.
+- `--output-format json` returns structured result with `session_id`, `num_turns`, `total_cost_usd`, `subtype` (success/error_max_turns/error_budget).
+- `--resume <session_id>` to continue a previous session.
+
+### Interactive PTY (for multi-turn sessions)
+```bash
+# Start tmux session
+terminal(command="tmux new-session -d -s claude-work -x 140 -y 40")
+terminal(command="tmux send-keys -t claude-work 'cd /project && claude' Enter")
+# Monitor
+terminal(command="sleep 15 && tmux capture-pane -t claude-work -p -S -50")
+# Send follow-up
+terminal(command="tmux send-keys -t claude-work 'next task' Enter")
+```
+
+### Key flags
+| Flag | Effect |
+|------|--------|
+| `-p, --print` | Non-interactive one-shot (exits when done) |
+| `--max-turns <n>` | Limit agentic loops |
+| `--max-budget-usd <n>` | Cap API spend |
+| `--allowedTools <tools>` | Whitelist specific tools |
+| `--dangerously-skip-permissions` | Auto-approve all tool use |
+| `--model <alias>` | Model selection: sonnet, opus, haiku |
+| `--worktree [name]` | Run in isolated git worktree |
+| `--append-system-prompt <text>` | Add to system prompt |
+
+## Codex (`codex`)
+
+OpenAI's autonomous coding agent CLI. Requires git repository.
+
+```bash
+# Must use pty=true — Codex is interactive
+terminal(command="codex", pty=true, workdir="/project", timeout=300)
+```
+
+- Auth: `OPENAI_API_KEY` or Codex OAuth (`~/.codex/auth.json`)
+- Requires git repo — refuses to run outside one
+- Use for OpenAI-ecosystem tasks
+
+## OpenCode (`opencode`)
+
+Provider-agnostic, open-source. Good for parallel worktrees.
+
+```bash
+# Must use pty=true
+terminal(command="opencode", pty=true, workdir="/project", timeout=300)
+```
+
+- Auth: `opencode auth login` or set provider env vars (OPENROUTER_API_KEY, etc.)
+- Provider-agnostic: works with any model provider
+- Good for long-running sessions with progress checks
+
+## Worktree pattern (all harnesses)
+
+Parallel agents need isolation to avoid file conflicts:
+
+```bash
+git worktree add ../project-task-A feature/task-a
+git worktree add ../project-task-B feature/task-b
+# Each harness runs in its own worktree directory
+```
+
+Claude Code has native support: `claude --worktree task-name`
+
+## Kanban CLI flag syntax (critical)
+
+The `--board` flag goes BEFORE the subcommand, not after. Getting this wrong causes silent failures.
+
+```bash
+# CORRECT — board flag before subcommand (use the project's board slug)
+hermes kanban --board <project-slug> create "[issue] title" --assignee tech-lead
+hermes kanban --board <project-slug> list --assignee tech-lead --json
+hermes kanban --board <project-slug> archive t_abc123
+
+# WRONG — board flag after subcommand (silently ignored or error)
+hermes kanban create "[issue] title" --board <project-slug> --assignee tech-lead
+```
+
+When a script creates tasks across multiple boards, pass the board per-command. The current board (set via `hermes kanban boards switch <slug>`) is the fallback when `--board` is omitted.
+
+**Duplicate prevention (3 controls):**
+1. Check `hermes kanban --board <slug> list --assignee <profile> --json` before creating — match beads IDs in task titles
+2. Use `--idempotency-key "beads-<issue-id>"` on every create call
+3. Set `max_in_progress_per_profile: 1` in config to prevent parallel spawns
+
+## Budget safety
+
+Every invocation MUST set:
+- `--max-turns` (prevents runaway loops)
+- `--max-budget-usd` (prevents spend explosion)
+
+Typical values:
+- Small task (bug fix, small feature): `--max-turns 10 --max-budget-usd 0.50`
+- Medium task (refactor, integration): `--max-turns 25 --max-budget-usd 2.00`
+- Large task (full feature): `--max-turns 50 --max-budget-usd 5.00`

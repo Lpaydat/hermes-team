@@ -1,0 +1,42 @@
+#!/bin/bash
+# Project Discovery guard — runs BEFORE the agent (wakeAgent gate, zero tokens on skip).
+#
+# Wakes the discovery agent only when something actually changed since the last
+# discovery run: any project's git HEAD moved, or a .driver/goal.md was edited.
+# Deliberately does NOT fingerprint .beads/ — discovery and hygiene mutate beads
+# themselves, and including them would make the guard wake on its own wake.
+#
+# Fail-open: any error in fingerprinting → wake the agent (preserves old behavior).
+
+SNAPSHOT="$HOME/.hermes/profiles/tech-lead/cron/.discovery-fingerprint"
+
+FINGERPRINT=$(
+  {
+    find "$HOME" -maxdepth 4 -name ".beads" -type d 2>/dev/null | sort | while read -r beads_dir; do
+      project_dir=$(dirname "$beads_dir")
+      remote=$(git -C "$project_dir" remote get-url origin 2>/dev/null)
+      head=$(git -C "$project_dir" rev-parse HEAD 2>/dev/null)
+      goal_mtime=$(stat -c %Y "$project_dir/.driver/goal.md" 2>/dev/null)
+      echo "$remote|$head|$goal_mtime"
+    done
+  } | sort -u | md5sum | cut -d' ' -f1
+)
+
+if [ -z "$FINGERPRINT" ]; then
+    echo "STATUS:GUARD_ERROR — fingerprint empty, failing open."
+    echo "ACTION:RUN — run the full discovery scan."
+    exit 0
+fi
+
+LAST=$(cat "$SNAPSHOT" 2>/dev/null)
+
+if [ "$FINGERPRINT" = "$LAST" ]; then
+    echo "STATUS:NO_CHANGES — no git HEAD or goal.md changes across projects since last discovery."
+    echo '{"wakeAgent": false}'
+else
+    # Update snapshot at wake time: if this run fails, we skip until the next
+    # real change — acceptable for an advisory 4-hourly scan.
+    echo "$FINGERPRINT" > "$SNAPSHOT"
+    echo "STATUS:CHANGES_DETECTED — project state changed since last discovery."
+    echo "ACTION:RUN — run the full discovery scan."
+fi

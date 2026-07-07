@@ -1,0 +1,93 @@
+# Orchestration Models — Reference
+
+Decision framework for choosing HOW to route coding work. Read when the Execute phase needs to decide between harness-direct, kanban-native profiles, or an external platform.
+
+## The Three Models
+
+### 1. Harness-direct (default)
+Tech-lead spawns an external coding harness (Claude Code, Codex, OpenCode) in an isolated worktree as a subprocess.
+
+```
+tech-lead → (subprocess) → harness in worktree
+```
+
+**Best for**: tight dev loops (implement → validate → fix → re-validate), quick patches, throwaway prototyping, exploration, anything under one session.
+
+**Weakness**: no durable trace per invocation (only what you manually write to beads/STATUS.md), no persistent memory across invocations, dies with the session.
+
+### 2. Kanban-native profiles
+`developer` and `reviewer` are Hermes profiles on the same kanban board (created 2026-07-03). Tech-lead creates a card, the dispatcher picks it up, the profile works autonomously and completes.
+
+```
+tech-lead → (kanban card) → developer profile → (harness-as-tool) → harness in worktree
+                                 ↓ child card auto-promotes
+                            reviewer profile → execute + evidence-gated review → merge-slot
+```
+
+**Best for**: scoped work that benefits from durable history, parallelism, persistent memory, or async coordination across sessions.
+
+**When this earns its keep over harness-direct**:
+- You want review as durable governance (each review is a card with traceable lifecycle, not ephemeral)
+- Review quality should compound across sessions (profiles accumulate memory; harness invocations start from zero every time)
+- Work should survive session restarts (a card persists; a subprocess dies)
+- True parallel coordination is needed (multiple cards dispatched simultaneously)
+
+**Weakness vs harness-direct**: latency (create card → dispatch tick → work → complete → review tick vs synchronous subprocess). The v1 "no coding-optimized loop" weakness is resolved: the developer profile invokes vendor harnesses as a tool (industry-unanimous pattern — every surveyed production system's coder is a full vendor harness session). Budget control is equivalent since the dollar-cap flag never existed anyway — both modes use the same timeout + turn-cap + post-hoc-cost recipe (harness-commands.md). Full design: kanban-native-loops.md. **Not yet load-tested — run the commissioning loop (kanban-native-loops.md §9) before routing real work.**
+
+### 3. External platform (e.g. Paperclip.ing)
+A purpose-built agent orchestration system with its own task board, org chart, budget management, adapters, and governance. Hermes agents become adapters under it.
+
+```
+paperclip company → (adapter) → Hermes profiles / harnesses
+```
+
+**What it offers**: native per-agent + org-level budget tracking with auto-pause, adapter abstraction (role vs runtime separation), dashboard/visibility UI, structured governance/approval gates, org-chart delegation.
+
+**The dual-system killer**: external platforms have their own task board. If tech-lead uses one internally while Hermes kanban is the top-level system, there are now TWO task systems with TWO sources of truth. State must be synced. This recreates the exact fragmentation that consolidating onto Hermes kanban was meant to solve.
+
+**When to reconsider**: if the team scales beyond software engineering into a full "autonomous company" (marketing, content, support, multiple product lines), purpose-built platforms like Paperclip are designed for that scale and Hermes kanban isn't. At 3-4 agents doing software engineering, the overhead exceeds the benefit.
+
+## Decision Axes
+
+| Axis | Harness-direct | Kanban-native | External platform |
+|------|---------------|---------------|-------------------|
+| Traceability | Manual (write to beads) | Native (card lifecycle) | Native (full audit log) |
+| Async coordination | No (synchronous) | Yes (dispatch tick) | Yes (heartbeats) |
+| Persistent memory | None per invocation | Compounds across sessions | Compounds across sessions |
+| Resilience | Dies with session | Survives restarts | Survives restarts |
+| Latency | Seconds | Minutes (dispatch tick) | Minutes (heartbeat) |
+| Budget control | Fine (per-call caps) | Coarse (runtime cap) | Fine (native cost tracking) |
+| Coding loop quality | Optimized (harness-tuned) | Basic (terminal+file tools) | Varies by adapter |
+| Architectural consistency | Hermes-native | Hermes-native | External system |
+| Single source of truth | Yes | Yes | No (dual-system problem) |
+| Scale fit | 1-few agents | 1-few agents | 5-20+ agents |
+
+## Recommendation: Hybrid by Work Type
+
+Don't pick one model globally. Route by work type — tech-lead decides at Plan time, per bead. **Default to harness-direct when ambiguous.**
+
+| Route | Objective criteria (ANY qualifies) | Disqualifiers |
+|---|---|---|
+| **Harness-direct** (DEFAULT) | ≤3 files or ≤2 expected iterations; hotfix/config; context already loaded; <30 min expected; benefits from live steering | needs cross-bead parallelism; tech-lead context >60% consumed |
+| **Kanban-native** (developer + child reviewer card) | ≥3 genuinely independent beads ready (the consultation's T2 threshold; check file-safety overlap first); >3 files / multi-module; spans sessions; audit trail required; contract (≥20 assertions) already written | spec still ambiguous — grill first, never dispatch an ambiguous card; no contract/evals yet |
+| **In-session** (delegate_task) | read-only research/investigation feeding the CURRENT planning session | anything that commits; anything needing audit |
+| **Review** | delegate_task two-axis review for small harness-direct work; reviewer card when the work was a kanban card or needs the audit trail | — |
+
+Tiebreakers: (a) fits one focused run under the medium tier → harness-direct; (b) you'd write the cold-start card body anyway → kanban-native is near-free, route there; (c) never route to kanban-native to avoid thinking (team-delegation anti-pattern).
+
+The split is by work type, not by role. Developer handles cards; tech-lead still uses delegate_task for quick subtasks.
+
+## When to Revisit
+
+The trigger to reconsider external platforms: when you want to audit "who did what, when" across business functions beyond engineering, or when team size exceeds ~5 agents doing heterogeneous work. Until then, the dual-system cost isn't justified.
+
+## Building vs Buying
+
+Before adopting an external platform for its features, consider stealing the best ideas natively:
+
+1. **Budget tracking** — track API spend per profile/board/project against the Hermes infrastructure (~200 lines)
+2. **Dashboard** — a lightweight status view (CLI command or web endpoint) showing agent activity, costs, task state
+3. **Adapter abstraction** — formalize role-vs-runtime as a convention in profile config (role = job description + skills; runtime = model + provider)
+4. **Governance** — formalize kanban_block into a proper approval workflow with states
+
+This gets the value without integration cost, dual-system problem, or operational overhead of a second platform.

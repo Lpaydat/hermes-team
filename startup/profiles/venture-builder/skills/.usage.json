@@ -1,0 +1,93 @@
+{
+  "find-skills": {
+    "archived_at": null,
+    "created_at": "2026-07-02T14:16:27.063607+00:00",
+    "created_by": null,
+    "last_patched_at": null,
+    "last_used_at": "2026-07-02T22:55:42.459140+00:00",
+    "last_viewed_at": "2026-07-02T22:55:42.452272+00:00",
+    "patch_count": 0,
+    "pinned": false,
+    "state": "active",
+    "use_count": 2,
+    "view_count": 2
+  },
+  "grilling": {
+    "archived_at": null,
+    "created_at": "2026-07-02T22:18:01.795700+00:00",
+    "created_by": null,
+    "last_patched_at": null,
+    "last_used_at": "2026-07-02T22:18:01.800254+00:00",
+    "last_viewed_at": "2026-07-02T22:18:01.795717+00:00",
+    "patch_count": 0,
+    "pinned": false,
+    "state": "active",
+    "use_count": 1,
+    "view_count": 1
+  },
+  "hermes-agent-skill-authoring": {
+    "archived_at": null,
+    "created_at": "2026-07-02T22:46:48.264232+00:00",
+    "created_by": null,
+    "last_patched_at": null,
+    "last_used_at": "2026-07-02T22:46:48.270720+00:00",
+    "last_viewed_at": "2026-07-02T22:46:48.264278+00:00",
+    "patch_count": 0,
+    "pinned": false,
+    "state": "active",
+    "use_count": 1,
+    "view_count": 1
+  },
+  "lean-startup": {
+    "archived_at": null,
+    "created_at": "2026-07-02T22:53:53.324255+00:00",
+    "created_by": null,
+    "last_patched_at": null,
+    "last_used_at": "2026-07-02T22:53:53.326474+00:00",
+    "last_viewed_at": "2026-07-02T22:53:53.324288+00:00",
+    "patch_count": 0,
+    "pinned": false,
+    "state": "active",
+    "use_count": 1,
+    "view_count": 1
+  },
+  "transform": {
+    "archived_at": null,
+    "created_at": "2026-07-02T14:16:27.060952+00:00",
+    "created_by": null,
+    "last_patched_at": null,
+    "last_used_at": "2026-07-02T23:26:05.953242+00:00",
+    "last_viewed_at": "2026-07-02T23:26:05.950029+00:00",
+    "patch_count": 0,
+    "pinned": false,
+    "state": "active",
+    "use_count": 4,
+    "view_count": 3
+  },
+  "venture-pipeline": {
+    "archived_at": null,
+    "created_at": "2026-07-02T22:55:37.487699+00:00",
+    "created_by": null,
+    "last_patched_at": "2026-07-02T22:56:56.653264+00:00",
+    "last_used_at": "2026-07-02T23:24:48.431557+00:00",
+    "last_viewed_at": "2026-07-02T23:24:48.428688+00:00",
+    "patch_count": 7,
+    "pinned": false,
+    "state": "active",
+    "use_count": 3,
+    "view_count": 3
+  },
+  "writing-great-skills": {
+    "archived_at": null,
+    "created_at": "2026-07-02T14:16:27.058252+00:00",
+    "created_by": null,
+    "last_patched_at": null,
+    "last_used_at": "2026-07-02T22:46:55.134317+00:00",
+    "last_viewed_at": "2026-07-02T22:46:55.131488+00:00",
+    "patch_count": 0,
+    "pinned": false,
+    "state": "active",
+    "use_count": 2,
+    "view_count": 2
+  }
+}

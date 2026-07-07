@@ -1,0 +1,173 @@
+---
+name: loops-engineering
+description: "Run autonomous coding loops — the system that finds work, delegates to coding agents, validates strictly, and iterates until done. Use when orchestrating Claude Code, Codex, or OpenCode to implement features or fix bugs unattended, when running maker-checker validation on agent output, when planning a sprint or epic for agent execution, when the user says 'loop', 'sprint', 'delegate this', 'run an epic', 'set up a coding loop', or asks you to orchestrate multiple agents on a coding task."
+---
+
+# Loops Engineering
+
+A loop is a recursive goal: define it once, the agent iterates until the work is actually done. You design the system that prompts the agent — not the prompt itself.
+
+Three loops nest at different time horizons (each feeds the one inside it):
+- **External feedback** (hours→weeks): alpha testers, A/B, production data → informs vision
+- **Developer feedback** (tens of min→hours): you examine output, steer the agent, evolve the spec
+- **Agentic coding** (minutes): agent writes, tests, iterates until bug-free — **the five phases below run inside this loop**
+
+> Full theory: [references/loop-theory.md](references/loop-theory.md) — three-loop model, Ralph technique, Flywheel Planning, context engineering, autonomous operation, memory architecture, self-improvement via scout/researcher, harness pruning.
+
+## Role separation (critical)
+
+Three roles, three context windows. Mixing them is the most common failure — the model becomes sycophantic the moment it grades itself.
+
+| Role | Who | Rule |
+|------|-----|------|
+| **Planner** | Tech-lead (you) | Turns intent into spec. Never touches code. |
+| **Generator** | Coding-agent harness | Writes everything. Forbidden from grading own work. |
+| **Evaluator** | Review sub-agent | Told from the first message: the code is broken, prove it. |
+
+## The five phases
+
+Each phase ends on a checkable completion criterion. Do not skip phases.
+
+### 1. Discover
+
+Understand the codebase and work surface before planning.
+
+- Index with CodeGraph (`--graph-only` for fast structural pass)
+- Read: `AGENTS.md`, `CONTEXT.md`, `CODING_STANDARDS.md`, existing ADRs
+- Scan: Beads issues (`bd status`), open PRs, failing tests, kanban board
+- Identify: test framework, linter, formatter, commit style, branching strategy
+
+**Done when**: every convention, test command, and open work item is accounted for — nothing discovered later that a `grep` would have found here.
+
+### 2. Plan
+
+This is where human-in-the-loop lives — everything after this runs autonomously.
+
+1. **Grill the user** (`grilling`): one question at a time, recommended answer attached, until the goal is crisp.
+2. **Artifacts**: PRD (`to-prd`), ADRs (`domain-modeling` + `decision-mapping`), glossary (`ubiquitous-language`).
+3. **Negotiate the contract**: Before any code, draft a checklist of testable assertions (~20-27 for a small task; 10 is too few and the evaluator rubber-stamps). The PRD is the boundary; the **contract** is what gets graded. If multiple agents are involved, the generator proposes done-criteria and the evaluator pushes back — they argue via markdown on disk until they agree.
+4. **Build evals**: Structured assertions about behavior, not just unit tests. Build them NOW alongside the contract, not "when problems recur." For subjective quality (UI, text generation), encode the rubric.
+5. **Decompose** (`to-issues`): tracer-bullet vertical slices with dependency tracking.
+6. **Right-size gate**: Can one agent finish this in one context window? Does it touch >5 files across modules? Are there parallelizable sub-parts? → split if any.
+7. **Publish to Beads**: `bd issue create`, preserving hierarchy (epics → beads → sub-beads).
+8. **Write crash state to disk**: `contract.md`, `progress.md`, `log.md`. These three files ARE the state — the model should be able to crash, lose its session, and pick up by reading only these. If you can't describe state in three files, it's too complicated.
+
+For complex work, add a critique loop: run `scrutinize` on the plan before decomposing. Loop until stable.
+
+**Re-contract rule**: if you hit a genuine gap missed during grilling, pause that issue only (unrelated tasks delegate as normal), and contract the user. Resolve everything else via research, code, docs, or other agents first.
+
+**Done when**: PRD published, ADRs written, contract.md written, evals written, issues in Beads with dependencies. User approved the decomposition.
+
+### 3. Execute
+
+Route work to the right orchestration model, then execute fully autonomously.
+
+**Choose the model** (see [references/orchestration-models.md](references/orchestration-models.md) for full decision framework):
+- **Harness-direct** (default, PREFERRED): subprocess harness for tight dev loops, quick patches, prototyping. Use `pi` (available at `~/.local/bin/pi`) with `--provider zai --model glm-4.5-air` for the Generator. Only use `delegate_task` (in-session subagent) when no harness is available — it uses the same model as you (GLM 5.2), which defeats the role separation that makes adversarial review meaningful.
+- **Kanban-native**: developer/reviewer Hermes profiles for durable history, parallelism, persistent memory
+- **In-session**: delegate_task for fast subtasks within orchestration (FALLBACK ONLY — same-model generation weakens adversarial review)
+
+Then, for harness-direct execution:
+
+1. Create isolated worktree: `git worktree add` or harness-native flag
+2. Delegate to harness with the issue body as spec
+3. Set budget caps: wall-clock `timeout` wrapper + `--max-turns`, then assert `total_cost_usd` from the JSON envelope against the tier ceiling (`--max-budget-usd` does not exist — see harness-commands.md for the verified recipe)
+4. Minimal viable toolset: `--allowedTools` with only what the task needs
+5. Context engineering: just-in-time retrieval (CodeGraph, not pre-stuffing), structured note-taking (issue comments as external memory)
+6. **Trace ledger (non-negotiable)**: capture `session_id` from the envelope and copy the transcript to `~/vault/traces/<project>/<bead-id>/attempt-<n>.jsonl` — worktrees die, the ledger survives; Iterate and Reflection read from it. For multi-file work headed to a delegated review, also write a structured completion report (approach, deviations, dead ends, test evidence, session_id, cost) as a bead/issue comment — it is the trace-blind reviewer's context substitute
+
+> Harness selection and CLI details: [references/harness-commands.md](references/harness-commands.md)
+> Kanban-native async loops (card-as-loop-state-machine, beads/kanban ownership contract): [references/kanban-native-loops.md](references/kanban-native-loops.md)
+
+**Done when**: the agent has committed the work AND the worktree is clean (no uncommitted changes).
+
+### 4. Validate
+
+The most critical phase. Agents lie and cheat. The evaluator approaches with adversarial stance: **the code is broken, prove it.**
+
+**Per iteration (lightweight — every micro-loop pass)**:
+- [ ] Tests pass (existing + new)
+- [ ] Evals pass (if built)
+- [ ] Lint + typecheck pass
+- [ ] Every contract item met
+
+**Per task (thorough — the gate before "done")**:
+- Run `review`: two parallel sub-agents — Standards (conventions + Fowler smells) vs Spec (faithful to issue/PRD?)
+- OR `requesting-code-review`: dispatch a separate reviewer with clean context, given the adversarial stance
+- Every delegated review (delegate_task or reviewer profile) inherits three non-negotiables: (1) the reviewer checks out the head SHA and EXECUTES tests/evals/build — static diff-judging alone is disqualified (measured 52-78% accuracy without execution); (2) every finding is re-run before filing (verify-findings pass — non-reproducing findings are demoted); (3) the mechanical spec-gap rule: expressible as a violated contract assertion → code bug (back to generator); otherwise → spec gap (pause, planner decides)
+- **Subjective score** (for UI/design): four axes on 0-1 — design, originality, craft, functionality. Calibrate on reference sites the evaluator is told are good vs slop. If any axis < 0.7, flag for iteration.
+
+**Per epic (comprehensive)**:
+- `improve-codebase-architecture`: whole-codebase scan for deepening opportunities
+- `ponytail-audit`: repo-wide scan for bloat to cut
+- `ponytail` cleanup on new code
+
+> Validation skills deep-dive: [references/validation-reference.md](references/validation-reference.md)
+
+**Done when**: zero findings rated Critical or Important. Every subjective score ≥ 0.7 (if applicable). Every contract item checked off.
+
+### 5. Iterate
+
+If validation fails, iterate — but never blindly. Follow this sequence:
+
+**Step 1 — Read the trace**: BEFORE re-delegating, read the agent's raw transcript. Pipe output to a file, grep for the moment judgment diverged from spec. The fix is usually editing the prompt for that exact moment — not rewriting the whole task.
+
+**Step 2 — Update the spec if needed**: if the failure reveals a spec gap (not just an agent error), update the PRD/issues/contract BEFORE re-delegating. The spec is not static — it evolves as you see what the agent builds.
+
+**Step 3 — Re-delegate with feedback, warm when possible**:
+```
+FAIL → read trace, find divergence point
+     → update spec/contract if the failure reveals a spec gap
+     → file follow-up comment with exact failure points + trace evidence
+     → WARM RESUME the same harness session with the findings
+       (claude -p -r <session_id> "<findings>" from the SAME worktree —
+        the harness keeps its own memory of the prior attempt; strictly
+        better than cold re-delegation when the approach was sound)
+     → cold re-delegate with corrected prompt only when the approach itself
+       was wrong (fresh start per Ralph technique)
+     → repeat until validation passes
+```
+
+Key rules:
+- **Trace-first**: never re-delegate without reading the transcript. Tuning by vibe produces slop.
+- **Retry cap**: 3 failures on the same issue → escalate (research task, contract user, or different harness)
+- **Let it restart**: if the agent throws everything away and starts over, don't interrupt. Intervene only when the contract itself is wrong.
+
+**Done when**: validation passes (returns to Phase 4 done condition). Then:
+1. `bd close <bead-id>` — close the bead in the issue tracker (non-negotiable — the automation loop depends on this to surface the next ready bead)
+2. Mark done on kanban board (`kanban_complete`)
+3. Write journal entry to `~/vault/journal/<project>/`
+4. Run reflection (below)
+5. Hand back to user
+
+## Reflection (after task completion)
+
+Before starting the next task, take 60 seconds to learn from the one just completed. This is the meta-loop — the loop that improves the loop.
+
+1. **Read the trace**: scan the completed task's transcript. What took the most iterations? Where did the agent diverge?
+2. **Pattern check**: is this the same failure you've seen on previous tasks? If yes → the fix is systemic, not task-specific.
+3. **Patch if needed**:
+   - Same prompt misunderstanding repeatedly → fix the harness command or issue template
+   - Same validation failure → add an eval or tighten the contract template
+   - Same codebase friction → file a tech-debt issue (`request-refactor-plan`)
+4. **Goal check**: read `.driver/goal.md` for this project. Is this task moving toward the goal, or are we drifting?
+5. **Journal**: write one line to the journal entry: what worked, what didn't, what to try differently next time.
+
+**Done when**: one learning recorded. If nothing new was learned, skip — don't force reflection when there's nothing to reflect on.
+
+> Autonomous operation details: [references/loop-theory.md](references/loop-theory.md) — trigger mechanisms, heartbeat survival, beads watchdog script, three-control duplicate prevention, cron schedule pitfall, kanban CLI flag syntax.
+
+## Board architecture (hybrid)
+
+- **Per-project boards** (discovered dynamically from `.beads/` directories) → tech-lead coding tasks. Each project gets its own board with isolated DB, workspace, and dispatcher loop.
+- **`hermes-hq`** → scout + researcher tasks (cross-project research).
+- CLI syntax: `hermes kanban --board <slug> <subcommand>` (board flag goes BEFORE the subcommand).
+
+## Pitfalls
+
+- **Rubber-stamping**: the evaluator accepts work without proof. Cure: adversarial stance + separate agent.
+- **Comprehension debt**: code ships faster than you understand it. Cure: periodic `improve-codebase-architecture`.
+- **Retry blindness**: re-delegating with the same prompt after failure. Cure: trace-first rule.
+- **Harness bloat**: never deleting scaffolding. Cure: re-read harness against each model release, delete what the model does for free.
+- **Bottleneck blindness**: fixating on the current bottleneck when it has already moved (coding→planning→verification→taste).
+- **Guessing project state**: never assume which projects are active — the user owns that decision. Issues sitting in "ready" for weeks usually means inactive, not active. Always ask before adding a project to the watchdog's active list.
