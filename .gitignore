@@ -96,3 +96,6 @@ startup/profiles/*/cron/.tick.lock
 startup/profiles/*/cron/ticker_*
 startup/profiles/*/cron/output/
 startup/profiles/*/cron/output/**
+
+# Re-include: README
+!README.md
