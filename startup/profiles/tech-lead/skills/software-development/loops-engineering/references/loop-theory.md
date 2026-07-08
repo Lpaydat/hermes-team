@@ -70,7 +70,7 @@ The tech-lead runs autonomously once the plan is approved.
 
 **Gateway IS the dispatcher**: the gateway's built-in watcher runs `dispatch_once()` every 60 seconds. No separate daemon needed.
 
-**Beads watchdog**: `~/.hermes/profiles/tech-lead/scripts/beads-watchdog.sh` + `scripts/process-beads.py` — zero-cost cron script scanning all beads projects every 5 min, reports ready work to Telegram. Active projects controlled by `~/.hermes/profiles/tech-lead/config/active-projects.json`. **Never add projects to the active list without asking the user** — they own that decision, and stale "ready" issues usually indicate inactivity, not urgency.
+**Beads watchdog**: `~/.hermes/profiles/tech-lead/scripts/beads-watchdog.sh` + `scripts/process-beads.py` — zero-cost cron script scanning all beads projects every 5 min, reports ready work to Telegram. Active projects controlled by `~/.hermes-teams/startup/active-projects.json`. **Never add projects to the active list without asking the user** — they own that decision, and stale "ready" issues usually indicate inactivity, not urgency.
 
 **Three-control duplicate prevention** (proven pattern for autonomous task creation):
 1. **Concurrency cap**: `kanban.max_in_progress_per_profile: 1` in config — dispatcher won't spawn a second tech-lead while one is running. The script also checks `hermes kanban list --status running` before creating anything.

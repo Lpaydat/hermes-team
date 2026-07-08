@@ -2,6 +2,8 @@
 
 ## FAIL — create fix card and iterate
 
+Any finding at any severity — including edge cases not covered by the acceptance criteria. A bug the tests miss is still a bug. File it, create a fix card, re-verify.
+
 1. Comment findings on the DEVELOPER card, with a structured header line — `REVIEW-ITERATION: <N>` — followed by findings: per finding, severity, file:line, evidence, the contract item violated. Cards have NO mutable metadata field — **this comment line IS the iteration counter**; the chain of review cards is the fallback count.
 
 2. Create a fix card:
@@ -25,7 +27,7 @@
 
 ## PASS — merge
 
-Zero Critical/Important findings, every contract item checked, every AC verified, subjective axes ≥ 0.7 where applicable. Proceed to [merge-protocol.md](merge-protocol.md). After merging, `kanban_complete` with the review summary; the completion boundary closes the bead (kanban→beads writeback — you are the completion boundary).
+Zero findings at any severity (Critical, Important, Minor, Note). Every acceptance criterion verified independently. Proceed to [merge-protocol.md](merge-protocol.md). After merging, `kanban_complete` with the review summary; the completion boundary closes the bead (kanban→beads writeback — you are the completion boundary).
 
 ## ESCALATE — never loop
 

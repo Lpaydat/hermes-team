@@ -94,8 +94,12 @@ Rule of thumb: if a competent stranger couldn't start from the task alone, add w
   
   **Correct flow:** tech-lead creates card → assigned to `developer` (NOT tech-lead) → developer
   invokes harness (`pi`/`zz`) in worktree → harness writes code → developer runs gates → developer
-  captures trace → verifier evaluates. The harness uses a **different model** (e.g. Gemma 4, GLM 4.5-air)
-  than the governance layer (GLM 5.2) — this independence is what makes the adversarial review real.
+  captures trace → verifier evaluates. **Production model (Jul 2026):** all profiles + harness switched to `glm-5.2`. The weaker
+ `glm-4.5-air` was used during workflow testing to force bugs for the failure-fix loop.
+ For production work, use the strongest model — the GLM-5.2 verifier catches edge cases
+ (e.g. `delay=0` rapid-call semantics in debounce) that 4.5-air missed entirely.
+ Switch via the `loops-engineering` skill recipe, not the profile config — the harness
+ model is independent from the agent model.
   
   See `references/loops-engineering-architecture.md` for the full role separation model, Mermaid
   diagrams, crash recovery table, and workspace architecture.
@@ -146,10 +150,10 @@ Rule of thumb: if a competent stranger couldn't start from the task alone, add w
   **Key verified `pi` invocation** (the `developer-loop` skill has WRONG flags):
   ```bash
   # Cold start
-  timeout 900 pi --provider zai --model glm-4.5-air -p "Read PRD.md..." \
+  timeout 900 pi --provider zai --model glm-5.2 -p "Read PRD.md..." \
     --tools read,write,edit,bash,grep,find,ls --mode json
   # Warm resume (harness keeps prior memory)
-  timeout 900 pi --provider zai --model glm-4.5-air --session <session_id> \
+  timeout 900 pi --provider zai --model glm-5.2 --session <session_id> \
     -p "Read FIXES.md. Apply all findings..." --mode json
   ```
   `--auto-test` and `--max-turns` DO NOT EXIST in pi — only Claude Code has `--max-turns`.
@@ -324,3 +328,10 @@ See `references/battle-test-suite-2026-07-04.md` for a complete executed example
   The system self-heals (verifier self-blocks on role violation, scanner escalates, tech-lead
   arbitrates), but it wastes dispatch cycles. Future fix: merge-slot-style lock on FAIL verdict
   filing. See `references/enterprise-test-results.md` § Test 20.
+- **Per-board architecture (Jul 2026)** — each project gets its own kanban board
+  (`hermes kanban boards create <slug>`). The `active-projects.json` registry at
+  `~/.hermes-teams/startup/` (shared team-level, NOT under any profile) maps projects to
+  boards: `{name, path, board}`. The workflow engine reads this file and loops each project's
+  board. All profiles work across all boards (n-to-n). No `--board` flag in skills — the
+  dispatcher injects `HERMES_KANBAN_BOARD` into every worker. Proven with multi-board parallel
+  test (two projects, two boards, zero leakage).

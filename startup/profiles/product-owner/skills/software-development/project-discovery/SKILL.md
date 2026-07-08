@@ -148,7 +148,7 @@ is the explicit gatekeeper — if the list is empty, discovery does NOT run.
 }
 ```
 
-Location: `~/.hermes/profiles/<profile>/config/active-projects.json`
+Location: `~/.hermes-teams/startup/active-projects.json`
 
 The discovery guard script (`scripts/discovery-guard.sh`) reads this file BEFORE
 waking the agent. If `active_projects` is empty → `{"wakeAgent": false}` → zero

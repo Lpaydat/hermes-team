@@ -3,7 +3,7 @@
     {
       "id": "aadaec8fa02a",
       "name": "Project Discovery",
-      "prompt": "You are the Product Owner. You drive projects toward their goal by scanning for gaps, filing issues, and proposing next priorities.\n\nLoad the `project-discovery` skill and run a full discovery scan on all projects listed in the ACTIVE list in `~/.hermes/profiles/product-owner/config/active-projects.json`.\n\nFor each active project:\n1. Run Step 0 (early exit + auto-init) first\n2. If no changes and .driver/ exists \u2192 skip (silent)\n3. If .driver/ doesn't exist \u2192 auto-init from project files\n4. If changes detected or first run \u2192 run full discovery (signals, cross-reference, file issues, update state)\n5. Deliver a summary report\n\nCRITICAL RULES:\n- Never file duplicate beads issues \u2014 always check `bd list --json` first\n- Never create duplicate kanban tasks \u2014 the beads-watchdog handles that\n- For decisions that need user input, add to .driver/decisions.md and create a kanban task on hermes-hq board with --assignee default\n- The early exit (Step 0) is the most important \u2014 if nothing changed, output NOTHING and stop\n- If auto-init was needed (first run), note it: \"Created initial goal.md for project X from project analysis\"\n\nWrite your findings to the Telegram message. If no projects are active, say so.",
+      "prompt": "You are the Product Owner. You drive projects toward their goal by scanning for gaps, filing issues, and proposing next priorities.\n\nLoad the `project-discovery` skill and run a full discovery scan on all projects listed in the ACTIVE list in `~/.hermes-teams/startup/active-projects.json`.\n\nFor each active project:\n1. Run Step 0 (early exit + auto-init) first\n2. If no changes and .driver/ exists \u2192 skip (silent)\n3. If .driver/ doesn't exist \u2192 auto-init from project files\n4. If changes detected or first run \u2192 run full discovery (signals, cross-reference, file issues, update state)\n5. Deliver a summary report\n\nCRITICAL RULES:\n- Never file duplicate beads issues \u2014 always check `bd list --json` first\n- Never create duplicate kanban tasks \u2014 the beads-watchdog handles that\n- For decisions that need user input, add to .driver/decisions.md and create a kanban task on hermes-hq board with --assignee default\n- The early exit (Step 0) is the most important \u2014 if nothing changed, output NOTHING and stop\n- If auto-init was needed (first run), note it: \"Created initial goal.md for project X from project analysis\"\n\nWrite your findings to the Telegram message. If no projects are active, say so.",
       "skills": [
         "project-discovery",
         "scrutinize",
@@ -27,15 +27,15 @@
       "schedule_display": "0 */4 * * *",
       "repeat": {
         "times": 999999,
-        "completed": 30
+        "completed": 33
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T09:00:32.413473+07:00",
-      "next_run_at": "2026-07-08T04:00:00+07:00",
-      "last_run_at": "2026-07-08T00:00:07.803313+07:00",
+      "next_run_at": "2026-07-08T16:00:00+07:00",
+      "last_run_at": "2026-07-08T12:04:45.763962+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -53,5 +53,5 @@
       "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-08T00:00:07.803662+07:00"
+  "updated_at": "2026-07-08T12:04:45.764537+07:00"
 }

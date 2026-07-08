@@ -16,7 +16,7 @@
 set -euo pipefail
 
 WORKSPACE="$HOME/workspace"
-ACTIVE_FILE="${HERMES_HOME:-$HOME/.hermes/profiles/tech-lead}/config/active-projects.json"
+ACTIVE_FILE="$HOME/.hermes-teams/startup/active-projects.json"
 PROCESSOR="${HERMES_HOME:-$HOME/.hermes/profiles/tech-lead}/scripts/process-beads.py"
 PROFILE="tech-lead"
 TMP_DIR=$(mktemp -d)

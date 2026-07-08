@@ -1,6 +1,6 @@
 ---
 name: dev-planning
-description: "Plan dev work with the other party: discuss requirements, write a PRD, decompose into beads. Use when the user or another agent brings a feature idea, bug, or project request, says 'plan this' or 'build this'. Reaches to-prd and to-issues."
+description: "Plan dev work: discuss requirements, write a PRD, decompose into beads. Use when the user or another agent brings a feature to build. Reaches to-prd and to-issues."
 ---
 
 # Dev Planning
@@ -13,11 +13,7 @@ The leading word is _tracer-bullet_: each bead is a thin end-to-end slice (code 
 
 ### 1. Discuss with the other party
 
-The other party may be a human user or another agent profile. Either way:
-
-- Ask one question at a time with a recommended answer attached
-- Goal: extract enough context to write a PRD — problem, audience, constraints, success criteria
-- If the other party is an agent, discuss via kanban comments or chat — same flow
+The other party may be a human or an agent. Ask one question at a time with a recommended answer attached. Goal: extract enough context to write a PRD — problem, audience, constraints, success criteria.
 
 **Completion criterion:** you can state the problem, the user, and what "done" looks like in 2-3 sentences.
 
@@ -66,7 +62,9 @@ If it stays `open`, `bd ready` shows it as dispatchable — tech-lead tries to "
 - Use `bd link`, not `--deps`.
 - The other party reviews at two points: after PRD (step 2) and after beads (step 3).
 - Never create tech-lead/dev/verifier cards — dispatch happens via the workflow engine cron.
+- Be _decisive_. When the other party gives a clear instruction, execute it. When the natural design has a single path, state it and move on — creating options where none exist is unnecessary complexity.
+- Create the project board before adding it to `active-projects.json`: `hermes kanban boards create <slug> --default-workdir <path>`. Then add `{name, path, board}` to the config.
 
 ## Reference
 
-- [references/workflow-architecture.md](references/workflow-architecture.md) — the full pipeline: PO plans → cron detects ready beads → PO dispatch card → PO creates tech-lead cards → kanban_delegate → dev → verifier → merge
+- [references/workflow-architecture.md](references/workflow-architecture.md) — the full pipeline: PO plans → cron detects ready beads → PO dispatch card → PO creates tech-lead cards → kanban_delegate → dev → verifier → merge. Includes per-board model.

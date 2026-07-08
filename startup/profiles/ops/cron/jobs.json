@@ -21,15 +21,15 @@
       "schedule_display": "every 60m",
       "repeat": {
         "times": null,
-        "completed": 33
+        "completed": 45
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-06T16:16:33.142337+07:00",
-      "next_run_at": "2026-07-08T02:17:46.953542+07:00",
-      "last_run_at": "2026-07-08T01:17:46.953542+07:00",
+      "next_run_at": "2026-07-08T14:17:53.287194+07:00",
+      "last_run_at": "2026-07-08T13:17:53.287194+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -64,22 +64,23 @@
       "schedule_display": "every 360m",
       "repeat": {
         "times": null,
-        "completed": 0
+        "completed": 2
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T21:45:47.881586+07:00",
-      "next_run_at": "2026-07-08T03:45:47.881780+07:00",
-      "last_run_at": null,
-      "last_status": null,
+      "next_run_at": "2026-07-08T15:45:51.248877+07:00",
+      "last_run_at": "2026-07-08T09:45:51.248877+07:00",
+      "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     },
     {
       "id": "03678064b87f",
@@ -103,23 +104,24 @@
       "schedule_display": "every 360m",
       "repeat": {
         "times": null,
-        "completed": 0
+        "completed": 2
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T22:47:14.925022+07:00",
-      "next_run_at": "2026-07-08T04:47:14.925327+07:00",
-      "last_run_at": null,
-      "last_status": null,
+      "next_run_at": "2026-07-08T16:47:52.036541+07:00",
+      "last_run_at": "2026-07-08T10:47:52.036541+07:00",
+      "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-08T01:17:46.953707+07:00"
+  "updated_at": "2026-07-08T13:17:53.287383+07:00"
 }

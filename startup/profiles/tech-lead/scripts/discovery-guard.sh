@@ -12,7 +12,7 @@
 # Fail-open: any error in fingerprinting → wake the agent (preserves old behavior).
 
 SNAPSHOT="$HOME/.hermes/profiles/tech-lead/cron/.discovery-fingerprint"
-ACTIVE_PROJECTS="$HOME/.hermes/profiles/tech-lead/config/active-projects.json"
+ACTIVE_PROJECTS="$HOME/.hermes-teams/startup/active-projects.json"
 
 # ── Gate 1: Check if any projects are in the active list ────────────────
 # If active_projects is empty or missing → don't wake the agent at all.

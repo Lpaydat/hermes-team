@@ -127,7 +127,7 @@ The hook runs AST extraction on changed files only, then rebuilds `graph.json` +
 # Update the tech-lead's active-projects.json
 python3 -c "
 import json
-path = '/home/lpaydat/.hermes/profiles/tech-lead/config/active-projects.json'
+path = '/home/lpaydat/.hermes-teams/startup/active-projects.json'
 with open(path) as f:
     data = json.load(f)
 data['active_projects'].append({

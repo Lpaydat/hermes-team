@@ -8,7 +8,7 @@
 # Fail-open: scanner errors on a project are reported and wake the agent.
 
 SCANNER="$HOME/.hermes/profiles/product-owner/skills/software-development/task-hygiene-validator/scripts/scan_hygiene.py"
-ACTIVE_PROJECTS_FILE="$HOME/.hermes-teams/startup/profiles/product-owner/config/active-projects.json"
+ACTIVE_PROJECTS_FILE="$HOME/.hermes-teams/startup/active-projects.json"
 FINDINGS=""
 ERRORS=""
 SEEN_REMOTES=""

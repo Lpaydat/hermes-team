@@ -3,7 +3,7 @@
     {
       "id": "adc76c798cd4",
       "name": "Weekly Sprint Report",
-      "prompt": "You are the Weekly Sprint Steward. Produce a concise weekly briefing across all active projects listed in ~/.hermes-teams/startup/profiles/product-owner/config/active-projects.json.\n\nIf active_projects is empty, do nothing \u2014 exit silently.\n\nFor each active project:\n1. Read .driver/goal.md, .driver/progress.md, .driver/gaps.md\n2. Check git log --since=\"7 days ago\" for recent work\n3. Check bd list for open/closed issues this week\n4. Summarize: what was done, what's in progress, what's next, any blockers\n\nWrite the full report to ~/.hermes-teams/startup/profiles/product-owner/reports/sprint-{YYYY-MM-DD}.md\n\nDo NOT deliver to Discord or any messaging platform. The report is a local file only.",
+      "prompt": "You are the Weekly Sprint Steward. Produce a concise weekly briefing across all active projects listed in ~/.hermes-teams/startup/active-projects.json.\n\nIf active_projects is empty, do nothing \u2014 exit silently.\n\nFor each active project:\n1. Read .driver/goal.md, .driver/progress.md, .driver/gaps.md\n2. Check git log --since=\"7 days ago\" for recent work\n3. Check bd list for open/closed issues this week\n4. Summarize: what was done, what's in progress, what's next, any blockers\n\nWrite the full report to ~/.hermes-teams/startup/profiles/product-owner/reports/sprint-{YYYY-MM-DD}.md\n\nDo NOT deliver to Discord or any messaging platform. The report is a local file only.",
       "skills": [
         "project-discovery"
       ],
@@ -63,15 +63,15 @@
       "schedule_display": "every 240m",
       "repeat": {
         "times": null,
-        "completed": 1
+        "completed": 4
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T21:34:18.270864+07:00",
-      "next_run_at": "2026-07-08T05:34:29.030379+07:00",
-      "last_run_at": "2026-07-08T01:34:29.030379+07:00",
+      "next_run_at": "2026-07-08T17:34:35.306754+07:00",
+      "last_run_at": "2026-07-08T13:34:35.306754+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -103,15 +103,15 @@
       "schedule_display": "* * * * *",
       "repeat": {
         "times": null,
-        "completed": 266
+        "completed": 973
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T21:44:57.246903+07:00",
-      "next_run_at": "2026-07-08T02:11:00+07:00",
-      "last_run_at": "2026-07-08T02:10:10.153535+07:00",
+      "next_run_at": "2026-07-08T13:58:00+07:00",
+      "last_run_at": "2026-07-08T13:57:11.438208+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -122,5 +122,5 @@
       "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-08T02:10:10.153782+07:00"
+  "updated_at": "2026-07-08T13:57:11.438466+07:00"
 }

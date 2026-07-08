@@ -5,7 +5,7 @@ description: "Create tech-lead kanban cards for all bd ready beads. Use when you
 
 # Dev Dispatch
 
-The workflow engine cron detects `bd ready` beads and creates a kanban card for you. This skill runs when you work that card.
+The workflow engine cron detects `bd ready` beads and creates a kanban card for you. This skill runs when you work that card. All cards go on the same board your card came from.
 
 The leading word is _minimal_: the card you create carries only the bead ID and a pointer to the PRD — no contracts, no function signatures, no technical guidance. Tech-lead reads the bead and writes its own contract.
 
@@ -24,7 +24,7 @@ Filter out `gt:slot` beads — those are coordination primitives, not work.
 
 ### 2. Create a _minimal_ card for each ready bead
 
-Check for an existing card first — query SQLite directly (the JSON API does NOT expose `idempotency_key`):
+Check for an existing card first — query the board DB directly (the JSON API does NOT expose `idempotency_key`):
 
 ```sql
 SELECT 1 FROM tasks WHERE idempotency_key = 'bead-<bead-id>' AND status != 'archived' LIMIT 1;
@@ -33,7 +33,7 @@ SELECT 1 FROM tasks WHERE idempotency_key = 'bead-<bead-id>' AND status != 'arch
 If no card exists, create one:
 
 ```bash
-hermes kanban --board startup create \
+hermes kanban create \
   "[auto] <bead-title>" \
   --assignee tech-lead \
   --body "## Your task

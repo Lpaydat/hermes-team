@@ -105,8 +105,7 @@ kanban_delegate(contracts=[{
 - On verifier FAIL: verifier creates fix card for developer. On PASS: verifier merges. On ESCALATE: verifier blocks for tech-lead.
 
 **Harness choices** (developer picks, not you):
-- `pi --provider zai --model glm-4.5-air` — the default weak model for bug generation
-- Claude Code, zz/zlaude — DISABLED on this machine (too powerful, one-shots clean code, defeats the failure-fix loop test)
+- `pi --provider zai --model glm-5.2` — the default model for code generation
 
 > Kanban-native async loops detail: [references/kanban-native-loops.md](references/kanban-native-loops.md)
 

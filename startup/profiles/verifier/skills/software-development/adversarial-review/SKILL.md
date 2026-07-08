@@ -216,11 +216,15 @@ The developer's proof is a **claim**; your execution is the **fact**.
 
 ## 8. Verdict → [verdict-routing.md](references/verdict-routing.md)
 
-**PASS**: zero Critical/Important + all ACs verified → merge via [merge-protocol.md](references/merge-protocol.md).
+**PASS**: zero findings at any severity AND all ACs verified → merge via [merge-protocol.md](references/merge-protocol.md).
 
-**FAIL**: create fix card for developer with findings → [verdict-routing.md](references/verdict-routing.md) for card creation template.
+**FAIL**: any finding at any severity → create fix card → [verdict-routing.md](references/verdict-routing.md).
 
-**ESCALATE**: iteration ≥ 3 or spec gap → [verdict-routing.md](references/verdict-routing.md) for escalation procedure.
+**ESCALATE**: iteration ≥ 3 or spec gap → [verdict-routing.md](references/verdict-routing.md).
+
+### The zero-findings rule
+
+Only merge when a full review is _clean_ — zero findings at any severity. A bug the tests miss is still a bug. FAIL it, route a fix card, re-verify.
 
 ## Never
 

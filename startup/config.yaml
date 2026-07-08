@@ -5,7 +5,7 @@ model:
   context_length: 1000000
 agent:
   max_turns: 60
-  api_max_retries: 10  # Z.AI overload patience — unlocks the 30/60/90/120s long-backoff ladder (fires at attempt > 3)
+  api_max_retries: 10
   verbose: false
   reasoning_effort: xhigh
   personalities:
@@ -214,18 +214,6 @@ known_plugin_toolsets:
   telegram:
     - spotify
 fallback_model: []
-# ── Security ──────────────────────────────────────────────────────────
-# Secret redaction is ON by default — strings that look like API keys,
-# tokens, and passwords are masked in tool output, logs, and chat
-# responses before the model or user ever sees them. Set redact_secrets
-# to false to disable (e.g. when developing the redactor itself).
-# tirith pre-exec scanning is enabled by default when the tirith binary
-# is available. Configure via security.tirith_* keys or env vars
-# (TIRITH_ENABLED, TIRITH_BIN, TIRITH_TIMEOUT, TIRITH_FAIL_OPEN).
-#
-# security:
-#   redact_secrets: true
-#   tirith_enabled: true
-#   tirith_path: "tirith"
-#   tirith_timeout: 5
-#   tirith_fail_open: true
+onboarding:
+  seen:
+    tool_progress_prompt: true
