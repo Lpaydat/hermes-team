@@ -4,7 +4,7 @@ model:
   base_url: https://api.z.ai/api/coding/paas/v4
   context_length: 1000000
 agent:
-  max_turns: 60
+  max_turns: 500
   api_max_retries: 10
   verbose: false
   reasoning_effort: xhigh

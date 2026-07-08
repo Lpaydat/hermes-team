@@ -13,6 +13,10 @@ agent:
 kanban:
   max_in_progress_per_profile: 1
   dispatch_stale_timeout_seconds: 14400
+memory:
+  provider: builtin
+delegation:
+  reasoning_effort: xhigh
 skills:
   disabled:
     - claude-code
@@ -61,14 +65,13 @@ fallback_model: []
 plugins:
   enabled:
     - dev_workflow
+    - intercom
   disabled: []
   entries:
     dev_workflow:
       allow_tool_override: false
-memory:
-  provider: builtin
-delegation:
-  reasoning_effort: xhigh
+    intercom:
+      allow_tool_override: true
 
 # ── Security ──────────────────────────────────────────────────────────
 # Secret redaction is ON by default — strings that look like API keys,

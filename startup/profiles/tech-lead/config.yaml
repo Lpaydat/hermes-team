@@ -54,10 +54,13 @@ known_plugin_toolsets:
 plugins:
   enabled:
     - dev_workflow
+    - intercom
   disabled: []
   entries:
     dev_workflow:
       allow_tool_override: false
+    intercom:
+      allow_tool_override: true
 
 # ── Security ──────────────────────────────────────────────────────────
 # Secret redaction is ON by default — strings that look like API keys,

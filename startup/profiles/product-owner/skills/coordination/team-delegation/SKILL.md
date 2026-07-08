@@ -65,6 +65,8 @@ Rule of thumb: if a competent stranger couldn't start from the task alone, add w
 - **Single hand-off:** one task, one assignee. Most work. Comment to clarify; don't micromanage.
 - **Dependency chain:** create the pieces, `link` child→parent so each waits for the one before
   (the board auto-promotes when the parent finishes). Use for build→test→review order.
+  Note: `bd link` takes exactly 2 args (child, parent). To link a child to multiple parents,
+  call it once per parent.
 - **Fan-out / swarm:** several independent workers in parallel, then a **verifier** and a
   **synthesizer** that depend on all of them. Use for "cover a lot of ground fast" — surveys,
   multi-file changes, generate-then-judge. Give each worker a distinct slice so they don't overlap.
@@ -248,12 +250,16 @@ the test — the PO did the planner's job and tech-lead just copied the contract
 - ❌ Manually unblock tasks (the reviewer creates fix cards itself)
 - ❌ Interfere with the loop unless something is fatally broken
 
-**Communication between profiles** has no direct messaging channel. Use: kanban card body
-(handoff), kanban comments (async discussion), beads issues (masterplan), files on disk
-(PRD.md, contract.md), and `bd memory` (priority context that persists across sessions).
+**Communication between profiles** is now solved via the Intercom broker (Jul 2026). Messages
+  route in real-time between gateways — `send` (fire-and-forget), `ask` (blocking, 5min timeout),
+  `reply`, `list` (presence). Per-conversation-topic sessions keep parallel discussions isolated.
+  Offline profiles get messages queued or sessions spawned. Contact lists in profile config declare
+  who to call and when. See `references/inter-profile-communication.md` for the full API.
 
 See `references/po-role-boundaries.md` for the full beads-as-masterplan architecture,
 the automation loop design, and the FAANG WHAT/HOW split.
+See `references/inter-profile-communication.md` for the researched solution to the
+inter-profile messaging gap (pi-intercom broker pattern, recommended architecture).
 
 ### 6a. Block→unblock→resume pattern (battle-tested Jul 2026)
 When a task encounters a genuine decision it should not make itself:
@@ -328,10 +334,23 @@ See `references/battle-test-suite-2026-07-04.md` for a complete executed example
   The system self-heals (verifier self-blocks on role violation, scanner escalates, tech-lead
   arbitrates), but it wastes dispatch cycles. Future fix: merge-slot-style lock on FAIL verdict
   filing. See `references/enterprise-test-results.md` § Test 20.
-- **Per-board architecture (Jul 2026)** — each project gets its own kanban board
+- **Per-board architecture (Jul 2026, PROVEN)** — each project gets its own kanban board
   (`hermes kanban boards create <slug>`). The `active-projects.json` registry at
   `~/.hermes-teams/startup/` (shared team-level, NOT under any profile) maps projects to
   boards: `{name, path, board}`. The workflow engine reads this file and loops each project's
   board. All profiles work across all boards (n-to-n). No `--board` flag in skills — the
   dispatcher injects `HERMES_KANBAN_BOARD` into every worker. Proven with multi-board parallel
-  test (two projects, two boards, zero leakage).
+  test (two projects, two boards, zero cross-board leakage, full dev→verifier→merge on each).
+- **Intercom: BUILT + VERIFIED Jul 2026** — a local IPC broker (`~/.hermes-teams/_shared/intercom/`)
+  routes real-time JSON messages between connected Hermes gateways over a Unix socket. Messages
+  land in the receiving session's history (context preserved). Supports `send` (fire-and-forget),
+  `ask` (blocking with 5min timeout), `reply`, and `list` (presence). Per-conversation-topic
+  sessions with deterministic hash IDs (parallel conversations between same profiles never mix
+  context). Offline delivery: message queued in broker memory, drained on reconnect; broker can
+  also spawn a new Hermes session for the target via CLI + resume it for future messages on the
+  same topic. Team-scoped addressing by default (`to="tech-lead"` = your team;
+  `to="team-alpha/scout"` = cross-team). Contact lists per profile config with `when` field for
+  routing hints. Built through the dev workflow itself (PRD → beads → tech-lead → dev → verifier,
+  zero human intervention, 47 tests). See
+  [references/inter-profile-communication.md](references/inter-profile-communication.md)
+  for the architecture, design decisions, and API details.
