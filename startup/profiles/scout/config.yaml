@@ -6,6 +6,7 @@ model:
 toolsets:
   - hermes-cli
   - kanban
+  - intercom
 agent:
   api_max_retries: 10  # Z.AI overload patience — unlocks 30/60/90/120s long-backoff ladder
   reasoning_effort: xhigh
