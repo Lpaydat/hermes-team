@@ -1,7 +1,7 @@
 ---
 name: qa-protocol
-description: "Use when you receive a QA card or are the verifier/synthesizer in a QA swarm. Creates the swarm via qa_swarm tool, blocks until the synthesizer verdicts, then files findings. The ONLY skill that creates QA swarms and files findings."
-version: 2.0.0
+description: "Use when you receive a QA card or are the verifier/synthesizer in a QA swarm. Creates the swarm via qa_swarm tool, blocks until the synthesizer verdicts, then files a combined report to tech-lead. The ONLY skill that creates QA swarms and files findings."
+version: 2.1.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -12,13 +12,13 @@ metadata:
 
 # QA Protocol — the orchestrator loop
 
-The **swarm** is the unit of QA work: you build the artifact, create a swarm of test workers via the `qa_swarm` tool, block until the synthesizer returns a **verdict**, then file findings or complete. The verdict is the gate: PASS, FAIL, or BLOCK.
+The **swarm** is the unit of QA work: you build the artifact, create a swarm of test workers via the `qa_swarm` tool, block until the synthesizer returns a **verdict**, then file a **triage** — one deduped report to tech-lead. The verdict is the gate: PASS, FAIL, or BLOCK.
 
 ## Step 1 — Receive
 
 Read the kanban card body, the linked PRD/spec, and any parent task handoff. Extract what was built, what it claims to do, artifact type, and scope.
 
-**Done when:** you can state in one sentence what you're testing and what artifact type it is. If the spec is too vague, file a P4 finding and block.
+**Done when:** you can state in one sentence what you're testing and what artifact type it is. If the spec is too vague, file a P4 to tech-lead and block.
 
 ## Step 2 — Plan + Size
 
@@ -30,110 +30,74 @@ Extract claims from the spec and risk-rank them P0–P4 (risk = likelihood × im
 | Claims | <10 | 10–20 | 20+ |
 | Execution | Single session | Swarm (2–3 workers) | Swarm (3–4 workers + containers) |
 
-**Done when:** claims extracted, risk-ranked, sizing determined. For small: proceed to build and test inline. For medium/large: proceed to build, then create swarm.
+**Done when:** claims extracted, risk-ranked, sizing determined. For small: build and test inline. For medium/large: build, then create swarm.
 
 ## Step 3 — Build
 
 Build the real artifact from source. For medium/large stateful artifacts, build a container image. Load the `qa-build` skill for build detection, Containerfile generation, and podman build.
 
-**Done when:** artifact builds and you have positive evidence it's running. If build fails, file P0 and stop.
+**Done when:** artifact builds and you have positive evidence it's running. If build fails, file P0 to tech-lead and stop.
 
 ## Step 4 — Create swarm (medium/large only)
 
-Call the `qa_swarm` tool with workers chosen based on what the artifact actually needs:
+Call the `qa_swarm` tool with workers chosen based on what the artifact needs:
 
-| Worker | When to include | Skill |
+| Worker | When | Skill |
 |---|---|---|
-| Functional | ALWAYS — every artifact has claims to prove | qa-functional |
-| Exploratory | ALWAYS — this is QA's irreplaceable value | qa-exploratory |
-| Journeys | Multi-step user flows (webapps, API sequences, CLI pipelines) | qa-journeys |
-| Security | Anything that accepts input or has auth | qa-security |
+| Functional | ALWAYS | qa-functional |
+| Exploratory | ALWAYS | qa-exploratory |
+| Journeys | Multi-step user flows (webapps, API sequences) | qa-journeys |
+| Security | Accepts input or has auth | qa-security |
 
-Write each worker's body with its specific checklist — the exact claims, journeys, checks, or charters to test. The tool bakes this into the card body, allocates ports, creates topology, and blocks you.
-
-```
-qa_swarm(
-    goal="QA: test cross-browser-ai MVP — all 10 MUST-scope items",
-    artifact_type="webapp",
-    image_tag="qa-test:t_5ccbc475",
-    container_port=3000,
-    env_facts="DEMO_MODE=true — Supabase/Storage/Auth mocked (in-memory), AI heuristic mock, Playwright real",
-    spec_path="/home/lpaydat/projects/cross-browser-ai/contract.md",
-    workers=[
-        {
-            "title": "Functional — items 1-4",
-            "skill": "qa-functional",
-            "body": "Test claims: 1) Landing page (headline, URL input, Test Free CTA, browser badges). 2) Anonymous test flow (enter URL → screenshots → results). 3) Loading state with progress steps. 4) Results page (3 screenshots + AI issues list with severity/element/description)."
-        },
-        {
-            "title": "Journeys — items 5-8",
-            "skill": "qa-journeys",
-            "body": "Walk journeys: signup → first test → results. Auth (GitHub OAuth + email/password). Free tier (1 anonymous, 3 authenticated). Limit reached → upgrade prompt. Stripe Checkout ($9/mo)."
-        },
-        {
-            "title": "Security + non-functional",
-            "skill": "qa-security",
-            "body": "Security: CSRF, XSS, SSRF, path traversal, command injection, session fixation, IDOR, auth bypass, secrets, dep scan. Perf: response time, 30s load, concurrency. a11y: keyboard nav, contrast."
-        },
-        {
-            "title": "Exploratory",
-            "skill": "qa-exploratory",
-            "body": "Charters: file:// and ftp:// URL handling. Rate limit bypass via X-Forwarded-For. Concurrent test requests. Container restart recovery. Error message information leakage."
-        }
-    ]
-)
-```
-
-The tool handles: root card creation, worker card creation with tailored bodies + skills + ports, verifier, synthesizer, dependency linking, and blocking. It returns card IDs. Your session ends. You will be auto-promoted when the synthesizer completes.
+Write each worker's body with its specific checklist — the exact claims, journeys, checks, or charters to test. The tool allocates ports and blocks you on the synthesizer.
 
 For small artifacts: skip the swarm, run all test phases inline.
 
-## Step 5 — Verdict
+## Step 5 — Triage
 
-When re-dispatched, read the synthesizer's completion via `kanban_show`:
+When re-dispatched, read the synthesizer's completion via `kanban_show`. The synthesizer already ran the triage — it deduped findings by root cause and filed one combined report to tech-lead.
 
-- **P0/P1 findings:** file findings as kanban cards to `developer`, then `kanban_block(reason="dependency: N critical findings filed for fix")`
-- **P2–P4 only:** file findings, complete with test report
-- **All claims proven:** complete with verdict: PASS
+- **Verdict FAIL (Critical findings exist):** the report is already filed. Block on the tech-lead's triage card: `kanban_block(reason="dependency: QA triage report t_<id> filed for tech-lead")`
+- **Verdict PASS:** complete the QA card with the test report.
 
-Include **testability feedback** (Google TE pattern): design decisions that made testing hard, filed as P4 to `tech-lead`.
+Include **testability feedback** (Google TE pattern): design decisions that made testing hard, filed as P4 in the triage report.
 
 ## Re-test loop
 
-When developer fixes a filed finding and merges:
+When tech-lead delegates fixes and they merge through the dev→verifier pipeline:
 1. Pull latest, rebuild artifact
 2. Delta re-test (only the fixed dimension)
 3. Regression check (adjacent claims)
-4. Resolved → complete. New issue → file new finding.
+4. Resolved → complete. New issue → file new triage to tech-lead.
 5. 3+ failures on same finding → escalate to tech-lead
 
 ## Verifier role (in swarm)
 
-When you are the verifier:
 1. Read the root card's blackboard (comments with `[swarm:blackboard]` prefix)
 2. Check that ALL workers posted results
-3. Missing? Block with `kanban_block(reason="missing worker results")`
-4. All present? Complete with `kanban_complete(metadata={gate: "pass"})`
+3. Missing? `kanban_block(reason="missing worker results")`
+4. All present? `kanban_complete(metadata={gate: "pass"})`
 
 ## Synthesizer role (in swarm)
 
-When you are the synthesizer:
-1. Read the root card's blackboard
-2. Read all worker completion summaries via `kanban_show`
-3. File Critical findings as kanban cards to `developer`
-4. Complete with `kanban_complete(metadata={verdict, findings_count, claims_tested, claims_proven})`
+The synthesizer runs the triage — the most important step for finding quality:
 
-## Filing findings
+1. Read the root card's blackboard and all worker completions via `kanban_show`
+2. **Dedup by root cause:** multiple workers will independently find the same issue (e.g., SSRF found by functional + security + exploratory). Group these as one finding, noting which workers confirmed it.
+3. **File one triage report** to `tech-lead` — a single kanban card with all findings grouped by root cause, severity-ranked:
+   ```
+   [QA][VERDICT] <PASS|FAIL|BLOCK> — N unique findings
+   P1: SSRF — /api/test passes arbitrary URLs (confirmed by 3 workers)
+   P1: Rate limiting — XFF spoof + TOCTOU race (confirmed by 2 workers)
+   P1: Auth mock incomplete — signUp/signIn methods missing
+   ```
+   Each finding includes: claim tested, severity, actual result, reproduction steps (copy-pasteable), evidence, environment.
+4. `kanban_complete(metadata={verdict, findings_count: N, root_causes: N, claims_tested, claims_proven})`
 
-Create kanban cards assigned to `developer`:
-
-**Title:** `[QA][P<level>] <the claim that failed>`
-**Body:** claim tested, severity (P0–P4), actual result, reproduction steps (numbered, copy-pasteable), evidence (actual output), environment (OS, runtime version, artifact build, container image tag).
-
-Load `references/finding-severity.md` from the `live-testing` skill directory for the full rubric.
+Tech-lead reads the triage report, decides priority, and uses `kanban_delegate` to create dev+verifier pairs. This keeps every fix in the normal pipeline — no fix ships without adversarial review.
 
 ## Evidence flow
 
-All evidence flows through the kanban system. Short evidence goes inline in blackboard comments or card bodies. Long evidence goes to `/tmp/qa-evidence/<card-id>/` with the path referenced in the blackboard. Structured verdicts go in `kanban_complete(metadata={...})`.
+Short evidence goes inline in the triage report. Long evidence goes to `/tmp/qa-evidence/<card-id>/` with the path referenced in the report. Structured verdicts go in `kanban_complete(metadata={...})`.
 
 `~/vault/` is the knowledge base — QA evidence never goes there.
