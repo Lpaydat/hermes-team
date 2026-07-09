@@ -129,7 +129,7 @@ Rule of thumb: if a competent stranger couldn't start from the task alone, add w
   added 5 CLI tests → re-review APPROVED. Total wall-clock: ~40 min.
 
   **Battle-tested Jul 2026 (Test 5R — multi-slice automation loop):** PO created PRD (15 user
-  stories via `to-prd`) → beads (3 slices with dependencies via `to-issues`) → created ONE card
+  stories via `to-spec`) → beads (3 slices with dependencies via `to-tickets`) → created ONE card
   per bead with ONLY bead ID + workspace path → tech-lead ran autonomously for all 3 slices.
   Slice 1: delegate_task (GLM 5.2, wrong — skill patched to prefer pi). Slice 2+3: pi harness
   (GLM 4.5-air, correct role separation). 92 tests, 8 defects found across all slices, all
@@ -239,7 +239,7 @@ observe**, not to plan the technical implementation. Violating these boundaries 
 the test — the PO did the planner's job and tech-lead just copied the contract.
 
 **PO owns WHAT** (product decisions):
-- Grill the user (`grilling`) → write PRD (`to-prd`) → decompose into slices (`to-issues`)
+- Grill the user (`grilling`) → write PRD (`to-spec`) → decompose into slices (`to-tickets`)
 - Create beads + dependencies (masterplan) → prioritize which bead is next
 - Create ONE kanban card for tech-lead with just the bead content
 - Observe via kanban logs, take notes, steer only on fatal breakage
@@ -250,11 +250,14 @@ the test — the PO did the planner's job and tech-lead just copied the contract
 - ❌ Manually unblock tasks (the reviewer creates fix cards itself)
 - ❌ Interfere with the loop unless something is fatally broken
 
-**Communication between profiles** is now solved via the Intercom broker (Jul 2026). Messages
-  route in real-time between gateways — `send` (fire-and-forget), `ask` (blocking, 5min timeout),
+**Communication between profiles** is handled by the Intercom broker (Jul 2026). Messages
+  route between gateways via Unix socket — `send` (fire-and-forget), `ask` (blocking, 5min timeout),
   `reply`, `list` (presence). Per-conversation-topic sessions keep parallel discussions isolated.
   Offline profiles get messages queued or sessions spawned. Contact lists in profile config declare
-  who to call and when. See `references/inter-profile-communication.md` for the full API.
+  who to call and when. **Limitation:** messages are async — they arrive on the receiver's next
+  LLM turn via the `pre_llm_call` hook. Hermes has no hook to trigger a new turn when a message
+  arrives, so live side-by-side chat (both profiles typing simultaneously) is not supported.
+  See `references/inter-profile-communication.md` for the full API.
 
 See `references/po-role-boundaries.md` for the full beads-as-masterplan architecture,
 the automation loop design, and the FAANG WHAT/HOW split.
@@ -342,7 +345,7 @@ See `references/battle-test-suite-2026-07-04.md` for a complete executed example
   dispatcher injects `HERMES_KANBAN_BOARD` into every worker. Proven with multi-board parallel
   test (two projects, two boards, zero cross-board leakage, full dev→verifier→merge on each).
 - **Intercom: BUILT + VERIFIED Jul 2026** — a local IPC broker (`~/.hermes-teams/_shared/intercom/`)
-  routes real-time JSON messages between connected Hermes gateways over a Unix socket. Messages
+  routes JSON messages between connected Hermes gateways over a Unix socket. Messages
   land in the receiving session's history (context preserved). Supports `send` (fire-and-forget),
   `ask` (blocking with 5min timeout), `reply`, and `list` (presence). Per-conversation-topic
   sessions with deterministic hash IDs (parallel conversations between same profiles never mix
@@ -350,7 +353,12 @@ See `references/battle-test-suite-2026-07-04.md` for a complete executed example
   also spawn a new Hermes session for the target via CLI + resume it for future messages on the
   same topic. Team-scoped addressing by default (`to="tech-lead"` = your team;
   `to="team-alpha/scout"` = cross-team). Contact lists per profile config with `when` field for
-  routing hints. Built through the dev workflow itself (PRD → beads → tech-lead → dev → verifier,
-  zero human intervention, 47 tests). See
+  routing hints. **Async only:** messages arrive on the receiver's next LLM turn — no Hermes
+  hook exists to trigger a new turn on incoming message (live side-by-side chat unsupported).
+  Built through the dev workflow itself (PRD → beads → tech-lead → dev → verifier,
+  zero human intervention, 47 tests). Plugin install requires `os.path.realpath(__file__)` in
+  the plugin's `__init__.py` (not `abspath`) — symlinks need real path resolution or the
+  sibling `broker` package can't be imported.
+  See
   [references/inter-profile-communication.md](references/inter-profile-communication.md)
   for the architecture, design decisions, and API details.

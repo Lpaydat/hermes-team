@@ -1,16 +1,29 @@
 {
+  "claude-code": {
+    "archived_at": null,
+    "created_at": "2026-07-09T19:08:18.395948+00:00",
+    "created_by": null,
+    "last_patched_at": null,
+    "last_used_at": "2026-07-09T19:38:20.887222+00:00",
+    "last_viewed_at": null,
+    "patch_count": 0,
+    "pinned": false,
+    "state": "active",
+    "use_count": 3,
+    "view_count": 0
+  },
   "developer-loop": {
     "archived_at": null,
     "created_at": "2026-07-04T20:24:03.580331+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-08T11:13:27.384770+00:00",
-    "last_viewed_at": "2026-07-08T11:13:27.382954+00:00",
+    "last_used_at": "2026-07-09T20:16:30.446852+00:00",
+    "last_viewed_at": "2026-07-09T20:16:30.441740+00:00",
     "patch_count": 0,
     "pinned": false,
     "state": "active",
-    "use_count": 103,
-    "view_count": 103
+    "use_count": 136,
+    "view_count": 136
   },
   "find-skills": {
     "archived_at": null,

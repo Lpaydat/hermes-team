@@ -15,7 +15,6 @@ kanban:
 skills:
   disabled:
   - ask-matt
-  - claude-code
   - codebase-design
   - codex
   - decision-mapping

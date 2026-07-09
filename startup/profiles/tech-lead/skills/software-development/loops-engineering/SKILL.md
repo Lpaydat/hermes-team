@@ -44,10 +44,10 @@ Understand the codebase and work surface before planning.
 This is where human-in-the-loop lives — everything after this runs autonomously.
 
 1. **Grill the user** (`grilling`): one question at a time, recommended answer attached, until the goal is crisp.
-2. **Artifacts**: PRD (`to-prd`), ADRs (`domain-modeling` + `decision-mapping`), glossary (`ubiquitous-language`).
+2. **Artifacts**: PRD (`to-spec`), ADRs (`domain-modeling` + `decision-mapping`), glossary (`ubiquitous-language`).
 3. **Negotiate the contract**: Before any code, draft a checklist of testable assertions (~20-27 for a small task; 10 is too few and the evaluator rubber-stamps). The PRD is the boundary; the **contract** is what gets graded. If multiple agents are involved, the generator proposes done-criteria and the evaluator pushes back — they argue via markdown on disk until they agree.
 4. **Build evals**: Structured assertions about behavior, not just unit tests. Build them NOW alongside the contract, not "when problems recur." For subjective quality (UI, text generation), encode the rubric.
-5. **Decompose** (`to-issues`): tracer-bullet vertical slices with dependency tracking.
+5. **Decompose** (`to-tickets`): tracer-bullet vertical slices with dependency tracking.
 6. **Right-size gate**: Can one agent finish this in one context window? Does it touch >5 files across modules? Are there parallelizable sub-parts? → split if any.
 7. **Publish to Beads**: `bd issue create`, preserving hierarchy (epics → beads → sub-beads).
 8. **Write crash state to disk**: `contract.md`, `progress.md`, `log.md`. These three files ARE the state — the model should be able to crash, lose its session, and pick up by reading only these. If you can't describe state in three files, it's too complicated.

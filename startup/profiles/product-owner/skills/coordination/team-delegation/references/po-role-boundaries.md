@@ -9,8 +9,8 @@ work autonomously — Jul 2026 correction).
 | Task | Skill | When |
 |------|-------|------|
 | Grill the user about the product | `grilling` | In-session, before PRD |
-| Write the PRD | `to-prd` | After grilling, in-session |
-| Decompose into slices | `to-issues` | After PRD, in-session, WITH user approval |
+| Write the PRD | `to-spec` | After grilling, in-session |
+| Decompose into slices | `to-tickets` | After PRD, in-session, WITH user approval |
 | Create beads + dependencies | `bd` CLI | After user approves slices |
 | Prioritize which bead to work on next | `bd ready` + PRD priorities | In the cron loop |
 | Create ONE kanban card for tech-lead | `kanban_create` | For the highest-priority ready bead |
@@ -22,7 +22,7 @@ work autonomously — Jul 2026 correction).
 - ❌ **Create step-by-step plans for tech-lead** — tech-lead handles the HOW autonomously
 - ❌ **Manually unblock tasks** — the reviewer creates fix cards itself; PO should not interfere
 - ❌ **Interfere with the loop** — PO observes, takes notes, only intervenes on fatal breakage
-- ❌ **Run `to-issues` and hand slices to tech-lead as a wrapper** — PO runs `to-issues` to create
+- ❌ **Run `to-tickets` and hand slices to tech-lead as a wrapper** — PO runs `to-tickets` to create
   beads (the masterplan), then the automation loop surfaces ready beads to PO one at a time
 
 ## The Clean Handoff Point
@@ -32,8 +32,8 @@ WHAT domain (PO)                     HOW domain (tech-lead)
 ━━━━━━━━━━━━━━━━                     ━━━━━━━━━━━━━━━━━━━━━
 User says "I want X"                 Receives ONE bead as kanban card
 PO grills user (grilling)            → Technical design (architecture, modules)
-PO writes PRD (to-prd)               → Runs loops-engineering skill
-PO runs to-issues → beads created    → Creates dev/reviewer cards per bead
+PO writes PRD (`to-spec`)               → Runs loops-engineering skill
+PO runs `to-tickets` → beads created    → Creates dev/reviewer cards per bead
 ─────── HANDOFF: ONE bead ──────→    → Developer invokes harness
                                      → Reviewer adversarial review
                                      → Fix loop if needed
@@ -48,7 +48,7 @@ Beads (masterplan)                   Kanban (execution)
 Durable across sprints               Ephemeral — archive after done
 Epics → beads → sub-beads             One card per bead that's ready
 Dependencies enforce build order      Cards are one execution cycle
-Created ONCE from to-issues           Created per-cycle by PO's cron
+Created ONCE from `to-tickets`           Created per-cycle by PO's cron
 
 bd ready → surfaces what's ready      Each card = dev→harness→reviewer
 ```
@@ -57,8 +57,8 @@ bd ready → surfaces what's ready      Each card = dev→harness→reviewer
 
 ```
 ━━━ IN-SESSION (PO + user) ━━━━━━━━━━━━━━━━━━━━━━━━━
-PO grills user → PRD written (to-prd)
-PO runs to-issues → presents slices → user approves
+PO grills user → PRD written (`to-spec`)
+PO runs `to-tickets` → presents slices → user approves
 PO creates ALL beads + dependencies in bd
 Session ends → beads persist as the masterplan
 
@@ -109,14 +109,14 @@ reads ready beads, compares to PRD priorities, and creates ONE card for the high
 priority bead. The script part (bd ready + exit if empty) stays free; the LLM part
 only fires when there's a decision to make.
 
-## Who Runs to-prd vs to-issues? (FAANG model)
+## Who Runs to-spec vs to-tickets? (FAANG model)
 
 In real FAANG development:
 - **Product Manager** writes the PRD — what to build, user stories, success metrics
 - **Tech Lead** takes the PRD and writes the technical design + creates engineering tasks
 
 In our architecture, PO combines both PM and PO roles (single front door for the user).
-`to-prd` and `to-issues` are both WHAT decisions (product slicing), so PO owns them.
+`to-spec` and `to-tickets` are both WHAT decisions (product slicing), so PO owns them.
 Tech-lead owns the HOW (technical approach, harness invocation, dev/reviewer cards).
 
 The PO role is NOT just a wrapper that passes beads to tech-lead. PO **decides what to
@@ -131,7 +131,7 @@ This is the implemented architecture (not a proposal — deployed and verified):
 ~/.hermes-teams/shared-skills/                    ← team-level (above all profiles)
 ├── mattpocock/         ← git clone of github.com/mattpocock/skills
 │   └── skills/{engineering,productivity,misc,personal,in-progress,deprecated}/
-├── mattpocock-hub/     ← Hermes-compatible symlink structure
+├── mattpocock/     ← Hermes-compatible symlink structure
 │   ├── engineering -> ../mattpocock/skills/engineering
 │   ├── productivity -> ../mattpocock/skills/productivity
 │   └── ...
@@ -142,7 +142,7 @@ This is the implemented architecture (not a proposal — deployed and verified):
 └── README.md
 
 profiles/<each>/skills/
-├── mattpocock -> ../../../../shared-skills/mattpocock-hub  ← ONE symlink per profile
+├── mattpocock -> ../../../../shared-skills/mattpocock  ← ONE symlink per profile
 ├── ponytail -> ../../../../shared-skills/ponytail-hub      ← ONE symlink per profile
 ```
 

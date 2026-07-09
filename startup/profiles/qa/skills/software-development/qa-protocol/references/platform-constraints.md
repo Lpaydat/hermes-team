@@ -1,44 +1,66 @@
-# Platform Constraints for QA Swarm
+# Platform Constraints & Swarm Mechanics
 
-Known limitations of `hermes kanban swarm` that affect QA workflow. Work around at the profile level — never edit platform source.
+Learned from end-to-end testing of the QA swarm protocol. Load when debugging swarm failures or designing new swarm-based workflows.
 
-## 1. Worker skill name parsing
+## kanban_link + kanban_block — the dependency invariant
 
-The CLI parses `--worker PROFILE:TITLE[:SKILL,SKILL]` by splitting on `:` with `maxsplit=2`. Literal brackets (`[`, `]`) in the skill position get captured in the skill name.
+`kanban_block(kind=dependency)` sets status to `todo` but does NOT register the dependency. Without a matching `kanban_link(dependency_target, my_card_id)`, the dispatcher's `recompute_ready()` never promotes the card when the target completes. The card stays stuck forever.
 
-**Wrong:** `--worker qa:"Title"[:qa-functional]` → skill becomes `qa-functional]` → crash
-**Right:** `--worker "qa:Title:qa-functional"` → skill becomes `qa-functional` → works
+**Always pair them:**
+```python
+kanban_link(synthesizer_id, my_card_id)  # register the dependency
+kanban_block(my_card_id, kind=dependency)  # set status to todo
+```
 
-## 2. Hardcoded verifier and synthesizer skills
+The `qa_swarm` plugin does this correctly (tools.py Step 5). The bug appeared when an orchestrator blocked manually without linking.
 
-`kanban_swarm.py` creates:
-- Verifier card with `skills=["requesting-code-review"]` (line ~192)
-- Synthesizer card with `skills=["humanizer"]` (line ~211)
+## hermes kanban swarm CLI — known gotchas
 
-These are hardcoded for the original use case (code review → humanize output). If they don't exist on your profile, both crash on startup.
+### Skill name bracket bug
+`--worker PROFILE:TITLE[:SKILL,SKILL]` — brackets in help text denote optional syntax. Typing literal brackets produces skill name `qa-functional]` → agent crash. Correct: `--worker "qa:Title:qa-functional"`.
 
-**Workaround:** Install thin stub skills on the QA profile:
-- `skills/software-development/requesting-code-review/SKILL.md` — redirects to QA verifier role
-- `skills/humanizer/SKILL.md` — redirects to QA synthesizer role
+### Hardcoded verifier/synthesizer skills
+`kanban_swarm.py` creates verifier with `skills=["requesting-code-review"]` and synthesizer with `skills=["humanizer"]`. Neither exists on the QA profile by default. Stub versions installed that redirect to QA roles. Do NOT edit platform source.
 
-Both stubs are installed on this profile. Do NOT replace them with the real upstream versions — the real `humanizer` is a 30KB creative writing skill that would confuse the synthesizer.
+### Generic card bodies
+The CLI creates correct topology but generic card bodies. Workers must parse a shared blackboard blob. The `qa_swarm` plugin solves this by baking tailored content into each card body.
 
-## 3. Worker card bodies are generic
+## qa_swarm plugin (Option B)
 
-The swarm CLI creates worker cards with only the title + swarm protocol boilerplate. No claims, no container details, no ports. The orchestrator must post a blackboard comment on the root card after creating the swarm with all the context workers need.
+Located at `plugins/qa_workflow/`. Creates root (blackboard) + workers + verifier + synthesizer atomically. Each worker gets: specific checklist in body, auto-allocated port, container start command, skill loaded. No hardcoded skills.
 
-## 4. max_in_progress_per_profile is global
+## max_in_progress_per_profile — dispatcher cap
 
-The dispatcher reads `max_in_progress_per_profile` from the ROOT `~/.hermes/config.yaml` at gateway boot. Per-profile config blocks are NOT read by the dispatcher. The setting is one global value applied to every profile.
+Global setting in ROOT `~/.hermes/config.yaml`. Default 1 → all same-profile workers execute serially. Raise to 5+ for parallel workers. Dispatcher reads at gateway boot — restart after changing. Check lock holder: `fuser .dispatcher.lock`.
 
-To get parallel QA workers: set `max_in_progress_per_profile: 5` in root config AND restart the gateway holding the dispatcher lock (check `fuser .dispatcher.lock` for which PID holds it).
+## Finding routing — QA → tech-lead (NOT developer)
 
-## 5. Dispatcher lock
+QA findings filed directly to `developer` create lone cards with no verifier child — fixes ship without adversarial review. Correct flow:
 
-Only one gateway holds the dispatcher lock. Check with `fuser /home/lpaydat/.hermes-teams/startup/kanban/.dispatcher.lock`. That gateway is the one that spawns workers. Other gateways run but don't dispatch.
+```
+QA synthesizer → dedup by root cause → 1 triage report to tech-lead
+  → tech-lead → kanban_delegate → developer + verifier → merge → QA re-test
+```
 
-If the dispatcher gateway crashes, another gateway acquires the lock on its next tick (every 60s).
+## Auto-decomposer ≠ team self-healing
 
-## 6. Swarm verifier checks for blackboard
+Tasks with `created_by: "auto-decomposer"` are created by the platform's triage-to-workgraph decomposer. It decomposes triage cards (submitted via dashboard/intercom) into tech-lead + developer + verifier chains. NOT the team self-correcting. Always check `created_by` and read session DBs before claiming system behavior.
 
-The verifier card body says "Review every worker handoff and blackboard update. Gate the swarm: complete only with metadata {gate: pass} when evidence is sufficient." The verifier reads the root card's blackboard comments to check all workers posted results. If a worker crashed without posting, the verifier should block.
+## Beads-watchdog requires active-projects entry
+
+`bd create` creates beads in the planning layer, but the beads-watchdog cron only scans projects listed in `~/.hermes-teams/startup/active-projects.json`. A new beads database that isn't in this file is invisible to the watchdog — beads stay "ready" forever with no kanban card created. Each entry needs: name, path (repo root with `.beads/`), and board (kanban board slug). Add the project to the file, then the watchdog bridges beads→kanban automatically on its next 5-min tick.
+
+## delegate_task fragility
+
+Ephemeral — dies with parent session, shares parent's API rate limits. Under load, frequently hits HTTP 429 and fails silently. Recovery: check session DB for stuck sessions (1 message, 0 tool calls), kill sandbox, re-dispatch with simpler instructions. Prefer kanban child cards for long tasks.
+
+## End-to-end test results (cross-browser-ai MVP)
+
+| Metric | Option A (CLI) | Option B (Plugin) |
+|---|---|---|
+| Worker crashes (test 1) | 8 (bracket bug) | 0 |
+| Card body | Generic boilerplate | Tailored checklist |
+| Test time per worker | ~20 min | ~10-17 min |
+| Total findings | 18 | 19 |
+
+Both produced equivalent finding depth. Plugin is faster and more reliable.

@@ -1,0 +1,5 @@
+name: kanban_chains
+version: 1.0.0
+description: Parallel-chains + optional synthesis topology creator — creates complex task topologies from a unified schema
+provides_tools:
+  - kanban_chains

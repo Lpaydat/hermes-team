@@ -67,61 +67,41 @@ spinning agent stalls it.
 
 ## The kanban swarm pattern (platform-native)
 
-Hermes ships a `hermes kanban swarm` CLI command (backed by `kanban_swarm.py`) that creates a full parallel-worker → verifier → synthesizer topology in one atomic call. Use it instead of manually creating+linking multiple cards when you need fan-out with a gate.
+Hermes ships a `hermes kanban swarm` CLI command and profile-scoped plugins (like `qa_swarm`) that create a full parallel-worker → verifier → synthesizer topology in one atomic call. Use them instead of manually creating+linking multiple cards when you need fan-out with a gate. Profile plugins are preferred — they bake tailored content into each card body instead of generic boilerplate.
 
-```bash
-hermes kanban swarm \
-  "Goal: <final outcome>" \
-  --worker "qa:Functional test:qa-functional" \
-  --worker "qa:Journeys test:qa-journeys" \
-  --verifier qa \
-  --synthesizer qa \
-  --created-by qa \
-  --json
-```
+The swarm creates a **root card** (completed immediately) that acts as a shared **blackboard** — workers post structured JSON results to it, and the synthesizer reads the merged state.
 
-This creates:
-- A **root card** (completed immediately) that acts as a shared blackboard
-- **Worker cards** (ready, parallel) — each can have specific skills loaded via `:skill,skill`
-- A **verifier card** (todo until all workers done) — gates the synthesizer
-- A **synthesizer card** (todo until verifier passes) — produces the final output
+**Platform constraints** (work around at the profile level, never edit platform source):
+- `max_in_progress_per_profile` (ROOT `~/.hermes/config.yaml`, read at gateway boot) caps per-profile concurrency. Raise it + restart the gateway for parallel same-profile workers.
+- The CLI's `--worker PROFILE:TITLE[:SKILL]` brackets denote optional syntax — type `:skill` directly, never literal brackets.
+- `kanban_swarm.py` hardcodes verifier skill `requesting-code-review` and synthesizer skill `humanizer`. Install stub versions if these don't exist on your profile.
 
-**Skill syntax pitfall:** the `--worker PROFILE:TITLE[:SKILL,SKILL]` help text uses brackets to denote optional syntax. Do NOT type literal brackets. Correct: `--worker "qa:Title:qa-functional"`. Wrong: `--worker qa:"Title"[:qa-functional]` — the parser captures the `]` in the skill name, producing `qa-functional]` which crashes the worker.
+For the full QA-specific swarm constraints and end-to-end test results, load `references/platform-constraints.md` from the `qa-protocol` skill.
 
-**Platform hardcodes verifier/synthesizer skills:** `kanban_swarm.py` creates the verifier with `skills=["requesting-code-review"]` and the synthesizer with `skills=["humanizer"]`. If these skills don't exist on the profile, both crash. Install stub versions if needed.
+## kanban_chains — the unified topology tool (migrating)
 
-Workers post structured JSON to the root card's comments via the blackboard pattern:
-```python
-# Post a structured update (from Python/execute_code):
-# post_blackboard_update(conn, root_id, author="worker", key="verdicts", value={...})
-# latest_blackboard(conn, root_id) → merged dict of all structured comments
-```
+Profile-scoped plugins (`kanban_delegate`, `qa_swarm`) are being replaced by **`kanban_chains`** — a single global plugin that handles every delegation topology with two parameters:
 
-The blackboard is the shared state mechanism — workers don't need to see each other's full context, just the structured facts on the root card.
+- **`chains`**: parallel chains of sequential steps (fan-out). Each chain is `[{assignee, title, body, skill}]`.
+- **`after`**: optional sequential steps that run after ALL chains complete (fan-in — verifier, synthesizer, report compiler).
 
-**Critical constraint: `max_in_progress_per_profile: 1`.** The global dispatcher setting caps each profile to 1 concurrent task. If all swarm workers are `assignee=qa`, they execute **serially** (one at a time), not in parallel. To get true parallelism:
-- Raise `max_in_progress_per_profile` in the ROOT `~/.hermes/config.yaml` (not per-profile — the dispatcher reads only the root config; restart the gateway after changing)
-- Or use different profiles for different workers
-- Or accept serial execution (still durable and crash-safe, just slower)
+The caller is linked to the terminal card (last `after` step, or last step of each chain if no `after`) and blocked with `kind=dependency`.
 
-## `kanban_delegate` — a real plugin tool (tech-lead + QA)
+| Profile | chains | after | Caller blocks on |
+|---|---|---|---|
+| tech-lead | `[[{dev}, {verifier}], ...]` | none | all verifiers |
+| QA | `[[{worker}], ...]` | `[{verifier}, {synthesizer}]` | synthesizer |
+| research | `[[{scout}], ...]` | `[{report_compiler}]` | report |
 
-`kanban_delegate` is a profile-scoped plugin (`plugins/dev_workflow/`). It atomically creates dev + verifier cards, links the caller as dependent on the verifier, and blocks with `kind=dependency`. It is installed on both the **tech-lead** and **QA** profiles.
+Once `kanban_chains` is built and both skills migrated, `kanban_delegate` and `qa_swarm` are deprecated. See spec at `/home/lpaydat/kanban-chains-spec.md`.
 
-**When QA finds a Critical bug (P0/P1) during testing, use `kanban_delegate` to file it** — not `kanban_create`. This is the ONLY way to guarantee the developer's fix gets an independent verifier child. `kanban_create` makes a lone developer card with no verifier, which silently breaks the dev→verifier invariant.
+## Finding routing: findings go to tech-lead, not developer
 
-The QA profile also has its own swarm orchestrator: `qa_swarm` at `qa/plugins/qa_workflow/`. It atomically creates root (blackboard) + workers + verifier + synthesizer, with tailored card bodies and auto-allocated ports. Prefer the profile plugin over the CLI — it guarantees correct syntax and structured card content.
+When a profile (QA, verifier, any evaluator) discovers findings that require code changes, file them to **tech-lead**, not directly to `developer`. The tech-lead triages (is it real? worth fixing now?) and uses `kanban_delegate` to create a dev+verifier pair — guaranteeing every fix gets adversarial review.
 
-## Swarm content quality — the critical lesson
+Filing directly to `developer` creates a lone card with no verifier child. This silently breaks the dev→verifier pipeline invariant: every code change must pass through dev→verifier→merge, regardless of whether it originated from the normal implementation loop or from a QA finding.
 
-The `hermes kanban swarm` CLI creates correct **topology** but generic **card bodies**. Every worker gets the same boilerplate ("Functional claims\n\n## Swarm protocol..."). Workers have to read a shared blackboard blob to find their specific assignment, container details, and port.
-
-**Fix options (in order of preference):**
-1. **Use a profile plugin** (like `qa_swarm`) that bakes tailored content into each card body — the model passes structured workers with specific checklists
-2. **Post a structured blackboard** immediately after CLI swarm creation, with per-worker keyed content
-3. **Accept the generic boilerplate** and hope workers discover their assignment from the blackboard (fragile — works with strong models, fails with weaker ones)
-
-The content quality of worker cards directly determines test quality. A card that says "test items 1-4: landing page renders, anonymous test flow works" produces better results than "Functional claims".
+Additionally, **dedup before filing.** Multiple workers or evaluators will independently find the same issue (e.g., SSRF found by functional + security + exploratory testing). Group these as one finding noting which workers confirmed it, then file one combined report — not N redundant cards.
 
 ## Never edit platform source (`hermes-agent/`)
 
@@ -133,8 +113,12 @@ The platform source at `startup/hermes-agent/` is a git submodule tracking `Nous
 - Delegating a tightly-coupled sliver you're mid-way through — the hand-off costs more than the work.
 - Fan-out with overlapping slices — workers duplicate effort and collide.
 - Fire-and-forget: delegating, then never reading the result or unblocking the assignee.
-- **Using `kanban_create` to file developer cards when QA finds a Critical bug** — `kanban_create` makes a lone developer card with no verifier child, silently breaking the dev→verifier invariant. Use `kanban_delegate` instead; it atomically pairs the developer card with a verifier child.
-- **Expecting parallel execution from same-profile fan-out** — `max_in_progress_per_profile: 1` (global, root config) means child cards with the same assignee run serially. Raise the cap or use different profiles for parallelism.
+- **Expecting parallel execution from same-profile fan-out** — `max_in_progress_per_profile` (global, root config) means child cards with the same assignee run serially. Raise the cap or use different profiles for parallelism.
+- **Calling `kanban_block(kind=dependency)` without `kanban_link`.** The block sets status to `todo`, but without a parent→child link in `task_links`, `recompute_ready()` never promotes the card when the dependency completes — it stays stuck forever. Always pair them: `kanban_link(target, my_card_id)` first, then `kanban_block`.
+- **Creating kanban cards when the user asked for beads.** Beads (`bd create` + `bd dep`) are the planning layer — scope, acceptance criteria, dependency ordering, milestones. Kanban cards are the execution layer — task lifecycle, dispatch, session management. When the user says "create beads" or "create tickets with dependencies," use `bd create` + `bd dep --blocks`, NOT `kanban_create`. The beads-watchdog bridges beads→kanban automatically when a bead becomes ready.
+- **Claiming system behavior without reading actual logs.** When asked "who triggered this?" or "is the team self-healing?", do NOT guess from card titles and statuses. Read the session DB (`sqlite3 <profile>/state.db`), task events, and the `created_by` field. Tasks with `created_by: "auto-decomposer"` are the platform's response to dashboard/intercom submissions — they are NOT agents self-correcting. Verify against source before making claims about why something happened.
+- **Designing workflow before verifying against the actual codebase.** When designing or modifying a workflow that involves kanban topology, delegation plugins, or cross-profile coordination, read the real platform source (`kanban_swarm.py`, `kanban.py`), the real skill files of other profiles, and the kanban DB schema BEFORE making architecture decisions. The user catches this pattern reliably — a design that looks right on paper but doesn't match the platform's real mechanisms will fail silently. Ground every design decision in code you've actually read.
+- **Synthesizing approaches before all research is complete.** If you've dispatched research subagents to inform a design decision, do not write specs or make architecture decisions until ALL research streams have returned or definitively failed. Partial research produces partial designs that miss entire dimensions.
 
 ## delegate_task fragility under rate limits
 
