@@ -17,6 +17,11 @@
 !startup/profiles/*/SOUL.md
 !startup/profiles/*/SPECIALTY.md
 
+# ── Re-include: global plugins ──────────────────────────────────
+!startup/plugins/
+!startup/plugins/**
+!startup/plugins/**/plugin.yaml
+
 # ── Re-include: global config ───────────────────────────────────
 !startup/config.yaml
 !startup/kanban/
