@@ -17,6 +17,11 @@
 !startup/profiles/*/SOUL.md
 !startup/profiles/*/SPECIALTY.md
 
+# ── Re-include: global plugins ──────────────────────────────────
+!startup/plugins/
+!startup/plugins/**
+!startup/plugins/**/plugin.yaml
+
 # ── Re-include: global config ───────────────────────────────────
 !startup/config.yaml
 !startup/kanban/
@@ -74,7 +79,7 @@ Thumbs.db
 
 # External installed repos (reinstallable, not our config)
 shared-skills/mattpocock/
-shared-skills/mattpocock-hub/
+shared-skills/mattpocock/
 shared-skills/ponytail/
 shared-skills/ponytail-hub/
 startup/hermes-agent/

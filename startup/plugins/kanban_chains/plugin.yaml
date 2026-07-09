@@ -1,0 +1,5 @@
+name: kanban_chains
+version: 1.0.0
+description: Unified parallel-chains + optional synthesis topology creator — replaces kanban_delegate and qa_swarm
+provides_tools:
+  - kanban_chains
