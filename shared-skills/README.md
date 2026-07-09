@@ -9,13 +9,13 @@ Centralized skill repositories shared across all Hermes profiles via symlinks.
 shared-skills/
 ├── mattpocock/          ← git clone of github.com/mattpocock/skills
 │   └── skills/
-│       ├── engineering/     (to-prd, to-issues, tdd, implement, etc.)
+│       ├── engineering/     (to-spec, to-tickets, tdd, implement, etc.)
 │       ├── productivity/    (grilling, grill-me, handoff, etc.)
 │       ├── misc/            (git-guardrails, setup-pre-commit, etc.)
 │       ├── personal/        (edit-article, obsidian-vault)
 │       ├── in-progress/     (drafts — wizard, loop-me, etc.)
 │       └── deprecated/      (design-an-interface, qa, etc.)
-├── mattpocock-hub/      ← Hermes-compatible symlink structure
+├── mattpocock/      ← Hermes-compatible symlink structure
 │   ├── engineering -> ../mattpocock/skills/engineering
 │   ├── productivity -> ../mattpocock/skills/productivity
 │   └── ...
@@ -32,7 +32,7 @@ shared-skills/
 
 Each profile has two symlinks:
 ```
-profiles/<name>/skills/mattpocock -> ../../../../shared-skills/mattpocock-hub
+profiles/<name>/skills/mattpocock -> ../../../../shared-skills/mattpocock
 profiles/<name>/skills/ponytail   -> ../../../../shared-skills/ponytail-hub
 ```
 
@@ -51,8 +51,8 @@ curator cannot modify them. If a profile needs to customize a skill:
 
 1. Copy the skill to the profile's own skills directory:
    ```bash
-   cp -r ~/.hermes-teams/shared-skills/mattpocock/skills/engineering/to-prd \
-     ~/.hermes-teams/startup/profiles/<profile>/skills/custom/to-prd
+   cp -r ~/.hermes-teams/shared-skills/mattpocock/skills/engineering/to-spec \
+     ~/.hermes-teams/startup/profiles/<profile>/skills/custom/to-spec
    ```
 2. Remove the symlink for that category (or the specific skill)
 3. The profile-local copy can evolve freely via Hermes' curator

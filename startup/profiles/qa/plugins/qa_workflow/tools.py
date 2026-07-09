@@ -232,11 +232,26 @@ def qa_swarm(args: dict, **kwargs) -> str:
     # Step 4: Create synthesizer card (parented on verifier)
     synth_body = (
         "Synthesize QA swarm outputs into final verdict. Read the root card's blackboard "
-        "and all worker completions. File Critical findings (P0/P1) using the `kanban_delegate` "
-        "tool — it atomically creates a developer card WITH a verifier child, so the fix is "
-        "independently verified. Do NOT use `kanban_create` to file developer cards; that "
-        "bypasses the dev→verifier pairing. "
-        "Complete with metadata {verdict, findings_count, claims_tested, claims_proven}.\n\n"
+        "and all worker completions.\n\n"
+        "## Filing findings (CRITICAL — read carefully)\n"
+        "For EACH Critical (P0/P1/P2) finding, use the `qa_file_finding` tool:\n"
+        "```\n"
+        "qa_file_finding(findings=[{\n"
+        '  "title": "<short bug description>",\n'
+        '  "body": "<full bug description, evidence, expected fix, acceptance criteria>",\n'
+        '  "severity": "P1",\n'
+        '  "workspace_path": "<absolute path to project repo>"\n'
+        "}])\n"
+        "```\n"
+        "This atomically creates a developer card + verifier child card (parented on the dev "
+        "card). The verifier is blocked until the developer completes the fix, then auto-promotes.\n"
+        "Do NOT use `kanban_create` — it creates cards WITHOUT verifier children, breaking the "
+        "dev→verifier invariant. Do NOT use `kanban_delegate` — it would block YOUR card waiting "
+        "for the verifier, preventing you from completing synthesis.\n"
+        "You may file multiple findings in one `qa_file_finding` call by passing multiple entries.\n\n"
+        "## After filing\n"
+        "Complete with metadata {verdict, findings_count, claims_tested, claims_proven, "
+        "developer_cards_filed}.\n\n"
         f"Swarm root: `{root_id}`\n"
     )
     synth_result = _run_kanban_json([
@@ -286,5 +301,118 @@ def qa_swarm(args: dict, **kwargs) -> str:
             f"Created QA swarm: {len(worker_ids)} workers + verifier + synthesizer. "
             f"You are now blocked (dependency) on synthesizer {synthesizer_id}. "
             f"Auto-promotes when synthesis completes. Do NOT call kanban_complete until then."
+        ),
+    }, indent=2)
+
+
+def qa_file_finding(args: dict, **kwargs) -> str:
+    """
+    File Critical QA findings (P0/P1/P2) as dev→verifier card pairs.
+
+    For each finding:
+      1. Creates a developer card (assignee=developer) with the bug body + workspace.
+      2. Creates a verifier card (assignee=verifier) parented on the developer card,
+         so the verifier is blocked (todo) until the developer completes the fix.
+
+    This enforces the dev→verifier invariant in CODE — the synthesizer LLM cannot
+    accidentally produce a standalone developer card. Unlike kanban_delegate, this
+    does NOT block or link the caller (the QA synthesizer files findings then completes).
+    """
+    findings = args.get("findings", [])
+    if not findings:
+        return json.dumps({"error": "findings is required — pass at least one finding"})
+
+    my_card_id = _get_my_card_id(**kwargs)  # noqa: F841 — available for logging, not used to block
+
+    created = []
+    dev_ids = []
+    verifier_ids = []
+
+    for i, finding in enumerate(findings):
+        title = finding.get("title", "").strip()
+        body = finding.get("body", "").strip()
+        severity = finding.get("severity", "P1").strip().upper()
+        workspace_path = finding.get("workspace_path", "").strip()
+
+        if not title:
+            created.append({"error": f"Finding {i+1}: title is required"})
+            continue
+        if not body:
+            created.append({"error": f"Finding {i+1}: body is required"})
+            continue
+        if not workspace_path:
+            created.append({"error": f"Finding {i+1}: workspace_path is required"})
+            continue
+
+        if severity not in ("P0", "P1", "P2"):
+            severity = "P1"  # default to critical if invalid
+
+        dev_title = f"[{severity}] {title}"
+        dev_body = (
+            f"{body}\n\n"
+            f"---\n"
+            f"Filed by QA swarm synthesizer (card `{my_card_id}`).\n"
+            f"Severity: {severity}\n"
+            f"Workspace: `{workspace_path}`\n"
+        )
+
+        # Step 1: Create developer card
+        dev_result = _run_kanban_json([
+            "create", dev_title,
+            "--assignee", "developer",
+            "--body", dev_body,
+            "--workspace", f"dir:{workspace_path}",
+        ])
+
+        if not dev_result or "id" not in dev_result:
+            created.append({"error": f"Failed to create developer card for '{title}'"})
+            continue
+
+        dev_id = dev_result["id"]
+        dev_ids.append(dev_id)
+
+        # Step 2: Create verifier card (parented on developer — blocked until dev completes)
+        ver_body = (
+            f"Verify the fix for QA finding: {title}\n\n"
+            f"Developer card: `{dev_id}`\n"
+            f"Severity: {severity}\n\n"
+            f"Original bug report:\n{body}\n\n"
+            f"Verify the fix independently. Read the developer card's completion report, "
+            f"then run your own acceptance probes against the acceptance criteria above. "
+            f"Complete with a verdict (pass/fail) and evidence."
+        )
+        ver_result = _run_kanban_json([
+            "create", f"[verify] {title}",
+            "--assignee", "verifier",
+            "--parent", dev_id,
+            "--body", ver_body,
+        ])
+
+        if not ver_result or "id" not in ver_result:
+            created.append({"error": f"Failed to create verifier card for '{title}'", "dev_id": dev_id})
+            continue
+
+        ver_id = ver_result["id"]
+        verifier_ids.append(ver_id)
+        created.append({
+            "dev_id": dev_id,
+            "verifier_id": ver_id,
+            "title": dev_title,
+            "severity": severity,
+        })
+
+    if not verifier_ids:
+        return json.dumps({"error": "No dev→verifier pairs created", "details": created})
+
+    return json.dumps({
+        "status": "filed",
+        "findings_filed": len(verifier_ids),
+        "developer_ids": dev_ids,
+        "verifier_ids": verifier_ids,
+        "created": created,
+        "message": (
+            f"Filed {len(verifier_ids)} finding(s) as dev→verifier pair(s). "
+            f"Each verifier is blocked until its developer card completes. "
+            f"Neither your card nor the QA swarm is blocked — continue or kanban_complete."
         ),
     }, indent=2)

@@ -15,3 +15,9 @@ def register(ctx):
         schema=schemas.QA_SWARM,
         handler=tools.qa_swarm,
     )
+    ctx.register_tool(
+        name="qa_file_finding",
+        toolset="qa_workflow",
+        schema=schemas.QA_FILE_FINDING,
+        handler=tools.qa_file_finding,
+    )
