@@ -65,9 +65,67 @@ When *you* can't proceed, block with the truthful kind instead of looping or gue
 `capability` (no agent can currently do this). A clear block moves the whole board forward; a
 spinning agent stalls it.
 
+## The kanban swarm pattern (platform-native)
+
+Hermes ships a `hermes kanban swarm` CLI command (backed by `kanban_swarm.py`) that creates a full parallel-worker → verifier → synthesizer topology in one atomic call. Use it instead of manually creating+linking multiple cards when you need fan-out with a gate.
+
+```bash
+hermes kanban swarm \
+  "Goal: <final outcome>" \
+  --worker qa:"Functional test"[:qa-functional] \
+  --worker qa:"Journeys test"[:qa-journeys] \
+  --verifier qa \
+  --synthesizer qa \
+  --created-by qa \
+  --json
+```
+
+This creates:
+- A **root card** (completed immediately) that acts as a shared blackboard
+- **Worker cards** (ready, parallel) — each can have specific skills loaded via `[:skill,skill]`
+- A **verifier card** (todo until all workers done) — gates the synthesizer
+- A **synthesizer card** (todo until verifier passes) — produces the final output
+
+Workers post structured JSON to the root card's comments via the blackboard pattern:
+```python
+# Post a structured update (from Python/execute_code):
+# post_blackboard_update(conn, root_id, author="worker", key="verdicts", value={...})
+# latest_blackboard(conn, root_id) → merged dict of all structured comments
+```
+
+The blackboard is the shared state mechanism — workers don't need to see each other's full context, just the structured facts on the root card.
+
+**Critical constraint: `max_in_progress_per_profile: 1`.** The global dispatcher setting caps each profile to 1 concurrent task. If all swarm workers are `assignee=qa`, they execute **serially** (one at a time), not in parallel. To get true parallelism:
+- Raise `max_in_progress_per_profile` in the ROOT `~/.hermes/config.yaml` (not per-profile — the dispatcher reads only the root config; restart the gateway after changing)
+- Or use different profiles for different workers
+- Or accept serial execution (still durable and crash-safe, just slower)
+
+## `kanban_delegate` — a real plugin tool (tech-lead only)
+
+`kanban_delegate` is a profile-scoped plugin at `tech-lead/plugins/dev_workflow/`. It atomically creates dev + verifier cards, links the caller as dependent on the verifier, and blocks with `kind=dependency`. It is NOT available to other profiles unless the plugin is installed there. The QA profile uses `hermes kanban swarm` CLI directly from the skill instead — a platform-native command that creates parallel workers → verifier → synthesizer with a shared blackboard.
+
 ## Anti-patterns
 - Assigning by name out of habit instead of by the description that fits the work.
 - A task with no acceptance criteria ("look into X") — the assignee can't know when it's done.
 - Delegating a tightly-coupled sliver you're mid-way through — the hand-off costs more than the work.
 - Fan-out with overlapping slices — workers duplicate effort and collide.
 - Fire-and-forget: delegating, then never reading the result or unblocking the assignee.
+- **Using `kanban_delegate` as if it's a real tool** — it's a convention name in the tech-lead skill, not an actual command. Use `kanban_create` + `kanban_block`.
+- **Expecting parallel execution from same-profile fan-out** — `max_in_progress_per_profile: 1` (global, root config) means child cards with the same assignee run serially. Raise the cap or use different profiles for parallelism.
+
+## delegate_task fragility under rate limits
+
+`delegate_task` subagents are **ephemeral** — they die with the parent session and share the parent's API rate limit pool. Under sustained load (e.g., 3+ subagents running concurrently, or long-running research tasks), they frequently hit HTTP 429 rate limits and fail silently after exhausting retries. Observed failure pattern: subagent receives the prompt, makes zero tool calls, hangs for 20-40 minutes, then dies with a 429.
+
+**When to use `delegate_task` despite fragility:**
+- Short, focused tasks (< 5 minutes, < 10 API calls) — the verifier's Phase B fresh-eyes pattern.
+- Tasks that need shared host state (a running server the parent started — kanban child workers can't access it).
+- Tasks where losing the result on crash is acceptable (re-running is cheap).
+
+**When to prefer kanban child cards instead:**
+- Long-running tasks (> 5 minutes, research, multi-step analysis).
+- Tasks that need durability (survive parent session crash).
+- Tasks that need a fresh context window (not shared with parent).
+- When the API is under load and rate limits are likely.
+
+**Recovery pattern when a delegate_task subagent hangs:** Check the session database (`sqlite3 <profile>/state.db "SELECT id, message_count, tool_call_count, end_reason FROM sessions ORDER BY started_at DESC LIMIT 5"`) — a session with 1 message, 0 tool calls, and no `end_reason` is stuck on an API call. Kill the sandbox process (`pkill -f hermes_sandbox`) and either re-dispatch with simpler instructions (no web research — use training knowledge only) or do the work yourself.

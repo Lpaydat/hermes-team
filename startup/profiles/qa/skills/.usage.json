@@ -56,26 +56,26 @@
     "created_at": "2026-07-04T06:07:08.126120+00:00",
     "created_by": null,
     "last_patched_at": "2026-07-08T20:28:40.092371+00:00",
-    "last_used_at": "2026-07-08T20:28:53.861226+00:00",
-    "last_viewed_at": "2026-07-08T20:28:53.855221+00:00",
+    "last_used_at": "2026-07-09T06:28:47.231398+00:00",
+    "last_viewed_at": "2026-07-09T06:28:47.226019+00:00",
     "patch_count": 4,
     "pinned": false,
     "state": "active",
-    "use_count": 4,
-    "view_count": 4
+    "use_count": 5,
+    "view_count": 5
   },
   "live-testing": {
     "archived_at": null,
     "created_at": "2026-07-08T20:01:40.220926+00:00",
     "created_by": null,
-    "last_patched_at": "2026-07-09T04:56:38.208703+00:00",
-    "last_used_at": "2026-07-09T04:56:59.551208+00:00",
-    "last_viewed_at": "2026-07-09T04:56:59.470896+00:00",
-    "patch_count": 21,
+    "last_patched_at": "2026-07-09T08:36:20.399945+00:00",
+    "last_used_at": "2026-07-09T08:34:24.445459+00:00",
+    "last_viewed_at": "2026-07-09T08:34:24.439764+00:00",
+    "patch_count": 56,
     "pinned": false,
     "state": "active",
-    "use_count": 12,
-    "view_count": 12
+    "use_count": 49,
+    "view_count": 49
   },
   "mattpocock/writing-great-skills": {
     "archived_at": null,
@@ -94,14 +94,14 @@
     "archived_at": null,
     "created_at": "2026-07-04T06:05:02.421999+00:00",
     "created_by": null,
-    "last_patched_at": null,
-    "last_used_at": "2026-07-04T06:05:02.427002+00:00",
-    "last_viewed_at": "2026-07-04T06:05:02.422008+00:00",
-    "patch_count": 0,
+    "last_patched_at": "2026-07-09T08:35:02.976365+00:00",
+    "last_used_at": "2026-07-09T08:34:33.746652+00:00",
+    "last_viewed_at": "2026-07-09T08:34:33.740729+00:00",
+    "patch_count": 2,
     "pinned": false,
     "state": "active",
-    "use_count": 1,
-    "view_count": 1
+    "use_count": 5,
+    "view_count": 5
   },
   "team-observability": {
     "archived_at": null,
@@ -116,30 +116,56 @@
     "use_count": 2,
     "view_count": 2
   },
+  "to-spec": {
+    "archived_at": null,
+    "created_at": "2026-07-09T07:30:56.223194+00:00",
+    "created_by": null,
+    "last_patched_at": null,
+    "last_used_at": "2026-07-09T07:30:56.223206+00:00",
+    "last_viewed_at": null,
+    "patch_count": 0,
+    "pinned": false,
+    "state": "active",
+    "use_count": 1,
+    "view_count": 0
+  },
   "transform": {
     "archived_at": null,
     "created_at": "2026-07-02T14:16:27.060952+00:00",
     "created_by": null,
-    "last_patched_at": "2026-07-04T06:28:46.422381+00:00",
-    "last_used_at": "2026-07-08T19:48:15.801196+00:00",
-    "last_viewed_at": "2026-07-08T19:48:15.796485+00:00",
-    "patch_count": 2,
+    "last_patched_at": "2026-07-09T06:53:15.428330+00:00",
+    "last_used_at": "2026-07-09T06:52:14.269276+00:00",
+    "last_viewed_at": "2026-07-09T06:52:14.264055+00:00",
+    "patch_count": 4,
     "pinned": false,
     "state": "active",
-    "use_count": 12,
-    "view_count": 11
+    "use_count": 13,
+    "view_count": 12
+  },
+  "web-research": {
+    "archived_at": null,
+    "created_at": "2026-07-09T05:56:17.664935+00:00",
+    "created_by": "agent",
+    "last_patched_at": "2026-07-09T05:56:55.963557+00:00",
+    "last_used_at": "2026-07-09T05:58:37.644137+00:00",
+    "last_viewed_at": "2026-07-09T05:58:37.638530+00:00",
+    "patch_count": 1,
+    "pinned": false,
+    "state": "active",
+    "use_count": 1,
+    "view_count": 1
   },
   "writing-great-skills": {
     "archived_at": null,
     "created_at": "2026-07-02T14:16:27.058252+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-08T20:09:28.155345+00:00",
-    "last_viewed_at": "2026-07-04T06:13:51.127495+00:00",
+    "last_used_at": "2026-07-09T05:55:22.176553+00:00",
+    "last_viewed_at": "2026-07-09T05:55:22.171096+00:00",
     "patch_count": 0,
     "pinned": false,
     "state": "active",
-    "use_count": 5,
-    "view_count": 3
+    "use_count": 6,
+    "view_count": 4
   }
 }

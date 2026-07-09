@@ -15,7 +15,7 @@ Condensed from research across Atlassian's testing taxonomy, Cucumber BDD docs, 
 | Compatibility | Supported browser/OS/device matrix | — |
 | Usability | Flag confusing/error-prone paths as observations | UX/design review |
 
-**Rule:** QA does cheap, fast checks that catch obvious regressions. Anything requiring tuning, certification, or a multi-hour run = filed bead / specialist handoff.
+**Rule:** QA does cheap, fast checks that catch obvious regressions. Anything requiring tuning, certification, or a multi-hour run = filed kanban card to developer / specialist handoff.
 
 ## Testing depth taxonomy mapped to pipeline ownership
 
@@ -24,12 +24,12 @@ Condensed from research across Atlassian's testing taxonomy, Cucumber BDD docs, 
 | Unit | Single function | **Verifier** (runs dev's test suite pre-merge) |
 | Integration | Module↔module, service↔DB | **Verifier** |
 | Regression | "Did I break old stuff" | **Verifier** (runs suite) |
-| Smoke | "Is it alive + core works" | **QA** (Step 3+4 of test loop) |
-| Sanity | "Does this specific thing basically work" | **QA** (Step 4) |
-| Functional | Per-feature business requirement | **QA** (claim→verdict) |
-| End-to-end / journey | Full user flow through real system | **QA** (Step 6) |
-| Acceptance | Meets business/user needs | **QA** (claim→verdict + journey) |
-| Exploratory (SBET) | Charter-driven creative probing | **QA** (Step 7) |
+| Smoke | "Is it alive + core works" | **QA** (Phase 2 + 3) |
+| Sanity | "Does this specific thing basically work" | **QA** (Phase 3) |
+| Functional | Per-feature business requirement | **QA** (Phase 3 — claim→verdict) |
+| End-to-end / journey | Full user flow through real system | **QA** (Phase 4) |
+| Acceptance | Meets business/user needs | **QA** (Phase 3 + 4) |
+| Exploratory (SBET) | Charter-driven creative probing | **QA** (Phase 6) |
 | Load / Stress / Spike | Performance under volume | Specialist (QA does smoke-load only) |
 | Security (pentest/fuzz) | Vulnerability hunting | Specialist (QA runs scanners only) |
 
