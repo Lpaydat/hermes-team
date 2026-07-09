@@ -58,6 +58,7 @@ skills:
     - writing-beats
     - writing-fragments
     - writing-shape
+    - live-testing
 approvals:
   mode: 'off'
   cron_mode: deny
@@ -73,7 +74,7 @@ qa:
   container_memory: 1g
   container_cpus: 1
   max_parallel_workers: 4
-  evidence_ledger_path: ~/vault/qa-evidence
+  evidence_ledger_path: /tmp/qa-evidence
   two_pass: true
   risk_based: true
 onboarding:

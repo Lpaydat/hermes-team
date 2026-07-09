@@ -68,7 +68,7 @@ Every clone inherits base's default `approvals.mode: manual` — every flagged c
 
 The full schema for every lever (`approvals.*`, `command_allowlist`, `security.*`, confirm gates) with preset bundles and precedence rules lives in **`references/permissions.md`** — load it (`skill_view transform` → `file_path='references/permissions.md'`) if a role needs detail beyond the presets below.
 
-  (a) **Ask one interview question.** Present the trust levels with your recommended pick and get confirmation — do NOT pick silently:
+  (a) **Ask one interview question.** Present the trust levels with your recommended pick and get confirmation — do NOT pick silently. Use the `clarify` tool for this — it's a quick decision, not a design discussion:
 
       > "How much autonomy should this agent have with shell commands?
       >  1. **manual** — prompt before anything flagged (safest; the inherited default).

@@ -110,7 +110,7 @@ The blackboard is the shared state mechanism — workers don't need to see each 
 - Delegating a tightly-coupled sliver you're mid-way through — the hand-off costs more than the work.
 - Fan-out with overlapping slices — workers duplicate effort and collide.
 - Fire-and-forget: delegating, then never reading the result or unblocking the assignee.
-- **Using `kanban_delegate` as if it's a real tool** — it's a convention name in the tech-lead skill, not an actual command. Use `kanban_create` + `kanban_block`.
+- **Using `kanban_delegate` outside tech-lead** — it's a profile-scoped plugin at `tech-lead/plugins/dev_workflow/`, not available to other profiles. Use `hermes kanban swarm` CLI or `kanban_create` + `kanban_block` instead.
 - **Expecting parallel execution from same-profile fan-out** — `max_in_progress_per_profile: 1` (global, root config) means child cards with the same assignee run serially. Raise the cap or use different profiles for parallelism.
 
 ## delegate_task fragility under rate limits

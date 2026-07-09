@@ -285,9 +285,11 @@ Workers post structured results to the root card's blackboard (JSON comments). T
 
 **Critical constraint: `max_in_progress_per_profile: 1`.** If all workers are `assignee=qa`, they execute serially (one at a time). The swarm topology is still correct — it's just slower. To get true parallelism, raise the cap in the ROOT `~/.hermes/config.yaml` (not per-profile config — the dispatcher reads only the root config; restart the gateway after changing), or accept serial execution (still durable and crash-safe).
 
-#### `kanban_delegate` is NOT a real tool
+#### `kanban_delegate` — a real plugin tool (tech-lead only)
 
-The tech-lead skill references `kanban_delegate` as if it's a tool — it is not. It does not exist in the CLI, source, or kanban module. It is a convention name for "create children + link + block." If you need to create cards manually (instead of using `kanban swarm`), use the real tools: `kanban_create(assignee=..., parents=[...], skills=[...])` + `kanban_block(reason="dependency: ...")`.
+`kanban_delegate` is a profile-scoped plugin at `tech-lead/plugins/dev_workflow/`. It atomically creates dev + verifier cards, links the caller as dependent on the verifier, and blocks with `kind=dependency`. It is NOT available to other profiles unless the plugin is installed there. The QA profile uses `hermes kanban swarm` CLI directly from the skill instead — a platform-native command that creates parallel workers → verifier → synthesizer with a shared blackboard.
+
+If you need to create cards manually (instead of using `kanban swarm`), use the real tools: `kanban_create(assignee=..., parents=[...], skills=[...])` + `kanban_block(reason="dependency: ...")`.
 
 ## Risk-based planning
 
@@ -499,9 +501,10 @@ Evidence flows through kanban (card body, metadata, attachments) and `/tmp/qa-ev
 
 9. **Using `clarify` for design discussions.** The clarify tool's timeout is too short for collaborative design conversations with the user. Use it only for quick binary/multiple-choice decisions. For design discussions, chat in free-form text.
 
-10. **Designing workflow before research is complete.** If you've dispatched research subagents to inform a design decision, do not synthesize approaches or make architecture decisions until ALL research streams have returned (or definitively failed).
+- **Designing workflow before research is complete.** If you've dispatched research subagents to inform a design decision, do not synthesize approaches or make architecture decisions until ALL research streams have returned (or definitively failed). The user will catch this — and they'll be right to.
 
-11. **Reviewing only the main SKILL.md and declaring reference files "clean."** When reviewing a skill against quality principles, you must actually READ every reference file — not grep for patterns and declare them clean.
+- **Reviewing only the main SKILL.md and declaring reference files "clean."** When reviewing a skill against quality principles, you must actually READ every reference file — not grep for patterns and declare them clean. A grep for negation patterns misses duplication, no-op prose, and structural issues that only surface when you read the full text.
+- **Claiming a tool "doesn't exist" without searching the full codebase.** During this skill's development, `kanban_delegate` was incorrectly declared "NOT a real tool" because it wasn't found in the CLI or kanban module. It was actually a profile-scoped plugin at `tech-lead/plugins/dev_workflow/`. Before claiming something doesn't exist, search ALL locations: CLI subcommands, installed packages, profile plugins directory (`<profile>/plugins/`), and the hermes-agent source tree. Use `grep -rn` across the full `.hermes-teams/` directory, not just the kanban module.
 
 12. **Skipping the two-pass smoke.** The two-pass approach (smoke all claims first, deep-test only passing ones) catches broken happy paths before wasting deep-test effort. Skipping it means you may spend 20 minutes on edge cases for a claim whose happy path is already broken.
 
