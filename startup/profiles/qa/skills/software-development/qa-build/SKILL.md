@@ -1,6 +1,6 @@
 ---
 name: qa-build
-description: "Use when building and containerizing an artifact for QA testing. Detects build system, generates Containerfile if needed, builds Podman/Docker image, verifies health check. Loaded by the build step in the QA orchestrator."
+description: "Use when building and containerizing an artifact for QA testing. Detects build system, generates Containerfile if needed, builds Podman/Docker image, verifies health check."
 version: 1.0.0
 author: Hermes Agent
 license: MIT
@@ -12,7 +12,7 @@ metadata:
 
 # QA Build — build and containerize the artifact
 
-You build the real artifact from source and create a container image that test workers can run in isolation.
+You build the real artifact from source and create a container **image** that test workers can run in isolation. The image is the shared artifact: built once, each worker starts its own container from it.
 
 ## Detect the build system
 
@@ -112,6 +112,21 @@ CMD ["/app/<binary>"]
 ```
 
 Write the generated Containerfile to the workspace (not the project repo).
+
+### Environment variables
+
+Most real artifacts need secrets/env at runtime (API keys, DB URLs, Stripe keys). Copy the project's `.env`, `.env.local`, or `.env.production` into the container:
+
+```dockerfile
+# Add after COPY . . :
+COPY .env.local .env.local
+```
+
+If the project has no env file, the container will start but fail on first API call. Check for env files during build detection and warn in the completion summary if missing.
+
+### Next.js special case
+
+Next.js standalone builds need `output: 'standalone'` in `next.config.js` and a different Containerfile pattern (copy `.next/standalone` + `.next/static` + `public/`). If `npm run build` produces `.next/standalone/`, use the standalone pattern instead of the generic Node.js template.
 
 ## Build the image
 

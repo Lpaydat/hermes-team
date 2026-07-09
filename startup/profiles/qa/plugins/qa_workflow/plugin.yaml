@@ -1,0 +1,5 @@
+name: qa_workflow
+version: 1.0.0
+description: QA workflow orchestration tools — create test swarms with per-artifact checklists, block until synthesis completes
+provides_tools:
+  - qa_swarm

@@ -72,8 +72,8 @@ Hermes ships a `hermes kanban swarm` CLI command (backed by `kanban_swarm.py`) t
 ```bash
 hermes kanban swarm \
   "Goal: <final outcome>" \
-  --worker qa:"Functional test"[:qa-functional] \
-  --worker qa:"Journeys test"[:qa-journeys] \
+  --worker "qa:Functional test:qa-functional" \
+  --worker "qa:Journeys test:qa-journeys" \
   --verifier qa \
   --synthesizer qa \
   --created-by qa \
@@ -82,9 +82,13 @@ hermes kanban swarm \
 
 This creates:
 - A **root card** (completed immediately) that acts as a shared blackboard
-- **Worker cards** (ready, parallel) — each can have specific skills loaded via `[:skill,skill]`
+- **Worker cards** (ready, parallel) — each can have specific skills loaded via `:skill,skill`
 - A **verifier card** (todo until all workers done) — gates the synthesizer
 - A **synthesizer card** (todo until verifier passes) — produces the final output
+
+**Skill syntax pitfall:** the `--worker PROFILE:TITLE[:SKILL,SKILL]` help text uses brackets to denote optional syntax. Do NOT type literal brackets. Correct: `--worker "qa:Title:qa-functional"`. Wrong: `--worker qa:"Title"[:qa-functional]` — the parser captures the `]` in the skill name, producing `qa-functional]` which crashes the worker.
+
+**Platform hardcodes verifier/synthesizer skills:** `kanban_swarm.py` creates the verifier with `skills=["requesting-code-review"]` and the synthesizer with `skills=["humanizer"]`. If these skills don't exist on the profile, both crash. Install stub versions if needed.
 
 Workers post structured JSON to the root card's comments via the blackboard pattern:
 ```python

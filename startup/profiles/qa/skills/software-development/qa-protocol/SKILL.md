@@ -1,7 +1,7 @@
 ---
 name: qa-protocol
-description: "Use when you receive a QA card or are the verifier/synthesizer in a QA swarm. Creates the swarm, blocks until the synthesizer verdicts, then files findings. The ONLY skill that creates QA swarms and files findings."
-version: 1.1.0
+description: "Use when you receive a QA card or are the verifier/synthesizer in a QA swarm. Creates the swarm via qa_swarm tool, blocks until the synthesizer verdicts, then files findings. The ONLY skill that creates QA swarms and files findings."
+version: 2.0.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -12,9 +12,7 @@ metadata:
 
 # QA Protocol — the orchestrator loop
 
-The **swarm** is the unit of QA work: you build the artifact, create a swarm of test workers, block until the synthesizer returns a **verdict**, then file findings or complete. The verdict is the gate: PASS, FAIL, or BLOCK.
-
-For grounding in industry patterns (Google, Meta, Netflix), platform mechanisms (swarm CLI, blackboard, kanban_delegate), and the QA-vs-verifier boundary, load `references/qa-orchestration-research.md`.
+The **swarm** is the unit of QA work: you build the artifact, create a swarm of test workers via the `qa_swarm` tool, block until the synthesizer returns a **verdict**, then file findings or complete. The verdict is the gate: PASS, FAIL, or BLOCK.
 
 ## Step 1 — Receive
 
@@ -30,7 +28,7 @@ Extract claims from the spec and risk-rank them P0–P4 (risk = likelihood × im
 |---|---|---|---|
 | Type | CLI, library | API server, daemon | Webapp + API + auth |
 | Claims | <10 | 10–20 | 20+ |
-| Execution | Single session | Swarm (2–3 workers) | Swarm (4 workers + containers) |
+| Execution | Single session | Swarm (2–3 workers) | Swarm (3–4 workers + containers) |
 
 **Done when:** claims extracted, risk-ranked, sizing determined. For small: proceed to build and test inline. For medium/large: proceed to build, then create swarm.
 
@@ -42,28 +40,51 @@ Build the real artifact from source. For medium/large stateful artifacts, build 
 
 ## Step 4 — Create swarm (medium/large only)
 
-```bash
-hermes kanban swarm \
-  "QA: test <feature> for <project>" \
-  --worker "qa:Functional claims:qa-functional" \
-  --worker "qa:User journeys:qa-journeys" \
-  --worker "qa:Security + non-functional:qa-security" \
-  --worker "qa:Exploratory:qa-exploratory" \
-  --verifier qa \
-  --synthesizer qa \
-  --created-by qa \
-  --json
+Call the `qa_swarm` tool with workers chosen based on what the artifact actually needs:
+
+| Worker | When to include | Skill |
+|---|---|---|
+| Functional | ALWAYS — every artifact has claims to prove | qa-functional |
+| Exploratory | ALWAYS — this is QA's irreplaceable value | qa-exploratory |
+| Journeys | Multi-step user flows (webapps, API sequences, CLI pipelines) | qa-journeys |
+| Security | Anything that accepts input or has auth | qa-security |
+
+Write each worker's body with its specific checklist — the exact claims, journeys, checks, or charters to test. The tool bakes this into the card body, allocates ports, creates topology, and blocks you.
+
+```
+qa_swarm(
+    goal="QA: test cross-browser-ai MVP — all 10 MUST-scope items",
+    artifact_type="webapp",
+    image_tag="qa-test:t_5ccbc475",
+    container_port=3000,
+    env_facts="DEMO_MODE=true — Supabase/Storage/Auth mocked (in-memory), AI heuristic mock, Playwright real",
+    spec_path="/home/lpaydat/projects/cross-browser-ai/contract.md",
+    workers=[
+        {
+            "title": "Functional — items 1-4",
+            "skill": "qa-functional",
+            "body": "Test claims: 1) Landing page (headline, URL input, Test Free CTA, browser badges). 2) Anonymous test flow (enter URL → screenshots → results). 3) Loading state with progress steps. 4) Results page (3 screenshots + AI issues list with severity/element/description)."
+        },
+        {
+            "title": "Journeys — items 5-8",
+            "skill": "qa-journeys",
+            "body": "Walk journeys: signup → first test → results. Auth (GitHub OAuth + email/password). Free tier (1 anonymous, 3 authenticated). Limit reached → upgrade prompt. Stripe Checkout ($9/mo)."
+        },
+        {
+            "title": "Security + non-functional",
+            "skill": "qa-security",
+            "body": "Security: CSRF, XSS, SSRF, path traversal, command injection, session fixation, IDOR, auth bypass, secrets, dep scan. Perf: response time, 30s load, concurrency. a11y: keyboard nav, contrast."
+        },
+        {
+            "title": "Exploratory",
+            "skill": "qa-exploratory",
+            "body": "Charters: file:// and ftp:// URL handling. Rate limit bypass via X-Forwarded-For. Concurrent test requests. Container restart recovery. Error message information leakage."
+        }
+    ]
+)
 ```
 
-This creates: root card (blackboard) + worker cards (each with skill loaded) + verifier + synthesizer. Workers start their own containers and post results to the blackboard.
-
-Link yourself as dependent on the synthesizer and block:
-```bash
-hermes kanban link <synthesizer_id> <your_card_id>
-hermes kanban block <your_card_id> "dependency: waiting for QA swarm" --kind dependency
-```
-
-Your session ends. You will be auto-promoted when the synthesizer completes.
+The tool handles: root card creation, worker card creation with tailored bodies + skills + ports, verifier, synthesizer, dependency linking, and blocking. It returns card IDs. Your session ends. You will be auto-promoted when the synthesizer completes.
 
 For small artifacts: skip the swarm, run all test phases inline.
 
@@ -116,15 +137,3 @@ Load `references/finding-severity.md` from the `live-testing` skill directory fo
 All evidence flows through the kanban system. Short evidence goes inline in blackboard comments or card bodies. Long evidence goes to `/tmp/qa-evidence/<card-id>/` with the path referenced in the blackboard. Structured verdicts go in `kanban_complete(metadata={...})`.
 
 `~/vault/` is the knowledge base — QA evidence never goes there.
-
-## Pitfalls
-
-1. **Designing the workflow before verifying against the actual codebase.** Don't design orchestration patterns from theory — read the real skill files (verifier's `adversarial-review`, tech-lead's `loops-engineering`, developer's `developer-loop`) and the platform source (`kanban_swarm.py`, `kanban.py`) to ground every design decision in how the system actually works. A design that looks right on paper but doesn't match the platform's real mechanisms will fail silently.
-
-2. **Synthesizing approaches before all research is complete.** If you've dispatched research subagents, do not design approaches or make architecture decisions until ALL research streams have returned or definitively failed. Incomplete research produces designs that solve the wrong problem.
-
-3. **Using `clarify` for design discussions.** The clarify tool's timeout is too short for collaborative design conversations. Use it only for quick binary/multiple-choice decisions. For design discussions, chat in free-form text.
-
-4. **Changing `max_in_progress_per_profile` without restarting the gateway.** The dispatcher reads this setting at gateway boot. Editing `~/.hermes/config.yaml` without restarting means the old cap silently remains in effect — swarm workers execute serially even though the config says 5. Restart the gateway after changing dispatcher caps.
-
-5. **Starting a QA gateway that isn't running.** If the QA profile's gateway isn't running, the dispatcher won't pick up QA cards. Check with `hermes gateway list` — if QA shows ✗, start it with `hermes -p qa gateway run` (in background via `terminal(background=true)`).
