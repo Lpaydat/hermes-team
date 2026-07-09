@@ -232,7 +232,10 @@ def qa_swarm(args: dict, **kwargs) -> str:
     # Step 4: Create synthesizer card (parented on verifier)
     synth_body = (
         "Synthesize QA swarm outputs into final verdict. Read the root card's blackboard "
-        "and all worker completions. File Critical findings as kanban cards to developer. "
+        "and all worker completions. File Critical findings (P0/P1) using the `kanban_delegate` "
+        "tool — it atomically creates a developer card WITH a verifier child, so the fix is "
+        "independently verified. Do NOT use `kanban_create` to file developer cards; that "
+        "bypasses the dev→verifier pairing. "
         "Complete with metadata {verdict, findings_count, claims_tested, claims_proven}.\n\n"
         f"Swarm root: `{root_id}`\n"
     )

@@ -104,9 +104,28 @@ The blackboard is the shared state mechanism — workers don't need to see each 
 - Or use different profiles for different workers
 - Or accept serial execution (still durable and crash-safe, just slower)
 
-## `kanban_delegate` — a real plugin tool (tech-lead only)
+## `kanban_delegate` — a real plugin tool (tech-lead + QA)
 
-`kanban_delegate` is a profile-scoped plugin at `tech-lead/plugins/dev_workflow/`. It atomically creates dev + verifier cards, links the caller as dependent on the verifier, and blocks with `kind=dependency`. It is NOT available to other profiles unless the plugin is installed there. The QA profile uses `hermes kanban swarm` CLI directly from the skill instead — a platform-native command that creates parallel workers → verifier → synthesizer with a shared blackboard.
+`kanban_delegate` is a profile-scoped plugin (`plugins/dev_workflow/`). It atomically creates dev + verifier cards, links the caller as dependent on the verifier, and blocks with `kind=dependency`. It is installed on both the **tech-lead** and **QA** profiles.
+
+**When QA finds a Critical bug (P0/P1) during testing, use `kanban_delegate` to file it** — not `kanban_create`. This is the ONLY way to guarantee the developer's fix gets an independent verifier child. `kanban_create` makes a lone developer card with no verifier, which silently breaks the dev→verifier invariant.
+
+The QA profile also has its own swarm orchestrator: `qa_swarm` at `qa/plugins/qa_workflow/`. It atomically creates root (blackboard) + workers + verifier + synthesizer, with tailored card bodies and auto-allocated ports. Prefer the profile plugin over the CLI — it guarantees correct syntax and structured card content.
+
+## Swarm content quality — the critical lesson
+
+The `hermes kanban swarm` CLI creates correct **topology** but generic **card bodies**. Every worker gets the same boilerplate ("Functional claims\n\n## Swarm protocol..."). Workers have to read a shared blackboard blob to find their specific assignment, container details, and port.
+
+**Fix options (in order of preference):**
+1. **Use a profile plugin** (like `qa_swarm`) that bakes tailored content into each card body — the model passes structured workers with specific checklists
+2. **Post a structured blackboard** immediately after CLI swarm creation, with per-worker keyed content
+3. **Accept the generic boilerplate** and hope workers discover their assignment from the blackboard (fragile — works with strong models, fails with weaker ones)
+
+The content quality of worker cards directly determines test quality. A card that says "test items 1-4: landing page renders, anonymous test flow works" produces better results than "Functional claims".
+
+## Never edit platform source (`hermes-agent/`)
+
+The platform source at `startup/hermes-agent/` is a git submodule tracking `NousResearch/hermes-agent`. Local edits are overwritten on `hermes update`, affect every profile on the machine, and aren't tracked in the team repo. Work around constraints at the profile level: stub skills, wrapper scripts, profile-scoped plugins. If you accidentally edit platform source, revert immediately: `cd startup/hermes-agent && git checkout -- <file>`.
 
 ## Anti-patterns
 - Assigning by name out of habit instead of by the description that fits the work.
@@ -114,7 +133,7 @@ The blackboard is the shared state mechanism — workers don't need to see each 
 - Delegating a tightly-coupled sliver you're mid-way through — the hand-off costs more than the work.
 - Fan-out with overlapping slices — workers duplicate effort and collide.
 - Fire-and-forget: delegating, then never reading the result or unblocking the assignee.
-- **Using `kanban_delegate` outside tech-lead** — it's a profile-scoped plugin at `tech-lead/plugins/dev_workflow/`, not available to other profiles. Use `hermes kanban swarm` CLI or `kanban_create` + `kanban_block` instead.
+- **Using `kanban_create` to file developer cards when QA finds a Critical bug** — `kanban_create` makes a lone developer card with no verifier child, silently breaking the dev→verifier invariant. Use `kanban_delegate` instead; it atomically pairs the developer card with a verifier child.
 - **Expecting parallel execution from same-profile fan-out** — `max_in_progress_per_profile: 1` (global, root config) means child cards with the same assignee run serially. Raise the cap or use different profiles for parallelism.
 
 ## delegate_task fragility under rate limits
