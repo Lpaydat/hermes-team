@@ -110,8 +110,8 @@ def kanban_chains(args: dict, **kwargs) -> str:
 
     bb = blackboard or {}
     image_tag = (bb.get("image_tag") or "").strip()
-    container_port = bb.get("container_port", 3000)
-    base_port = bb.get("base_port", 18081)
+    container_port = int(bb.get("container_port", 3000))
+    base_port = int(bb.get("base_port", 18081))
     env_facts = (bb.get("env_facts") or "").strip()
     spec_path = (bb.get("spec_path") or "").strip()
     extra = bb.get("extra") or {}
@@ -131,7 +131,7 @@ def kanban_chains(args: dict, **kwargs) -> str:
     if idempotency_key:
         root_create_args += ["--idempotency-key", idempotency_key]
     root_result = _run_kanban_json(root_create_args)
-    if not root_result or "id" not in root_result:
+    if not root_result or not root_result.get("id"):
         return json.dumps({"error": "Failed to create root card"})
     root_id = root_result["id"]
 
@@ -178,7 +178,7 @@ def kanban_chains(args: dict, **kwargs) -> str:
             if step.get("priority") is not None:
                 create_args += ["--priority", str(step["priority"])]
             res = _run_kanban_json(create_args)
-            if not res or "id" not in res:
+            if not res or not res.get("id"):
                 return json.dumps({
                     "error": f"Failed to create chain {i} step {j}",
                     "root_id": root_id, "chains": chain_ids,
@@ -206,7 +206,7 @@ def kanban_chains(args: dict, **kwargs) -> str:
             if step.get("priority") is not None:
                 create_args += ["--priority", str(step["priority"])]
             res = _run_kanban_json(create_args)
-            if not res or "id" not in res:
+            if not res or not res.get("id"):
                 return json.dumps({
                     "error": f"Failed to create after step {k}",
                     "root_id": root_id, "chains": chain_ids, "after": after_ids,

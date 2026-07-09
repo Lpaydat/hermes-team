@@ -685,6 +685,78 @@ class TestBlackboardComment(unittest.TestCase):
 
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 20. Regression: base_port as string (verifier-found bug — no type coercion)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestPortAllocationStringCoercion(unittest.TestCase):
+    """Verifier found: base_port passed as string '18081' causes TypeError at
+    tools.py:166 (port = base_port + i). Fix: int() coercion before arithmetic."""
+
+    def test_base_port_string_does_not_crash(self):
+        parsed, fake = _run_handler(
+            args={
+                "goal": "string port coercion",
+                "chains": [
+                    [_chain_step(title="c0")],
+                    [_chain_step(title="c1")],
+                ],
+                "blackboard": {"image_tag": "img:1", "base_port": "18081"},
+            },
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}, {"id": "t_c1"}],
+        )
+        self.assertNotIn("error", parsed, f"Handler crashed on string base_port: {parsed}")
+        creates = _extract_create_calls(fake)
+        body0 = _arg_value(creates[1], "--body")
+        body1 = _arg_value(creates[2], "--body")
+        self.assertIn("Port: 18081", body0)
+        self.assertIn("Port: 18082", body1)
+
+    def test_container_port_string_does_not_crash(self):
+        parsed, fake = _run_handler(
+            args={
+                "goal": "string container port",
+                "chains": [[_chain_step(title="c0")]],
+                "blackboard": {"image_tag": "img:1", "container_port": "3000", "base_port": "18081"},
+            },
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
+        )
+        self.assertNotIn("error", parsed, f"Handler crashed on string ports: {parsed}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 21. Regression: empty-string id guard (verifier-found latent issue)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestEmptyIdGuard(unittest.TestCase):
+    """Verifier found: guard 'not res or "id" not in res' does not catch
+    {"id": ""} — empty-string id slips through. Fix: not res.get("id")."""
+
+    def test_empty_string_id_on_chain_step_returns_error(self):
+        parsed, fake = _run_handler(
+            args={
+                "goal": "empty id test",
+                "chains": [[_chain_step(title="c0")]],
+            },
+            create_responses=[{"id": "t_root"}, {"id": ""}],
+        )
+        self.assertIn("error", parsed)
+        self.assertIn("Failed to create", parsed["error"])
+
+    def test_empty_string_id_on_root_returns_error(self):
+        parsed, fake = _run_handler(
+            args={
+                "goal": "empty root id",
+                "chains": [[_chain_step(title="c0")]],
+            },
+            create_responses=[{"id": ""}],
+        )
+        self.assertIn("error", parsed)
+        self.assertIn("Failed to create root card", parsed["error"])
+
+
+
 if __name__ == "__main__":
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
@@ -709,6 +781,8 @@ if __name__ == "__main__":
         TestCompileCheck,             # 17
         TestRootCompleted,            # 18
         TestBlackboardComment,        # 19
+        TestPortAllocationStringCoercion,  # 20
+        TestEmptyIdGuard,            # 21
     ]
 
     for cls in test_classes:
