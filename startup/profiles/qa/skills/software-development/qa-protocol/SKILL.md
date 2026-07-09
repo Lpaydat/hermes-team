@@ -14,6 +14,8 @@ metadata:
 
 The **swarm** is the unit of QA work: you build the artifact, create a swarm of test workers, block until the synthesizer returns a **verdict**, then file findings or complete. The verdict is the gate: PASS, FAIL, or BLOCK.
 
+For grounding in industry patterns (Google, Meta, Netflix), platform mechanisms (swarm CLI, blackboard, kanban_delegate), and the QA-vs-verifier boundary, load `references/qa-orchestration-research.md`.
+
 ## Step 1 — Receive
 
 Read the kanban card body, the linked PRD/spec, and any parent task handoff. Extract what was built, what it claims to do, artifact type, and scope.
@@ -43,10 +45,10 @@ Build the real artifact from source. For medium/large stateful artifacts, build 
 ```bash
 hermes kanban swarm \
   "QA: test <feature> for <project>" \
-  --worker qa:"Functional claims"[:qa-functional] \
-  --worker qa:"User journeys"[:qa-journeys] \
-  --worker qa:"Security + non-functional"[:qa-security] \
-  --worker qa:"Exploratory"[:qa-exploratory] \
+  --worker "qa:Functional claims:qa-functional" \
+  --worker "qa:User journeys:qa-journeys" \
+  --worker "qa:Security + non-functional:qa-security" \
+  --worker "qa:Exploratory:qa-exploratory" \
   --verifier qa \
   --synthesizer qa \
   --created-by qa \
@@ -114,3 +116,15 @@ Load `references/finding-severity.md` from the `live-testing` skill directory fo
 All evidence flows through the kanban system. Short evidence goes inline in blackboard comments or card bodies. Long evidence goes to `/tmp/qa-evidence/<card-id>/` with the path referenced in the blackboard. Structured verdicts go in `kanban_complete(metadata={...})`.
 
 `~/vault/` is the knowledge base — QA evidence never goes there.
+
+## Pitfalls
+
+1. **Designing the workflow before verifying against the actual codebase.** Don't design orchestration patterns from theory — read the real skill files (verifier's `adversarial-review`, tech-lead's `loops-engineering`, developer's `developer-loop`) and the platform source (`kanban_swarm.py`, `kanban.py`) to ground every design decision in how the system actually works. A design that looks right on paper but doesn't match the platform's real mechanisms will fail silently.
+
+2. **Synthesizing approaches before all research is complete.** If you've dispatched research subagents, do not design approaches or make architecture decisions until ALL research streams have returned or definitively failed. Incomplete research produces designs that solve the wrong problem.
+
+3. **Using `clarify` for design discussions.** The clarify tool's timeout is too short for collaborative design conversations. Use it only for quick binary/multiple-choice decisions. For design discussions, chat in free-form text.
+
+4. **Changing `max_in_progress_per_profile` without restarting the gateway.** The dispatcher reads this setting at gateway boot. Editing `~/.hermes/config.yaml` without restarting means the old cap silently remains in effect — swarm workers execute serially even though the config says 5. Restart the gateway after changing dispatcher caps.
+
+5. **Starting a QA gateway that isn't running.** If the QA profile's gateway isn't running, the dispatcher won't pick up QA cards. Check with `hermes gateway list` — if QA shows ✗, start it with `hermes -p qa gateway run` (in background via `terminal(background=true)`).
