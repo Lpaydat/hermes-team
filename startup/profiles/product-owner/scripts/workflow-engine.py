@@ -165,8 +165,9 @@ WAYFINDER_ROUTES = {
     "wayfinder:research": "scout",
     "wayfinder:task": "ops",
 }
-# grilling/prototype are HITL-substitute work; the map epic is an index, not work.
-WAYFINDER_SKIP = ("wayfinder:grilling", "wayfinder:prototype", "wayfinder:map")
+# grilling/prototype are HITL-substitute work; the map epic is an index, not
+# work; an idea brief is a citable record, not work.
+WAYFINDER_SKIP = ("wayfinder:grilling", "wayfinder:prototype", "wayfinder:map", "venture:brief")
 
 def dispatch_wayfinder_ticket(board, project_dir, bead, assignee):
     """Create one routed card for a wayfinder research/task ticket."""
@@ -254,6 +255,67 @@ def phase_dispatch(board, project_dir):
         "--json",
     ])
     actions.append(f"dispatch: {'created' if ok else 'FAILED'} PO card for {len(new_beads)} bead(s) on {board}")
+    return actions
+
+# ══════════════════════════════════════════════════════════════════════════
+# PHASE 2b: HUMAN ESCALATION PING — human-flagged beads → operator card
+# ══════════════════════════════════════════════════════════════════════════
+
+OPERATOR_BOARD = "hermes-hq"
+
+def hq_ping_exists(bead_id):
+    db = board_db_path(OPERATOR_BOARD)
+    if not db.exists():
+        return False
+    try:
+        conn = sqlite3.connect(str(db))
+        row = conn.execute(
+            "SELECT 1 FROM tasks WHERE idempotency_key = ? AND status != 'archived'",
+            (f"bead-human-{bead_id}",),
+        ).fetchone()
+        conn.close()
+        return row is not None
+    except sqlite3.Error:
+        return False
+
+def phase_human_escalations(board, project_dir):
+    """Async operator ping: every open human-flagged bead gets ONE hq card.
+
+    The flag (`bd tag <id> human`) is set by whoever escalates (e.g. the
+    wayfinding citation rule); this phase makes it VISIBLE without relying on
+    the escalating agent also remembering to ping. Idempotent per bead.
+    """
+    actions = []
+    flagged = bd_json(project_dir, "list", "--all", "--label", "human")
+    if not isinstance(flagged, list):
+        return actions
+    for bead in flagged:
+        if not isinstance(bead, dict) or not bead.get("id"):
+            continue
+        if bead.get("status") == "closed":
+            continue
+        bead_id = bead["id"]
+        if hq_ping_exists(bead_id):
+            continue
+        if DRY_RUN:
+            actions.append(f"human-ping: would create hq card for {bead_id}")
+            continue
+        title = f"[ESCALATION] human answer needed: {bead.get('title', bead_id)}"[:120]
+        body = (
+            f"## Human-flagged bead: {bead_id}\n\n"
+            f"{(bead.get('description') or '')[:1200]}\n\n"
+            f"Answer with: `bd human respond {bead_id}` (comments + closes the bead) "
+            f"from {project_dir}. Board: {board}."
+        )
+        ok, _ = run_kanban(OPERATOR_BOARD, [
+            "create", title,
+            "--assignee", "default",
+            "--priority", "10",
+            "--body", body,
+            "--idempotency-key", f"bead-human-{bead_id}",
+            "--json",
+        ])
+        actions.append(f"human-ping: {'created' if ok else 'FAILED'} hq card for {bead_id}")
     return actions
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -385,6 +447,11 @@ def main():
             all_actions.extend(phase_dispatch(board, path))
         except Exception as e:
             all_actions.append(f"dispatch ERROR [{name}]: {e}")
+
+        try:
+            all_actions.extend(phase_human_escalations(board, path))
+        except Exception as e:
+            all_actions.append(f"human-ping ERROR [{name}]: {e}")
 
         try:
             all_actions.extend(scan_board(board))

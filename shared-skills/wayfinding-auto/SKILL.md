@@ -47,10 +47,17 @@ Every VB answer you record and every resolution comment you write MUST cite its 
 - a prior map decision (closed ticket id), or
 - the intercom exchange itself (`intercom topic <map-id>, VB reply` — quote the decisive line).
 
-An answer neither you nor VB can source is an ESCALATION, not a guess:
-flag the ticket for the human asynchronously (`bd human <ticket-id>` — or block the bead
-`needs-input` with an `ESCALATE:` comment naming what could not be sourced), then move on to
-other frontier tickets. Uncited product intent must never enter the map.
+An answer neither you nor VB can source is an ESCALATION, not a guess. Asynchronously:
+
+1. Flag the ticket: `bd tag <ticket-id> human` and add an `ESCALATE:` comment naming
+   exactly what could not be sourced (the operator answers with `bd human respond
+   <ticket-id>`, which comments and closes the ticket — that human answer IS the citation).
+2. Ping the operator's surface: create a card on the `hermes-hq` board, `--assignee default`,
+   titled `[ESCALATION] <ticket name>` with the question + map/brief pointers.
+3. Move on to other frontier tickets — an escalation never blocks unrelated work.
+
+Uncited product intent must never enter the map. When you later find an escalated ticket
+closed by `bd human respond`, carry its answer to the map index citing the human's comment.
 
 ## One unit per session (upstream rule, restated because cards tempt batching)
 
