@@ -73,16 +73,18 @@ Follow this checklist EXACTLY. Each step is mandatory.
 - [ ] Identify the project directory (absolute path)
 
 ### Step 2: Delegate
-- [ ] Call `kanban_delegate` with your contract(s)
-- [ ] Single chain → pass one contract
-- [ ] Parallel chains → pass multiple contracts
+- [ ] Call `kanban_chains` with your contract(s) as parallel chains
+- [ ] Single chain → pass one chain with dev + verifier steps
+- [ ] Parallel chains → pass multiple chains
 
 ```
-kanban_delegate(contracts=[{
-  "title": "<short title>",
-  "body": "<full contract: ACs, evals_cmd, bead_id, constraints>",
-  "workspace_path": "<absolute project dir>"
-}])
+kanban_chains(
+    goal="<short description>",
+    chains=[[
+        {"assignee": "developer", "title": "<short title>", "body": "<full contract: ACs, evals_cmd, bead_id, constraints>", "workspace_path": "<absolute project dir>"},
+        {"assignee": "verifier", "title": "[verify] <short title>", "body": "Verify developer card. Contract: <full contract>"}
+    ]]
+)
 ```
 
 - [ ] Verify the tool returned `"status": "blocked"` — this means it worked
@@ -95,10 +97,10 @@ kanban_delegate(contracts=[{
 - [ ] If any FAIL → check for fix chains created by the verifier
   - Fix chains are handled automatically — do NOT create your own fix card
   - The verifier creates fix cards on FAIL. Wait for the fix verifier to complete.
-  - If you are re-dispatched and fix verifiers are still running, call `kanban_delegate` again to re-block on the new fix verifiers.
+  - If you are re-dispatched and fix verifiers are still running, call `kanban_chains` again to re-block on the new fix verifiers.
 
 ### Rules
-- `kanban_delegate` is the ONLY way to create dev/verifier cards. NEVER use `kanban_create` for dev or verifier cards.
+- `kanban_chains` is the ONLY way to create dev/verifier cards. NEVER use `kanban_create` for dev or verifier cards.
 - NEVER poll or sleep-loop waiting for the verifier. The tool blocks you — you will be auto-promoted.
 - NEVER create fix cards yourself. The verifier handles FAIL routing.
 - On verifier PASS: verifier merges to main. On FAIL: verifier creates fix card. On ESCALATE: verifier blocks for tech-lead.

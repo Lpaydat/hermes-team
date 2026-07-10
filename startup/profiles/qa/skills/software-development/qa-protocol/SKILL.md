@@ -1,20 +1,18 @@
 ---
 name: qa-protocol
-description: "Use when you receive a QA card or are the verifier/synthesizer in a QA swarm. Creates the swarm via kanban_chains (migrating from qa_swarm), blocks until the synthesizer verdicts, then files a combined report to tech-lead. The ONLY skill that creates QA swarms and files findings."
-version: 2.1.0
+description: "Use when you receive a QA card or are the verifier/synthesizer in a QA swarm. Creates the swarm via kanban_chains, blocks until the synthesizer verdicts, then files a combined report to tech-lead. The ONLY skill that creates QA swarms and files findings."
+version: 3.0.0
 author: Hermes Agent
 license: MIT
 metadata:
   hermes:
-    tags: [qa, protocol, orchestrator, swarm, verdict]
+    tags: [qa, protocol, orchestrator, swarm, verdict, chains]
     related_skills: [qa-build, qa-functional, qa-journeys, qa-security, qa-exploratory, team-delegation]
 ---
 
 # QA Protocol — the orchestrator loop
 
-The **swarm** is the unit of QA work: you build the artifact, create a swarm of test workers via the `qa_swarm` tool, block until the synthesizer returns a **verdict**, then file a **triage** — one deduped report to tech-lead. The verdict is the gate: PASS, FAIL, or BLOCK.
-
-For bugs found and fixes applied during the first end-to-end tests (bracket syntax, hardcoded skills, finding routing gap, kanban_link requirement), load `references/swarm-first-run-postmortem.md`. For the kanban_chains unified topology design and e2e test comparison (Option A vs Option B), load `references/kanban-chains-design.md`.
+The **swarm** is the unit of QA work: you build the artifact, create a swarm of test workers via the `kanban_chains` tool, block until the synthesizer returns a **verdict**, then file a **triage** — one deduped report to tech-lead. The verdict is the gate: PASS, FAIL, or BLOCK.
 
 ## Step 1 — Receive
 
@@ -42,7 +40,7 @@ Build the real artifact from source. For medium/large stateful artifacts, build 
 
 ## Step 4 — Create swarm (medium/large only)
 
-Call the `qa_swarm` tool with workers chosen based on what the artifact needs:
+Call the `kanban_chains` tool with chains (parallel workers) + after (verifier + synthesizer). Choose workers based on what the artifact needs:
 
 | Worker | When | Skill |
 |---|---|---|
@@ -59,7 +57,7 @@ For small artifacts: skip the swarm, run all test phases inline.
 
 When re-dispatched, read the synthesizer's completion via `kanban_show`. The synthesizer already ran the triage — it deduped findings by root cause and filed one combined report to tech-lead.
 
-- **Verdict FAIL (Critical findings exist):** the report is already filed. Block on the tech-lead's triage card: `kanban_block(reason="dependency: QA triage report t_<id> filed for tech-lead")`
+- **Verdict FAIL (Critical findings exist):** the report is already filed. Block on the tech-lead's triage card.
 - **Verdict PASS:** complete the QA card with the test report.
 
 Include **testability feedback** (Google TE pattern): design decisions that made testing hard, filed as P4 in the triage report.
@@ -91,21 +89,16 @@ The synthesizer runs the triage — the most important step for finding quality:
    [QA][VERDICT] <PASS|FAIL|BLOCK> — N unique findings
    P1: SSRF — /api/test passes arbitrary URLs (confirmed by 3 workers)
    P1: Rate limiting — XFF spoof + TOCTOU race (confirmed by 2 workers)
-   P1: Auth mock incomplete — signUp/signIn methods missing
    ```
    Each finding includes: claim tested, severity, actual result, reproduction steps (copy-pasteable), evidence, environment.
 4. `kanban_complete(metadata={verdict, findings_count: N, root_causes: N, claims_tested, claims_proven})`
 
-Tech-lead reads the triage report, decides priority, and uses `kanban_delegate` (or `kanban_chains` once deployed) to create dev+verifier pairs. This keeps every fix in the normal pipeline — no fix ships without adversarial review. Filing directly to `developer` bypasses the verifier and breaks the pipeline invariant: every code change must pass through dev→verifier→merge, regardless of origin.
+Tech-lead reads the triage report, decides priority, and uses `kanban_chains` to create dev+verifier pairs. Every fix goes through adversarial review — filing directly to `developer` bypasses the verifier.
 
-**Beads vs kanban:** When planning work (breaking a spec into tickets with dependencies), use beads (`bd create` + `bd dep`), not `kanban_create`. Beads are the planning layer; kanban is the execution layer. The beads-watchdog bridges automatically when a bead becomes ready. Do not create kanban cards when asked to create beads.
+**Beads vs kanban:** When planning work (breaking a spec into tickets with dependencies), use beads (`bd create` + `bd dep`), not `kanban_create`. Beads are the planning layer; kanban is the execution layer. The beads-watchdog bridges automatically when a bead becomes ready.
 
 ## Evidence flow
 
 Short evidence goes inline in the triage report. Long evidence goes to `/tmp/qa-evidence/<card-id>/` with the path referenced in the report. Structured verdicts go in `kanban_complete(metadata={...})`.
 
 `~/vault/` is the knowledge base — QA evidence never goes there.
-
-## Critical: kanban_link before kanban_block
-
-`kanban_block(kind=dependency)` sets status to `todo` but does NOT create a parent→child link. Without `kanban_link(target, my_card_id)`, the dispatcher's `recompute_ready()` has no link to follow — the card stays stuck forever even after the target completes. Always pair them: link first, then block. The `qa_swarm` plugin does this correctly.
