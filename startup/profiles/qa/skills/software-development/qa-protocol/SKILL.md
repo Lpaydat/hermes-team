@@ -1,7 +1,7 @@
 ---
 name: qa-protocol
 description: "Use when you receive a QA card or are the verifier/synthesizer in a QA swarm. Creates the swarm via kanban_chains, blocks until the synthesizer verdicts, then files a combined report to tech-lead. The ONLY skill that creates QA swarms and files findings."
-version: 3.1.0
+version: 3.2.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -13,6 +13,8 @@ metadata:
 # QA Protocol — the orchestrator loop
 
 The **swarm** is the unit of QA work: you build the artifact, create ONE swarm of test workers via the `kanban_chains` tool, block until the synthesizer returns a **verdict**, then file a **triage** — one deduped report to tech-lead. The verdict is the gate: PASS, FAIL, or BLOCK.
+
+`kanban_chains` handles all linking and blocking internally. Never call `kanban_link` or `kanban_block` manually — the tool does it for you.
 
 ## Step 1 — Receive
 
@@ -49,31 +51,19 @@ Call `kanban_chains` ONCE with chains (parallel workers) + after (verifier + syn
 | Journeys | Multi-step user flows | qa-journeys |
 | Security | Accepts input or has auth | qa-security |
 
-Write each worker's body with its specific checklist. The tool links the caller to the synthesizer and blocks with `--kind dependency`. Your session ends. You will be auto-promoted when the synthesizer completes.
+Write each worker's body with its specific checklist. The tool links the caller to the synthesizer and blocks. Your session ends. You will be auto-promoted when the synthesizer completes.
 
-**When re-dispatched:** check if a synthesizer has already completed for this card. Use `kanban_show` on your own card to see child task completions. If a synthesizer completion exists, skip to Step 5 — creating a second swarm orphans the first swarm's workers and blocks the card permanently.
+**When re-dispatched:** check if a synthesizer has already completed for this card via `kanban_show`. If yes, skip to Step 5 — creating a second swarm orphans the first swarm's workers.
 
-## Step 5 — Triage
+## Step 5 — Verdict
 
-When re-dispatched after the synthesizer completes, read its completion via `kanban_show`. The synthesizer already deduped findings by root cause and filed one combined report to tech-lead.
+When re-dispatched after the synthesizer completes, read its completion via `kanban_show`. The synthesizer already deduped findings by root cause and filed one combined triage report to tech-lead.
 
-- **Verdict FAIL:** the triage report is already filed to tech-lead. Link your card to the tech-lead's triage card and block with `--kind dependency`:
-  ```
-  kanban_link(tech_lead_card_id, my_card_id)
-  kanban_block(my_card_id, reason, --kind dependency)
-  ```
-  Always pair `kanban_link` with `kanban_block --kind dependency`. A block without a link means the dispatcher can't auto-promote you. A block with `kind=null` instead of `kind=dependency` creates a permanent stuck state.
+`kanban_complete` the QA card with the verdict:
+- **PASS:** all claims proven, no Critical findings. Include the test report.
+- **FAIL:** Critical findings exist. The triage report is already filed to tech-lead. Tech-lead will triage, delegate fixes via `kanban_chains`, and create a new QA card for re-test if needed.
 
-- **Verdict PASS:** complete the QA card with the test report.
-
-## Re-test loop
-
-When tech-lead delegates fixes and they merge:
-1. Pull latest, rebuild artifact
-2. Delta re-test (only the fixed dimension)
-3. Regression check (adjacent claims)
-4. Resolved → complete. New issue → file new triage to tech-lead.
-5. 3+ failures on same finding → escalate to tech-lead
+The re-test is a separate QA card — not a continuation of this one. Complete this card; the pipeline handles the rest.
 
 ## Verifier role (in swarm)
 
@@ -91,9 +81,9 @@ The synthesizer runs the **triage**:
 3. **File one triage report** to `tech-lead` — a single card with all findings grouped by root cause, severity-ranked. Each finding: claim, severity, reproduction steps, evidence.
 4. `kanban_complete(metadata={verdict, findings_count, root_causes, claims_tested, claims_proven})`
 
-Tech-lead reads the triage report and uses `kanban_chains` to create dev+verifier pairs. Every fix goes through adversarial review.
+Tech-lead reads the triage report and uses `kanban_chains` to create dev+verifier pairs.
 
-**Beads vs kanban:** When planning work (breaking a spec into tickets with dependencies), use beads (`bd create` + `bd dep`). Beads are the planning layer; kanban is the execution layer.
+**Beads vs kanban:** When planning work, use beads (`bd create` + `bd dep`). Beads are the planning layer; kanban is the execution layer.
 
 ## Evidence flow
 
