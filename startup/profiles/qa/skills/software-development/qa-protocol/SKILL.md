@@ -70,6 +70,8 @@ kanban_chains(
 
 **When re-dispatched:** check if a synthesizer has already completed for this card via `kanban_show`. If yes, skip to Step 5 — creating a second swarm orphans the first swarm's workers.
 
+**Stale claim lock:** if re-dispatched but the card sits at `ready` for 30+ minutes without being spawned, the dispatcher may be skipping it due to a stale `claim_lock`. Run `hermes kanban --board <board> dispatch --dry-run` — if it shows `Spawned: 0` despite a ready card, clear the lock: `UPDATE tasks SET claim_lock = NULL, claim_expires = NULL WHERE id = '<id>'`. See `references/platform-constraints.md` for full diagnosis.
+
 ## Step 5 — Verdict
 
 When re-dispatched after the synthesizer completes, read its completion via `kanban_show`. The synthesizer already deduped findings by root cause and filed one combined triage report to tech-lead.

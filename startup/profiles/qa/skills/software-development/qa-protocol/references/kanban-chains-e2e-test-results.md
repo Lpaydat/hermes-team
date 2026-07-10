@@ -39,6 +39,20 @@ Two additional bugs found and fixed:
 
 **Architecture lesson:** when a skill documents a plugin tool, the skill must NOT also teach the agent to call the underlying primitives (`kanban_link`, `kanban_block`) for the same purpose. Two execution paths → the agent sometimes uses the plugin, sometimes falls back to error-prone manual calls.
 
+## Round 5: `kanban_chains` v3.2.0 — stale claim_lock + auto-block verification
+
+**Result: full pipeline success, but orchestrator delayed 9 hours by stale claim_lock**
+
+Two new issues discovered:
+
+1. **Stale claim_lock prevents dispatch.** The orchestrator was spawned at 01:14, called `kanban_chains`, blocked (status → `todo`). Synthesizer completed, card promoted to `ready`. But `claim_lock` still held `lambda:926` from the original spawn (expired at 01:19). The dispatcher skipped the card on every tick for 9 hours. `release_stale_claims` didn't clean it because the lock was placed by a different gateway than the one dispatching. Fix: manually clear `claim_lock` + `claim_expires` via SQL, then `hermes kanban dispatch --dry-run` to confirm.
+
+2. **kanban_chains auto-block verification race condition.** The plugin calls `hermes kanban block` then `hermes kanban show` to verify status == `todo`. The block_task SQL includes `running` in its WHERE clause, so the block should succeed. But `hermes kanban show` returned `status=None` (stale subprocess read — SQLite WAL checkpoint lock window between the write commit and the read subprocess opening a new connection). The plugin returned a false-negative error. The orchestrator then tried manual `kanban_link` + `kanban_block`, but the card had already been archived (the `_end_run` call with `outcome="blocked"` confused the dispatcher). Fix: remove the verification step from the plugin — trust the block command's return code (exit 0 = success).
+
+3. **Config file location confusion.** Changed `max_in_progress_per_profile` in `~/.hermes/config.yaml` but team gateways read `startup/config.yaml`. The change had no effect until we also updated `startup/config.yaml` and restarted the dispatcher gateway.
+
+Despite these issues, the swarm itself worked: 4 workers completed, synthesizer filed deduped triage to tech-lead, tech-lead created 3 dev+verifier fix chains via `kanban_chains`, all 3 merged to main. Final verdict: PASS with 7 findings (0 P0/P1), 4/4 prior security fixes held.
+
 ## Key metrics across all rounds
 
 | Metric | Option A (CLI) | Option B (qa_swarm) | kanban_chains |
@@ -56,3 +70,5 @@ Two additional bugs found and fixed:
 4. **Findings route to tech-lead, not developer** — tech-lead triages and uses kanban_chains for dev+verifier pairs. Filing to developer bypasses the verifier pipeline.
 5. **ONE swarm per card** — re-dispatch after swarm completion means "read results," not "create another swarm."
 6. **Always `kanban_link` + `kanban_block --kind dependency`** — a block without a link or with `kind=null` creates a permanently stuck card.
+7. **Never use `blocked` status for draft cards** — a blocked-escalation cron scans for blocked tasks and handles unblock loops. Draft cards in `blocked` trigger the escalation cron. Use `scheduled` for non-dispatchable intermediate states.
+8. **Never add subprocess verification after kanban writes** — a plugin that calls `hermes kanban show` as a subprocess to verify a prior write will hit SQLite WAL checkpoint lock windows. The subprocess returns `None` or non-zero exit. Trust the write command's exit code instead.

@@ -70,6 +70,7 @@ command_allowlist:
 onboarding:
   seen:
     tool_progress_prompt: true
+    busy_input_prompt: true
 _config_version: 33
 fallback_model: []
 qa:
@@ -88,4 +89,4 @@ plugins:
     kanban_chains:
       allow_tool_override: false
 display:
-  skin: vault-tec
+  skin: dgx-spark
