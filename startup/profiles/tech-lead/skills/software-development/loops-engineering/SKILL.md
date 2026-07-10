@@ -21,8 +21,8 @@ Three roles, three context windows. Mixing them is the most common failure — t
 | Role | Who | Rule |
 |------|-----|------|
 | **Planner** | Tech-lead (you) | Turns intent into spec. Never touches code. |
-| **Generator** | Coding-agent harness | Writes everything. Forbidden from grading own work. |
-| **Evaluator** | Review sub-agent | Told from the first message: the code is broken, prove it. |
+| **Generator** | `developer` profile (drives a coding harness) | Writes everything. Forbidden from grading own work. |
+| **Evaluator** | `verifier` profile (fans out `[probe]` worker cards) | Told from the first message: the code is broken, prove it. |
 
 ## The five phases
 
@@ -44,7 +44,7 @@ Understand the codebase and work surface before planning.
 This is where human-in-the-loop lives — everything after this runs autonomously.
 
 1. **Grill the user** (`grilling`): one question at a time, recommended answer attached, until the goal is crisp.
-2. **Artifacts**: PRD (`to-spec`), ADRs (`domain-modeling` + `decision-mapping`), glossary (`ubiquitous-language`).
+2. **Artifacts**: PRD (`to-spec`), ADRs (`domain-modeling`), glossary (`ubiquitous-language`).
 3. **Negotiate the contract**: Before any code, draft a checklist of testable assertions (~20-27 for a small task; 10 is too few and the evaluator rubber-stamps). The PRD is the boundary; the **contract** is what gets graded. If multiple agents are involved, the generator proposes done-criteria and the evaluator pushes back — they argue via markdown on disk until they agree.
 4. **Build evals**: Structured assertions about behavior, not just unit tests. Build them NOW alongside the contract, not "when problems recur." For subjective quality (UI, text generation), encode the rubric.
 5. **Decompose** (`to-tickets`): tracer-bullet vertical slices with dependency tracking.
@@ -108,8 +108,7 @@ kanban_chains(
 - `kanban_chains` is the ONLY way to create dev/verifier cards. NEVER use `kanban_create` for dev or verifier cards.
 - NEVER poll or sleep-loop waiting for the verifier. The tool blocks you — you will be auto-promoted.
 - NEVER create fix cards yourself. The verifier handles FAIL routing.
-- On verifier PASS: verifier merges to main. On FAIL: verifier creates fix card. On ESCALATE: verifier blocks for tech-lead.
-- On verifier FAIL: verifier creates fix card for developer. On PASS: verifier merges. On ESCALATE: verifier blocks for tech-lead.
+- On verifier PASS: verifier merges to main. On FAIL: verifier creates the fix card for the developer. On ESCALATE: verifier blocks for tech-lead.
 
 **Harness choices** (developer picks, not you):
 - `pi --provider zai --model glm-5.2` — the default model for code generation
@@ -120,47 +119,36 @@ kanban_chains(
 
 ### 4. Validate — monitor verifier output (you don't validate; the verifier does)
 
-The verifier profile handles ALL validation autonomously via adversarial-review v4.0.0. Your job is to **wait and monitor** the loop:
+The verifier profile handles ALL validation autonomously via adversarial-review v6 (chains-native). Your job is to **wait and monitor** the loop:
 
-- Read the verifier's completion summary when it finishes
+- Read the verifier's completion summary when it finishes — the verdict is stamped in it (`PASS`/`FAIL`/`ESCALATE` + metadata)
+- **Expect `[probe]` cards on the board**: the verifier fans out its own kanban_chains workers (fresh-eyes AC prover, static review, delta check) and dependency-parks while they run. Those `[probe]` cards assigned to `verifier` are part of ONE review — normal, not stuck, not yours to touch. **One exception**: a `[probe]` card sitting in `blocked` (the crash circuit-breaker routed it there) strands its parked verifier with no self-heal path — that one you DO unblock (retry) or reassign, then let the swarm resume.
 - On PASS: bead is closed, kanban task completes
 - On FAIL: verifier creates fix card for developer → loop continues → you wait
 - On ESCALATE (iteration ≥ 3 or spec gap): read the accumulated findings, decide: re-contract, switch harness model, or abandon
 
 **NEVER run tests yourself. NEVER write adversarial probes. NEVER judge code quality. NEVER run pytest, never write verification scripts, never execute the developer's code for validation purposes. The verifier owns ALL of that. If you find yourself writing a probe or running pytest, STOP — you are violating role separation. Block the task if the verifier hasn't been created yet.**
 
-**Done when**: verifier returns PASS (or you escalate).
+**Done when**: the verifier's stamped verdict is PASS (zero findings at any severity — the verifier's bar, not yours to relax). Every subjective score ≥ 0.7 (if applicable).
 
-**Done when**: zero findings rated Critical or Important. Every subjective score ≥ 0.7 (if applicable). Every contract item checked off.
+### 5. Iterate — you act on ESCALATE; the FAIL loop is not yours
 
-### 5. Iterate
+The FAIL→fix→re-verify loop runs **without you**: the verifier files findings, creates the fix card (with the developer's warm-resume session id), and re-verifies. You stay parked. Your iterate role fires in exactly two cases:
 
-If validation fails, iterate — but never blindly. Follow this sequence:
+**Case A — ESCALATE card arrives** (iteration ≥ 3 or spec gap):
 
-**Step 1 — Read the trace**: BEFORE re-delegating, read the agent's raw transcript. Pipe output to a file, grep for the moment judgment diverged from spec. The fix is usually editing the prompt for that exact moment — not rewriting the whole task.
+1. **Read the accumulated findings first** (the `REVIEW-ITERATION` comments on the dev card — the whole story is there).
+2. **Then the trace**: read the developer's harness transcript from the ledger (`~/vault/traces/<board>/<chain-root>/attempt-N.jsonl`). Grep for the moment judgment diverged from spec. The fix is usually the contract wording for that exact moment — not rewriting the whole task.
+3. **Decide**: re-contract (update PRD/contract, then a NEW dev+verifier chain via `kanban_chains` with the corrected contract — cold restart per Ralph when the approach was wrong), switch the harness model, or abandon the slice back to the user.
 
-**Step 2 — Update the spec if needed**: if the failure reveals a spec gap (not just an agent error), update the PRD/issues/contract BEFORE re-delegating. The spec is not static — it evolves as you see what the agent builds.
+**Case B — spec gap you caused**: if any FAIL reveals the contract itself was wrong (not the code), update the PRD/contract BEFORE anything re-runs — the spec is not static; it evolves as you see what the agent builds. Contract-vs-INTENT gaps (the bead promises the wrong thing) route to product-owner, who owns bead content.
 
-**Step 3 — Re-delegate with feedback, warm when possible**:
-
-FAIL → read trace, find divergence point
-     → update spec/contract if the failure reveals a spec gap
-     → file follow-up comment with exact failure points + trace evidence
-     → WARM RESUME the same harness session with the findings
-
-
-> **Never write code yourself.** You are the PLANNER. If `delegate_task` is disabled and no harness is available, BLOCK the task (`kanban_block`) rather than writing code yourself. Code written by the planner destroys the role separation that makes adversarial verification meaningful. Create a developer card and let the developer profile handle it.
-        the harness keeps its own memory of the prior attempt; strictly
-        better than cold re-delegation when the approach was sound)
-     → cold re-delegate with corrected prompt only when the approach itself
-       was wrong (fresh start per Ralph technique)
-     → repeat until validation passes
-
+> **Never write code yourself.** You are the PLANNER. If no developer/harness path is available, BLOCK the task (`kanban_block`) rather than writing code. Code written by the planner destroys the role separation that makes adversarial verification meaningful.
 
 Key rules:
-- **Trace-first**: never re-delegate without reading the transcript. Tuning by vibe produces slop.
-- **Retry cap**: 3 failures on the same issue → escalate (research task, contract user, or different harness)
-- **Let it restart**: if the agent throws everything away and starts over, don't interrupt. Intervene only when the contract itself is wrong.
+- **Findings-first, then trace**: never re-contract without reading both. Tuning by vibe produces slop.
+- **The retry cap lives with the verifier** (it escalates at iteration ≥ 3) — you never count retries or nudge the loop mid-flight.
+- **Let it run**: dev+verifier iterations are not yours to interrupt. Intervene only when the contract itself is wrong or an ESCALATE reaches you.
 
 **Done when**: validation passes (returns to Phase 4 done condition). Then:
 1. `bd close <bead-id>` — close the bead in the issue tracker (non-negotiable — the automation loop depends on this to surface the next ready bead)

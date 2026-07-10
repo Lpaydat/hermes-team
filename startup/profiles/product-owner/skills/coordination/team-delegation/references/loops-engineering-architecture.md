@@ -10,7 +10,7 @@ architecture and the crash recovery model.
 |------|---------|------|------------|-------|
 | **Planner** | `tech-lead` | Contracts work, writes specs, creates kanban cards, reads traces, iterates | Writes code, grades code | GLM 5.2 |
 | **Generator** | `developer` | Invokes coding harness (`pi`/`zz`), runs mechanical gates (tests/lint), captures trace | Grades quality, merges, touches contract | GLM 5.2 (governs) → harness model writes code |
-| **Verifier** | `verifier` (was `reviewer`) | Executes tests independently, adversarial verification, `/review` static analysis on diff vs contract + bead criteria, merges on pass / creates fix card on fail | Writes code, touches contract | GLM 5.2 |
+| **Verifier** | `verifier` (was `reviewer`) | Executes tests independently, fans out kanban_chains probe workers (fresh-eyes AC prover, `/code-review` static axes, delta checker), merges on pass / creates fix card on fail | Writes code, touches contract | GLM 5.2 |
 
 ## The Harness
 
@@ -73,12 +73,13 @@ tech-lead creates dev card (with contract_ref, evals_cmd, acceptance criteria)
     → developer captures trace to ~/vault/traces/<board>/<chain-root>/attempt-N.jsonl
     → developer completes with AC-to-evidence mapping + structured report
   → verifier auto-promotes, claims verification card
-    → verifier EXECUTES tests independently (step 1 — dynamic verification)
-    → verifier runs /review on diff vs contract.md + bead criteria (step 2 — static analysis)
-    → verifier adversarial probing (step 3 — find bugs tests missed)
-    → verifier verify-findings pass (step 4 — reproduce every finding)
-    → verifier AC CHECKLIST GATE (step 5 — prover-verifier: re-verify each AC with own probe)
-    → PASS: verifier merges to main (step 7)
+    → verifier EXECUTES tests independently (step 1 — dynamic verification, inline fast-fail)
+    → verifier fans out kanban_chains probe workers and dependency-parks (step 2):
+        fresh-eyes AC prover ∥ /code-review static axes vs contract.md + bead criteria ∥ delta check (iter ≥2)
+    → verifier auto-promotes when workers complete → synthesis + gap probes + mutation checks (Stage 3)
+    → verifier verify-findings pass (reproduce every finding)
+    → verifier AC CHECKLIST GATE (prover-verifier: fresh-eyes worker probes every AC; orchestrator re-executes failed/undocumented + ≥2 passing)
+    → PASS: verifier merges to main (merge-protocol, stamped verdict)
     → FAIL: verifier creates fix card for developer (with findings + resume session_id)
       → developer warm-resumes harness (pi --session <id> / claude -p -r <id>)
       → gates re-run → verifier re-verifies
@@ -158,10 +159,10 @@ govern the invocation."
 The `reviewer` profile was renamed to `verifier` based on academic research:
 
 - **Academic**: 6 of 11 surveyed papers use "verifier" (generator-verifier pattern)
-- **ISTQB**: "Review" is a *subset* of verification (static only). The profile does BOTH static review (`/review` skill) AND dynamic verification (runs tests), so "verifier" is more accurate
+- **ISTQB**: "Review" is a *subset* of verification (static only). The profile does BOTH static review (`/code-review` skill axes) AND dynamic verification (runs tests), so "verifier" is more accurate
 - **Industry**: Anthropic uses "evaluator-optimizer", LangGraph uses "critic", banking uses "maker-checker" — all describe the same pattern
 
-The `/review` skill (mattpocock) is a **tool** the verifier uses within step 2 of its 8-step protocol, not a role name. It checks git diffs along Standards + Spec axes against `contract.md` and bead acceptance criteria (NOT the PRD — too high-level for per-slice review).
+The `/code-review` skill (mattpocock — renamed from `review` in the v1.1 update) is a **tool** the verifier uses within step 2 of its protocol, not a role name. Its Standards + Spec axes run inside the verifier's chains static worker against `contract.md` and bead acceptance criteria (NOT the PRD — too high-level for per-slice review).
 
 ### The AC checklist gate (step 5 — prover-verifier pattern)
 

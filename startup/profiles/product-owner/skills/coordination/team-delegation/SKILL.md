@@ -78,13 +78,14 @@ Rule of thumb: if a competent stranger couldn't start from the task alone, add w
   |------|---------|------|------------|
   | Planner | `tech-lead` | Contracts work, creates kanban cards for `developer` | Writes code |
   | Generator | `developer` | Invokes coding harness (`pi`/`zz`) as subprocess, runs mechanical gates | Grades quality, merges |
-  | Verifier | `verifier` (was `reviewer`) | Executes tests independently, adversarial verification, `/review` static analysis, merges on pass / creates fix card on fail | Writes code |
+  | Verifier | `verifier` (was `reviewer`) | Executes tests independently, adversarial verification via kanban_chains probe workers, `/code-review` static axes, merges on pass / creates fix card on fail | Writes code |
 
   **⚠️ Naming:** The `reviewer` profile was renamed to `verifier` in Jul 2026 based on
   academic research (generator-verifier pattern — 6/11 surveyed papers use "verifier").
-  The profile does BOTH dynamic verification (runs tests) AND static review (`/review`
-  skill on diff vs contract + bead criteria). "Verifier" is broader and matches the
-  academic consensus. The `/review` skill (mattpocock) is a **tool** the verifier uses,
+  The profile does BOTH dynamic verification (runs tests) AND static review (`/code-review`
+  skill axes on diff vs contract + bead criteria — the skill was renamed from `review`
+  in the mattpocock v1.1 update). "Verifier" is broader and matches the academic
+  consensus. The `/code-review` skill (mattpocock) is a **tool** the verifier uses,
   not a role name. See `references/loops-engineering-architecture.md` for details.
   
   **⚠️ Biggest mistake (made Jul 2026):** assigning build cards directly to `tech-lead`. Tech-lead
@@ -106,20 +107,24 @@ Rule of thumb: if a competent stranger couldn't start from the task alone, add w
   See `references/loops-engineering-architecture.md` for the full role separation model, Mermaid
   diagrams, crash recovery table, and workspace architecture.
   
-  **AC checklist gate (prover-verifier pattern, designed Jul 2026):** The verifier's step 6
-  independently re-verifies each bead acceptance criterion. The developer's completion report
-  must include an AC-to-evidence mapping (claims); the verifier writes its own probe for each AC
-  and executes independently (facts). If a developer claims "AC met" but the verifier's probe
-  fails → Critical finding. This catches test-tampering — the classic generator cheat where tests
-  are weakened to pass. The developer-loop skill enforces the AC mapping in every completion report.
+  **AC checklist gate (prover-verifier pattern, designed Jul 2026):** The verifier's AC gate
+  (adversarial-review Stage 3) independently re-verifies bead acceptance criteria. The developer's
+  completion report must include an AC-to-evidence mapping (claims); the verifier's fresh-eyes
+  probe worker writes its own probe for each AC and executes independently (facts), and the
+  orchestrating verifier re-executes failed/undocumented ACs itself. If a developer claims
+  "AC met" but the verifier's probe fails → Critical finding. This catches test-tampering — the
+  classic generator cheat where tests are weakened to pass. The developer-loop skill enforces
+  the AC mapping in every completion report.
   
-  **Two-phase verification protocol (adversarial-review v4.0.0, designed Jul 2026):** Every
-  verification iteration runs BOTH a delta check AND a fresh-eyes pass — preventing confirmation
-  bias (backward-only verification degrades over iterations, per Huang et al.). The fresh-eyes
-  subagent (`delegate_task` with deliberately restricted context) gets ONLY contract + ACs + diff,
-  never prior findings. Finding routing on FAIL: fix card → developer directly (warm resume),
-  NOT tech-lead — keeps the loop tight. Verifier uses `delegate_task` subagents, NOT a coding
-  harness (it's judging code, not writing it). See `references/loops-engineering-architecture.md`.
+  **Chains-native verification protocol (adversarial-review v6, Jul 2026):** Every verification
+  iteration runs BOTH a delta check AND a fresh-eyes pass — preventing confirmation bias
+  (backward-only verification degrades over iterations, per Huang et al.). These run as parallel
+  `[probe]` kanban cards created via `kanban_chains` (assignee=verifier, one restricted card body
+  each) — NOT as `delegate_task` subagents, which are ephemeral and fail silently under load.
+  The fresh-eyes probe card gets ONLY contract + ACs + branch/worktree, never prior findings.
+  The verifier dependency-parks while its probes run and synthesizes on auto-promotion. Finding
+  routing on FAIL: fix card → developer directly (warm resume), NOT tech-lead — keeps the loop
+  tight. See `references/loops-engineering-architecture.md`.
   
   **Battle-tested Jul 2026 (Test 5 — single-slice loop):** the full failure-fix cycle was verified
   end-to-end with a weaker harness model (GLM 4.5-air). The harness (pi) produced code with 2
@@ -204,8 +209,12 @@ Rule of thumb: if a competent stranger couldn't start from the task alone, add w
 
 ## 5. Stay in the loop without hovering
 After delegating: keep working. Check back via the task's comments/events (`kanban show`,
-`tail`, `runs`), not by re-doing the work. If an assignee **blocks** (`needs_input`/`dependency`),
-that's the signal to step in — answer the question or resolve the parent, then unblock.
+`tail`, `runs`), not by re-doing the work. If an assignee blocks **`needs_input`**, that's the
+signal to step in — answer the question, then unblock. **`dependency` waits are NOT yours to
+touch**: a dependency-parked card (kanban_chains callers, verifiers waiting on their `[probe]`
+workers, tech-leads waiting on verifiers) sits in `todo` and auto-promotes the moment its
+parents finish — manually unblocking one detaches it from its swarm mid-flight. If a dependency
+wait looks stuck, check whether a PARENT card is blocked/crashed and fix that instead.
 
 ### 5a. How to watch a task (and give feedback on the work)
 You get the full execution trace — every tool call, terminal command, file diff, and the
