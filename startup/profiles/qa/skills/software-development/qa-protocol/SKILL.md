@@ -53,6 +53,21 @@ Call `kanban_chains` ONCE with chains (parallel workers) + after (verifier + syn
 
 Write each worker's body with its specific checklist. The tool links the caller to the synthesizer and blocks. Your session ends. You will be auto-promoted when the synthesizer completes.
 
+```
+kanban_chains(
+    goal="QA: test <feature>",
+    chains=[
+        [{"assignee": "qa", "skill": "qa-functional", "title": "[QA] Functional", "body": "<checklist>}"],
+        [{"assignee": "qa", "skill": "qa-security", "title": "[QA] Security", "body": "<checklist>}"]
+    ],
+    after=[
+        {"assignee": "qa", "title": "[QA] Verifier", "body": "Check all workers posted results"},
+        {"assignee": "qa", "skill": "qa-protocol", "title": "[QA] Synthesizer", "body": "Dedup findings, file triage to tech-lead"}
+    ],
+    blackboard={"image_tag": "<tag>", "container_port": 3000, "env_facts": "<facts>"}
+)
+```
+
 **When re-dispatched:** check if a synthesizer has already completed for this card via `kanban_show`. If yes, skip to Step 5 — creating a second swarm orphans the first swarm's workers.
 
 ## Step 5 — Verdict

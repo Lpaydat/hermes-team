@@ -97,7 +97,12 @@ kanban_chains(
 - [ ] If any FAIL → check for fix chains created by the verifier
   - Fix chains are handled automatically — do NOT create your own fix card
   - The verifier creates fix cards on FAIL. Wait for the fix verifier to complete.
-  - If you are re-dispatched and fix verifiers are still running, call `kanban_chains` again to re-block on the new fix verifiers.
+  - If you are re-dispatched and fix verifiers are still running, link yourself to the fix verifier cards and block with `--kind dependency`:
+    ```
+    kanban_link <fix_verifier_id> <my_card_id>
+    kanban_block <my_card_id> "dependency: waiting for fix verifier" --kind dependency
+    ```
+    Do NOT call `kanban_chains` again — that creates a new topology. You only need to wait on existing fix cards.
 
 ### Rules
 - `kanban_chains` is the ONLY way to create dev/verifier cards. NEVER use `kanban_create` for dev or verifier cards.
