@@ -80,9 +80,40 @@ So: changing a decision = write a new ADR with the next number + a
 
 ## Brownfield (retro-ADRs)
 
-Retro-ADRs documenting an existing codebase carry status
-`Accepted (status quo — accepted, not endorsed)`. Full brownfield flow is
-ticket hermes-teams-1y1.7.
+When a venture is adopted with existing code, ONE as-is inventory card
+(architect skill `brownfield-intake`, drill:
+`dev-workflow-battle-tests/test36-brownfield-intake.py`) produces retro-ADRs
+that record the de-facto architecture as a citable baseline. Retro-ADRs
+follow this convention (template, append-only, citations) with these deltas:
+
+- **Status.** Retro-ADRs carry status
+  `Accepted (status quo — accepted, not endorsed)` — accepted as the
+  operative state, not endorsed as the right design. Misgivings go to
+  Consequences and to debt beads in the venture's own tracker (bounded:
+  3–5 retro-ADRs and 2–4 debt beads per intake — inventory, not audit).
+- **Numbering — the ADR-000 series.** Retro-ADRs use a distinct series so the
+  baseline is visually separate from decided-forward ADRs:
+  `ADR-000.1-<slug>.md`, `ADR-000.2-<slug>.md`, … — sub-numbers monotonic,
+  never reused, series closed after intake. Normal forward ADRs still start
+  at `ADR-001`. A forward ADR that replaces baseline behaviour supersedes the
+  retro-ADR the normal way (`Supersedes: ADR-000.N` + `bd supersede`).
+- **Header.** `Introduced-by:` carries the inventory card/bead id.
+- **Citations.** Retro-ADRs document decisions nobody wrote down, so **code
+  citations are valid sources**: named source = the file with a line number
+  (file:line), quotable line = the decisive line of code or comment. The
+  quotable line is always wrapped in straight double quotes — even when it
+  quotes code; backticks wrap the named source only. The venture spec is
+  likewise a valid source. Example:
+
+  ```markdown
+  ## Citations
+  - code `plantcare/override_store.py:41` — "merged = {**defaults, **overrides}"
+  - spec `docs/specs/mvp-slice.md` — "bundled JSON dataset, no network call"
+  ```
+
+Later gates and forward ADRs cite retro-ADRs exactly like normal ADRs;
+`ADR-000.2` is as citable as `ADR-002`. Append-only applies unchanged.
+(Flow introduced by ticket hermes-teams-1y1.7.)
 
 ## Complete example
 
