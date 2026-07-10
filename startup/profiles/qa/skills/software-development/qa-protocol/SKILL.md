@@ -102,6 +102,14 @@ Tech-lead reads the triage report and uses `kanban_chains` to create dev+verifie
 
 **Beads vs kanban:** When planning work, use beads (`bd create` + `bd dep`). Beads are the planning layer; kanban is the execution layer.
 
+## Terse reporting overlay
+
+When active (caveman skill loaded), write findings and triage reports at `full` intensity. Ultra/wenyan excluded. Rule: Compress REPORTS, never SPECS — worker mandates, ACs, contracts, and structured metadata fields stay verbatim.
+
+**Hard exemptions (never compressed):** `REVIEW-ITERATION:` headers, verdict metadata JSON, AC-to-evidence mappings, pasted evidence blocks, contracts/ACs/mandates/SOULs, and caveman's own Auto-Clarity triggers (security warnings, irreversible-action confirmations, ambiguity-risk sequences).
+
+Findings format: `location: severity: problem. fix.`
+
 ## Evidence flow
 
 Short evidence goes inline in the triage report. Long evidence goes to `/tmp/qa-evidence/<card-id>/` with the path referenced in the report. Structured verdicts go in `kanban_complete(metadata={...})`.

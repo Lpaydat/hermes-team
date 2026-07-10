@@ -133,6 +133,12 @@ The AC evidence mapping is **mandatory** — the verifier re-verifies each item 
 
 This report is what compensates the trace-blind verifier — human-review research shows rationale artifacts + Q&A are what make output-only review work. Skimping here degrades the whole loop.
 
+## Terse reporting overlay
+
+When active (caveman skill loaded), write completion reports at `full` intensity. Ultra/wenyan excluded. Rule: Compress REPORTS, never SPECS — contracts, ACs, harness prompts, and structured metadata stay verbatim.
+
+**Hard exemptions (never compressed):** `REVIEW-ITERATION:` headers, verdict metadata JSON, AC-to-evidence mappings, pasted evidence blocks, contracts/ACs/mandates/SOULs, and caveman's own Auto-Clarity triggers (security warnings, irreversible-action confirmations, ambiguity-risk sequences).
+
 ## 6. Answering the verifier
 
 The verifier may ask questions via card comments (the Q&A channel). Answer factually from your session/trace. If a finding demands a code change, that arrives as a fix card — work it as a retry (§1 warm resume), don't argue verdicts. If you believe a finding is wrong, say so once, with evidence, in a comment; the verifier owns the verdict, tech-lead owns escalations.
