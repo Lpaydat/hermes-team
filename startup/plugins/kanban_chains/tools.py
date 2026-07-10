@@ -1,67 +1,59 @@
-"""Tool handlers — the code that runs when the LLM calls kanban_chains."""
+"""Tool handlers — the code that runs when the LLM calls kanban_chains.
+
+Uses the kanban_db Python API directly (same connection mechanism as the
+platform's built-in kanban tools). No subprocess calls — eliminates the
+race condition where the zombie reaper sees stale state between the
+subprocess commit and the agent process exit.
+"""
 
 import json
 import logging
 import os
-import subprocess
 
 logger = logging.getLogger(__name__)
 
 BLACKBOARD_PREFIX = "[swarm:blackboard] "
 
 
-# ── Shared helpers ────────────────────────────────────────────────────────────
+# ── kanban_db bridge ──────────────────────────────────────────────────────────
 
 
-def _get_board():
+def _board():
     """Return the kanban board from env (default 'team')."""
     return os.environ.get("HERMES_KANBAN_BOARD", "team")
 
 
-def _run_kanban(args_list):
-    """Run `hermes kanban --board <board> <args>`, return (success, output_text)."""
-    cmd = ["hermes", "kanban", "--board", _get_board()] + args_list
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=os.environ.copy())
-    return result.returncode == 0, result.stdout.strip()
+def _kb():
+    """Import kanban_db lazily so the plugin doesn't fail at import time
+    in environments where hermes_cli isn't on the path (tests, static analysis)."""
+    from hermes_cli import kanban_db
+    return kanban_db
 
 
-def _run_kanban_json(args_list):
-    """Run a kanban command with --json, return parsed JSON or None."""
-    cmd = ["hermes", "kanban", "--board", _get_board()] + args_list + ["--json"]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=os.environ.copy())
-    if result.returncode != 0:
+def _connect():
+    """Open a kanban DB connection for the current board."""
+    return _kb().connect_closing(board=_board())
+
+
+def _run_id():
+    """Return the current run ID from env, or None."""
+    raw = os.environ.get("HERMES_KANBAN_RUN_ID")
+    if not raw:
         return None
     try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
+        return int(raw)
+    except ValueError:
         return None
 
 
-def _get_my_card_id(**kwargs):
-    """Get the current task ID from kwargs or env."""
+def _my_card_id(**kwargs):
     return kwargs.get("task_id") or os.environ.get("HERMES_KANBAN_TASK")
 
 
-def _create_card(title, assignee, body, skill=None, workspace_path=None,
-                 parent_id=None, priority=None):
-    """Create a kanban card via --json and return its id, or None on failure."""
-    args = ["create", title, "--assignee", assignee, "--body", body]
-    if skill:
-        args += ["--skill", skill]
-    if workspace_path:
-        args += ["--workspace", f"dir:{workspace_path}"]
-    if parent_id:
-        args += ["--parent", parent_id]
-    if priority is not None:
-        args += ["--priority", str(priority)]
-    result = _run_kanban_json(args)
-    if not result or "id" not in result:
-        return None
-    return result["id"]
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 
 def _container_section(image_tag, container_port, port, worker_num):
-    """Container setup block appended to a worker step body (mirrors qa_swarm)."""
     return (
         f"\n\n## Container\n"
         f"Image: {image_tag}\n"
@@ -73,7 +65,7 @@ def _container_section(image_tag, container_port, port, worker_num):
 
 
 def _validate(args):
-    """Validate args BEFORE any card creation. Return an error string, or None if valid."""
+    """Validate args BEFORE any card creation. Return an error string, or None."""
     goal = args.get("goal")
     if not isinstance(goal, str) or not goal.strip():
         return "goal is required and must be a non-empty string"
@@ -116,13 +108,17 @@ def kanban_chains(args: dict, **kwargs) -> str:
     Create a parallel-chains + optional sequential-synthesis topology, link the
     caller as dependent on the terminal card(s), and block the caller.
     Returns JSON describing the created topology.
+
+    All DB operations run in a single connection so card creation and the
+    caller block commit atomically — the zombie reaper can never see cards
+    without their corresponding block.
     """
-    # 0. Validate BEFORE any card creation — no partial topologies.
+    # 0. Validate BEFORE any card creation.
     err = _validate(args)
     if err:
         return json.dumps({"error": err})
 
-    my_card_id = _get_my_card_id(**kwargs)
+    my_card_id = _my_card_id(**kwargs)
     if not my_card_id:
         return json.dumps({
             "error": "Cannot determine current task ID. "
@@ -140,126 +136,138 @@ def kanban_chains(args: dict, **kwargs) -> str:
     spec_path = (bb.get("spec_path") or "").strip()
     extra = bb.get("extra") or {}
 
-    # 1. Root card (shared blackboard).
-    root_body = f"Chains root / shared blackboard.\nGoal: {goal}\n"
-    if image_tag:
-        root_body += f"Container image: {image_tag}\n"
-        root_body += f"Container port: {container_port}\n"
-    if env_facts:
-        root_body += f"Env facts: {env_facts}\n"
-    if spec_path:
-        root_body += f"Spec: {spec_path}\n"
+    kb = _kb()
+    run_id = _run_id()
+    author = kwargs.get("_profile") or "kanban_chains"
 
-    root_id = _create_card(f"Chains: {goal[:80]}", _get_board(), root_body)
-    if not root_id:
-        return json.dumps({"error": "Failed to create root card"})
+    with kb.connect_closing(board=_board()) as conn:
 
-    # Post the blackboard comment only when the blackboard param was provided.
-    if args.get("blackboard"):
-        bb_payload = json.dumps({
-            "key": "swarm_context",
-            "value": {
-                "image_tag": image_tag,
-                "container_port": container_port,
-                "base_port": base_port,
-                "env_facts": env_facts,
-                "spec_path": spec_path,
-                "extra": extra,
-            },
-        }, ensure_ascii=False)
-        _run_kanban(["comment", root_id, f"{BLACKBOARD_PREFIX}{bb_payload}"])
+        # 1. Root card (shared blackboard).
+        root_body = f"Chains root / shared blackboard.\nGoal: {goal}\n"
+        if image_tag:
+            root_body += f"Container image: {image_tag}\n"
+            root_body += f"Container port: {container_port}\n"
+        if env_facts:
+            root_body += f"Env facts: {env_facts}\n"
+        if spec_path:
+            root_body += f"Spec: {spec_path}\n"
 
-    # Complete the root immediately so children can promote when ready.
-    _run_kanban(["complete", root_id])
+        root_id = kb.create_task(
+            conn,
+            title=f"Chains: {goal[:80]}",
+            body=root_body,
+            assignee=_board(),
+            created_by=author,
+        )
 
-    # 2. Chains — each chain's steps run sequentially (parent->child); chains are parallel.
-    chains_created = []
-    for ci, chain in enumerate(chains):
-        chain_ids = []
-        for si, step in enumerate(chain):
-            parent_id = root_id if si == 0 else chain_ids[-1]
-            body = step["body"]
-            # First step of each chain is the worker that owns a container/port.
-            if si == 0 and image_tag:
-                port = base_port + ci
-                body = body + _container_section(image_tag, container_port, port, ci + 1)
-            card_id = _create_card(
-                title=step["title"],
-                assignee=step["assignee"],
-                body=body,
-                skill=step.get("skill"),
-                workspace_path=step.get("workspace_path"),
-                parent_id=parent_id,
-                priority=step.get("priority"),
-            )
-            if not card_id:
-                return json.dumps({
-                    "error": f"Failed to create chain {ci + 1} step {si + 1}",
-                    "root_id": root_id,
-                    "chains": chains_created,
-                })
-            chain_ids.append(card_id)
-        chains_created.append(chain_ids)
+        # Post blackboard comment if blackboard param was provided.
+        if args.get("blackboard"):
+            bb_payload = json.dumps({
+                "key": "swarm_context",
+                "value": {
+                    "image_tag": image_tag,
+                    "container_port": container_port,
+                    "base_port": base_port,
+                    "env_facts": env_facts,
+                    "spec_path": spec_path,
+                    "extra": extra,
+                },
+            }, ensure_ascii=False)
+            kb.add_comment(conn, root_id, author,
+                           f"{BLACKBOARD_PREFIX}{bb_payload}")
 
-    chain_last_ids = [c[-1] for c in chains_created]
+        # Complete root immediately so children can promote.
+        kb.complete_task(conn, root_id)
 
-    # 3. After sequence (fan-in) — runs after ALL chains complete.
-    after_created = []
-    if after:
-        for si, step in enumerate(after):
-            body = step.get("body") or step["title"]
-            if si == 0:
-                # Parented on the last step of EVERY chain: create unparented,
-                # then link each chain's last step as a parent.
-                card_id = _create_card(
+        # 2. Chains — each chain's steps run sequentially; chains are parallel.
+        chains_created = []
+        for ci, chain in enumerate(chains):
+            chain_ids = []
+            for si, step in enumerate(chain):
+                parent_id = root_id if si == 0 else chain_ids[-1]
+                body = step["body"]
+                if si == 0 and image_tag:
+                    port = base_port + ci
+                    body = body + _container_section(
+                        image_tag, container_port, port, ci + 1)
+                skills = [step["skill"]] if step.get("skill") else None
+                card_id = kb.create_task(
+                    conn,
                     title=step["title"],
-                    assignee=step["assignee"],
                     body=body,
-                    skill=step.get("skill"),
-                )
-            else:
-                card_id = _create_card(
-                    title=step["title"],
                     assignee=step["assignee"],
-                    body=body,
-                    skill=step.get("skill"),
-                    parent_id=after_created[-1],
+                    created_by=author,
+                    parents=[parent_id],
+                    skills=skills,
+                    workspace_path=step.get("workspace_path"),
+                    priority=step.get("priority", 0),
                 )
-            if not card_id:
-                return json.dumps({
-                    "error": f"Failed to create after step {si + 1}",
-                    "root_id": root_id,
-                    "chains": chains_created,
-                    "after": after_created,
-                })
-            if si == 0:
-                for last_id in chain_last_ids:
-                    _run_kanban(["link", last_id, card_id])
-            after_created.append(card_id)
+                chain_ids.append(card_id)
+            chains_created.append(chain_ids)
 
-    # 4. Caller linking — block on the terminal card(s).
-    if after_created:
-        terminal_ids = [after_created[-1]]
-    else:
-        terminal_ids = chain_last_ids
-    for tid in terminal_ids:
-        _run_kanban(["link", tid, my_card_id])
+        chain_last_ids = [c[-1] for c in chains_created]
 
-    # 5. Block caller (kind=dependency). The block command's exit code is
-    #    authoritative — it returns 0 on success with the landing status printed
-    #    to stdout, 1 on failure. No separate verification needed: block_task's
-    #    SQL already guards `status IN ('running','ready')` before transitioning
-    #    to 'todo', so a 0 exit means the transition happened.
-    reason = f"waiting_for_chains:{', '.join(terminal_ids)}"
-    ok, block_out = _run_kanban(["block", my_card_id, reason, "--kind", "dependency"])
-    if not ok:
-        logger.error("Block command failed for %s: %s", my_card_id, block_out)
-        return json.dumps({
-            "error": f"Block command failed: {block_out}",
-            "root_id": root_id,
-            "chains": chains_created,
-            "after": after_created,
-        })
+        # 3. After sequence (fan-in).
+        after_created = []
+        if after:
+            for si, step in enumerate(after):
+                body = step.get("body") or step["title"]
+                skills = [step["skill"]] if step.get("skill") else None
+                if si == 0:
+                    # Create unparented, then link each chain's last step.
+                    card_id = kb.create_task(
+                        conn,
+                        title=step["title"],
+                        body=body,
+                        assignee=step["assignee"],
+                        created_by=author,
+                        skills=skills,
+                    )
+                    for last_id in chain_last_ids:
+                        kb.link_tasks(conn, last_id, card_id)
+                else:
+                    card_id = kb.create_task(
+                        conn,
+                        title=step["title"],
+                        body=body,
+                        assignee=step["assignee"],
+                        created_by=author,
+                        skills=skills,
+                        parents=[after_created[-1]],
+                    )
+                after_created.append(card_id)
+
+        # 4. Link caller to terminal card(s).
+        if after_created:
+            terminal_ids = [after_created[-1]]
+        else:
+            terminal_ids = chain_last_ids
+        for tid in terminal_ids:
+            kb.link_tasks(conn, tid, my_card_id)
+
+        # 5. Block caller (kind=dependency). Uses the SAME connection and
+        #    the SAME transaction context as all card creation above.
+        #    block_task returns True only when the SQL UPDATE matched 1 row
+        #    (status was running/ready AND run_id matched). This is the
+        #    authoritative signal — no separate verification needed.
+        reason = f"waiting_for_chains:{', '.join(terminal_ids)}"
+        ok = kb.block_task(
+            conn,
+            my_card_id,
+            reason=reason,
+            kind="dependency",
+            expected_run_id=run_id,
+        )
+        if not ok:
+            logger.error("Block failed for %s (run_id=%s)", my_card_id, run_id)
+            return json.dumps({
+                "error": f"Block failed — card may not be in running/ready state, "
+                         f"or run_id mismatch (expected {run_id}). "
+                         f"Cards were created: root={root_id}",
+                "root_id": root_id,
+                "chains": chains_created,
+                "after": after_created,
+            })
 
     # 6. Return.
     result = {
