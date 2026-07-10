@@ -1,9 +1,13 @@
 """Tool handlers — the code that runs when the LLM calls kanban_chains.
 
-Uses the kanban_db Python API directly (same connection mechanism as the
-platform's built-in kanban tools). No subprocess calls — eliminates the
-race condition where the zombie reaper sees stale state between the
-subprocess commit and the agent process exit.
+Borrows the proven design from kanban_swarm.py: uses parents= in create_task
+for ALL topology relationships (chain internal, fan-in, sequential). No
+separate link_tasks calls for the topology — create_task handles linking
+internally via _find_missing_parents. This eliminates the race condition
+where link_tasks validates IDs that haven't committed yet.
+
+The only explicit link_tasks call is for the CALLER (its card already exists,
+so we can't pass it as a parent to create_task).
 """
 
 import json
@@ -19,24 +23,15 @@ BLACKBOARD_PREFIX = "[swarm:blackboard] "
 
 
 def _board():
-    """Return the kanban board from env (default 'team')."""
     return os.environ.get("HERMES_KANBAN_BOARD", "team")
 
 
 def _kb():
-    """Import kanban_db lazily so the plugin doesn't fail at import time
-    in environments where hermes_cli isn't on the path (tests, static analysis)."""
     from hermes_cli import kanban_db
     return kanban_db
 
 
-def _connect():
-    """Open a kanban DB connection for the current board."""
-    return _kb().connect_closing(board=_board())
-
-
 def _run_id():
-    """Return the current run ID from env, or None."""
     raw = os.environ.get("HERMES_KANBAN_RUN_ID")
     if not raw:
         return None
@@ -47,7 +42,17 @@ def _run_id():
 
 
 def _my_card_id(**kwargs):
-    return kwargs.get("task_id") or os.environ.get("HERMES_KANBAN_TASK")
+    tid = kwargs.get("task_id")
+    if tid and isinstance(tid, str) and tid.startswith("t_"):
+        return tid
+    env_tid = os.environ.get("HERMES_KANBAN_TASK")
+    if env_tid and env_tid.startswith("t_"):
+        return env_tid
+    return None
+
+
+def _author(**kwargs):
+    return kwargs.get("_profile") or "kanban_chains"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -65,7 +70,6 @@ def _container_section(image_tag, container_port, port, worker_num):
 
 
 def _validate(args):
-    """Validate args BEFORE any card creation. Return an error string, or None."""
     goal = args.get("goal")
     if not isinstance(goal, str) or not goal.strip():
         return "goal is required and must be a non-empty string"
@@ -107,13 +111,12 @@ def kanban_chains(args: dict, **kwargs) -> str:
     """
     Create a parallel-chains + optional sequential-synthesis topology, link the
     caller as dependent on the terminal card(s), and block the caller.
-    Returns JSON describing the created topology.
 
-    All DB operations run in a single connection so card creation and the
-    caller block commit atomically — the zombie reaper can never see cards
-    without their corresponding block.
+    Design borrowed from kanban_swarm.create_swarm: all topology relationships
+    are expressed via parents= in create_task. No separate link_tasks calls
+    for the topology — create_task validates and links parents atomically
+    inside its own write_txn.
     """
-    # 0. Validate BEFORE any card creation.
     err = _validate(args)
     if err:
         return json.dumps({"error": err})
@@ -130,15 +133,15 @@ def kanban_chains(args: dict, **kwargs) -> str:
     after = args.get("after")
     bb = args.get("blackboard") or {}
     image_tag = (bb.get("image_tag") or "").strip()
-    container_port = bb.get("container_port", 3000)
-    base_port = bb.get("base_port", 18081)
+    container_port = int(bb.get("container_port", 3000))
+    base_port = int(bb.get("base_port", 18081))
     env_facts = (bb.get("env_facts") or "").strip()
     spec_path = (bb.get("spec_path") or "").strip()
     extra = bb.get("extra") or {}
 
     kb = _kb()
     run_id = _run_id()
-    author = kwargs.get("_profile") or "kanban_chains"
+    author = _author(**kwargs)
 
     with kb.connect_closing(board=_board()) as conn:
 
@@ -160,7 +163,6 @@ def kanban_chains(args: dict, **kwargs) -> str:
             created_by=author,
         )
 
-        # Post blackboard comment if blackboard param was provided.
         if args.get("blackboard"):
             bb_payload = json.dumps({
                 "key": "swarm_context",
@@ -176,15 +178,20 @@ def kanban_chains(args: dict, **kwargs) -> str:
             kb.add_comment(conn, root_id, author,
                            f"{BLACKBOARD_PREFIX}{bb_payload}")
 
-        # Complete root immediately so children can promote.
-        kb.complete_task(conn, root_id)
+        kb.complete_task(
+            conn, root_id,
+            summary="Chains topology planned; root remains the shared blackboard.",
+            metadata={"goal": goal, "chain_count": len(chains)},
+        )
 
         # 2. Chains — each chain's steps run sequentially; chains are parallel.
+        #    All linking done via parents= in create_task (same pattern as
+        #    kanban_swarm.py: worker parents=[root], verifier parents=[all workers]).
         chains_created = []
         for ci, chain in enumerate(chains):
             chain_ids = []
             for si, step in enumerate(chain):
-                parent_id = root_id if si == 0 else chain_ids[-1]
+                parents = [root_id] if si == 0 else [chain_ids[-1]]
                 body = step["body"]
                 if si == 0 and image_tag:
                     port = base_port + ci
@@ -197,7 +204,7 @@ def kanban_chains(args: dict, **kwargs) -> str:
                     body=body,
                     assignee=step["assignee"],
                     created_by=author,
-                    parents=[parent_id],
+                    parents=parents,
                     skills=skills,
                     workspace_path=step.get("workspace_path"),
                     priority=step.get("priority", 0),
@@ -207,49 +214,38 @@ def kanban_chains(args: dict, **kwargs) -> str:
 
         chain_last_ids = [c[-1] for c in chains_created]
 
-        # 3. After sequence (fan-in).
+        # 3. After sequence (fan-in) — step[0] parented on ALL chain ends.
+        #    Uses parents= (list) so create_task handles all fan-in links
+        #    atomically in a single write_txn. No separate link_tasks calls.
         after_created = []
         if after:
             for si, step in enumerate(after):
                 body = step.get("body") or step["title"]
                 skills = [step["skill"]] if step.get("skill") else None
-                if si == 0:
-                    # Create unparented, then link each chain's last step.
-                    card_id = kb.create_task(
-                        conn,
-                        title=step["title"],
-                        body=body,
-                        assignee=step["assignee"],
-                        created_by=author,
-                        skills=skills,
-                    )
-                    for last_id in chain_last_ids:
-                        kb.link_tasks(conn, last_id, card_id)
-                else:
-                    card_id = kb.create_task(
-                        conn,
-                        title=step["title"],
-                        body=body,
-                        assignee=step["assignee"],
-                        created_by=author,
-                        skills=skills,
-                        parents=[after_created[-1]],
-                    )
+                parents = chain_last_ids if si == 0 else [after_created[-1]]
+                card_id = kb.create_task(
+                    conn,
+                    title=step["title"],
+                    body=body,
+                    assignee=step["assignee"],
+                    created_by=author,
+                    parents=parents,
+                    skills=skills,
+                )
                 after_created.append(card_id)
 
-        # 4. Link caller to terminal card(s).
+        # 4. Link caller to terminal card(s) and block.
+        #    The caller card already exists — we can't use parents= here.
+        #    This is the ONLY explicit link_tasks call, mirroring how
+        #    `hermes kanban swarm` CLI links the caller after create_swarm.
         if after_created:
             terminal_ids = [after_created[-1]]
         else:
             terminal_ids = chain_last_ids
+
         for tid in terminal_ids:
             kb.link_tasks(conn, tid, my_card_id)
 
-        # 5. Block caller (kind=dependency). Uses the SAME connection and
-        #    the SAME transaction context as all card creation above.
-        #    block_task returns True only when the SQL UPDATE matched 1 row
-        #    (status was running/ready AND run_id matched). This is the
-        #    authoritative signal — no separate verification needed.
         reason = f"waiting_for_chains:{', '.join(terminal_ids)}"
         ok = kb.block_task(
             conn,
@@ -269,7 +265,7 @@ def kanban_chains(args: dict, **kwargs) -> str:
                 "after": after_created,
             })
 
-    # 6. Return.
+    # 5. Return.
     result = {
         "status": "blocked",
         "root_id": root_id,
