@@ -36,6 +36,10 @@ decisions-not-deliverables, concurrent sessions expected.
 - `wayfinder:research` — researcher/scout via the normal dispatch queue: leave the ticket on
   the frontier for the dispatcher; do not resolve it yourself in a grilling session.
 - `wayfinder:task` — ops/developer via the same queue.
+- `wayfinder:architecture` — architect via the same queue: leave the ticket on the frontier
+  for the dispatcher (the resolution is an ADR per `docs/agents/adr-convention.md`, cited by
+  number in the resolution comment). PO stays the asker — PO NEVER answers an architecture
+  question itself.
 - `wayfinder:prototype` (building the artifact) — developer queue; the *reaction* to it is
   PO↔VB.
 

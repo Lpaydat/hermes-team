@@ -164,13 +164,14 @@ def has_active_po_dispatch_card(board):
 WAYFINDER_ROUTES = {
     "wayfinder:research": "scout",
     "wayfinder:task": "ops",
+    "wayfinder:architecture": "architect",  # decisions land as ADRs (docs/agents/adr-convention.md)
 }
 # grilling/prototype are HITL-substitute work; the map epic is an index, not
 # work; an idea brief is a citable record, not work.
 WAYFINDER_SKIP = ("wayfinder:grilling", "wayfinder:prototype", "wayfinder:map", "venture:brief")
 
 def dispatch_wayfinder_ticket(board, project_dir, bead, assignee):
-    """Create one routed card for a wayfinder research/task ticket."""
+    """Create one routed card for a wayfinder research/task/architecture ticket."""
     bead_id = bead["id"]
     detail = bd_json(project_dir, "show", bead_id) or {}
     if isinstance(detail, list):
@@ -181,22 +182,52 @@ def dispatch_wayfinder_ticket(board, project_dir, bead, assignee):
     if DRY_RUN:
         return [f"dispatch: would route wayfinder ticket {bead_id} → {assignee} on {board}"]
 
-    body = (
-        f"## Wayfinder ticket {bead_id} — {bead.get('title', '?')}\n\n"
-        f"Map: `{map_id}` (the venture's wayfinding map — its Notes name the idea "
-        f"brief and prior decisions; read it with `bd show {map_id}`).\n\n"
-        f"{question}\n\n"
-        f"## Resolve protocol (run bd from {project_dir})\n\n"
-        f"1. Investigate (AFK). Long artifacts go to a file; link them, don't paste.\n"
-        f"2. Record the resolution on the ticket: `bd comment {bead_id} \"<answer + "
-        f"citation of your sources>\"`\n"
-        f"3. Append the decision to the map's Decisions-so-far index: read "
-        f"`bd show {map_id}`, rewrite its description via `bd update {map_id} "
-        f"--description=...` with the added line `- {bead.get('title', '?')} "
-        f"({bead_id}) — <one-line gist>`.\n"
-        f"4. Complete this card with the answer as summary. Do NOT `bd close` the "
-        f"ticket yourself — bead-sync closes it when this card is done."
-    )
+    if assignee == "architect":
+        # Architecture tickets resolve as ADRs: gate posture, decision recorded
+        # append-only in the venture repo per docs/agents/adr-convention.md,
+        # resolution comment cites the ADR by number.
+        body = (
+            f"## Wayfinder ticket {bead_id} — {bead.get('title', '?')}\n\n"
+            f"Map: `{map_id}` (the venture's wayfinding map — its Notes name the idea "
+            f"brief and prior decisions; read it with `bd show {map_id}`).\n\n"
+            f"{question}\n\n"
+            f"## Resolve protocol — architecture (run bd from {project_dir})\n\n"
+            f"1. Answer in gate posture: weigh the alternatives before deciding; every "
+            f"input to the decision needs a named, quotable source.\n"
+            f"2. Record the decision as an ADR in this venture repo under "
+            f"{project_dir}/docs/adr/ per "
+            f"{Path.home()}/.hermes-teams/docs/agents/adr-convention.md: next free "
+            f"ADR-NNN, one decision per file, header line `Introduced-by: {bead_id}`, "
+            f"sections Decision / Context / Alternatives Considered / Consequences / "
+            f"Citations.\n"
+            f"3. Record the resolution on the ticket citing the ADR by number: "
+            f"`bd comment {bead_id} \"RESOLVED: <decision gist> — see ADR-NNN "
+            f"docs/adr/ADR-NNN-<slug>.md\"`\n"
+            f"4. Append the decision to the map's Decisions-so-far index: read "
+            f"`bd show {map_id}`, rewrite its description via `bd update {map_id} "
+            f"--description=...` with the added line `- {bead.get('title', '?')} "
+            f"({bead_id}) — <one-line gist> (ADR-NNN)`.\n"
+            f"5. Complete this card with the decision gist as summary and metadata "
+            f'{{"adr": "ADR-NNN", "posture": "gate"}}. Do NOT `bd close` the '
+            f"ticket yourself — bead-sync closes it when this card is done."
+        )
+    else:
+        body = (
+            f"## Wayfinder ticket {bead_id} — {bead.get('title', '?')}\n\n"
+            f"Map: `{map_id}` (the venture's wayfinding map — its Notes name the idea "
+            f"brief and prior decisions; read it with `bd show {map_id}`).\n\n"
+            f"{question}\n\n"
+            f"## Resolve protocol (run bd from {project_dir})\n\n"
+            f"1. Investigate (AFK). Long artifacts go to a file; link them, don't paste.\n"
+            f"2. Record the resolution on the ticket: `bd comment {bead_id} \"<answer + "
+            f"citation of your sources>\"`\n"
+            f"3. Append the decision to the map's Decisions-so-far index: read "
+            f"`bd show {map_id}`, rewrite its description via `bd update {map_id} "
+            f"--description=...` with the added line `- {bead.get('title', '?')} "
+            f"({bead_id}) — <one-line gist>`.\n"
+            f"4. Complete this card with the answer as summary. Do NOT `bd close` the "
+            f"ticket yourself — bead-sync closes it when this card is done."
+        )
     ok, _ = run_kanban(board, [
         "create", f"[wayfinder] {bead.get('title', bead_id)}"[:120],
         "--assignee", assignee,
