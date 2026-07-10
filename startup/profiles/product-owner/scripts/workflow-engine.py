@@ -25,7 +25,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DRY_RUN = "--dry-run" in sys.argv
-CONFIG_FILE = Path.home() / ".hermes-teams/startup/active-projects.json"
+# HERMES_ACTIVE_PROJECTS lets drills point the engine at a fixture project list
+# without touching the live registration (the cron ticks every minute).
+CONFIG_FILE = Path(
+    os.environ.get("HERMES_ACTIVE_PROJECTS", "").strip()
+    or str(Path.home() / ".hermes-teams/startup/active-projects.json")
+)
 KANBAN_ROOT = Path.home() / ".hermes-teams/startup/kanban/boards"
 
 # ── Config ────────────────────────────────────────────────────────────────
@@ -152,12 +157,58 @@ def has_active_po_dispatch_card(board):
     except sqlite3.Error:
         return False
 
+# Wayfinder frontier tickets route by type label straight to the profile that
+# can resolve them (autonomous venture pipeline). grilling/prototype are the
+# HITL-substitute types — PO<->VB over intercom via work-the-map cards — and
+# must NEVER be headless-dispatched by the engine.
+WAYFINDER_ROUTES = {
+    "wayfinder:research": "scout",
+    "wayfinder:task": "ops",
+}
+# grilling/prototype are HITL-substitute work; the map epic is an index, not work.
+WAYFINDER_SKIP = ("wayfinder:grilling", "wayfinder:prototype", "wayfinder:map")
+
+def dispatch_wayfinder_ticket(board, project_dir, bead, assignee):
+    """Create one routed card for a wayfinder research/task ticket."""
+    bead_id = bead["id"]
+    detail = bd_json(project_dir, "show", bead_id) or {}
+    if isinstance(detail, list):
+        detail = detail[0] if detail else {}
+    map_id = detail.get("parent") or ""
+    question = detail.get("description") or bead.get("title", "")
+
+    if DRY_RUN:
+        return [f"dispatch: would route wayfinder ticket {bead_id} → {assignee} on {board}"]
+
+    body = (
+        f"## Wayfinder ticket {bead_id} — {bead.get('title', '?')}\n\n"
+        f"Map: `{map_id}` (the venture's wayfinding map — its Notes name the idea "
+        f"brief and prior decisions; read it with `bd show {map_id}`).\n\n"
+        f"{question}\n\n"
+        f"## Resolve protocol (run bd from {project_dir})\n\n"
+        f"1. Investigate (AFK). Long artifacts go to a file; link them, don't paste.\n"
+        f"2. Record the resolution on the ticket: `bd comment {bead_id} \"<answer + "
+        f"citation of your sources>\"`\n"
+        f"3. Append the decision to the map's Decisions-so-far index: read "
+        f"`bd show {map_id}`, rewrite its description via `bd update {map_id} "
+        f"--description=...` with the added line `- {bead.get('title', '?')} "
+        f"({bead_id}) — <one-line gist>`.\n"
+        f"4. Complete this card with the answer as summary. Do NOT `bd close` the "
+        f"ticket yourself — bead-sync closes it when this card is done."
+    )
+    ok, _ = run_kanban(board, [
+        "create", f"[wayfinder] {bead.get('title', bead_id)}"[:120],
+        "--assignee", assignee,
+        "--body", body,
+        "--workspace", f"dir:{project_dir}",
+        "--idempotency-key", f"bead-{bead_id}",
+        "--json",
+    ])
+    return [f"dispatch: {'routed' if ok else 'FAILED to route'} wayfinder ticket {bead_id} → {assignee} on {board}"]
+
 def phase_dispatch(board, project_dir):
     """Check bd ready and create a PO dispatch card for one project."""
     actions = []
-
-    if has_active_po_dispatch_card(board):
-        return actions
 
     ready = bd_json(project_dir, "ready")
     if not isinstance(ready, list):
@@ -167,11 +218,21 @@ def phase_dispatch(board, project_dir):
     for bead in ready:
         if not isinstance(bead, dict) or not bead.get("id"):
             continue
-        if "gt:slot" in bead.get("labels", []):
+        labels = bead.get("labels") or []
+        if "gt:slot" in labels:
             continue
+        if any(lab in WAYFINDER_SKIP for lab in labels):
+            continue  # HITL-substitute tickets: PO<->VB own these, never headless
         if card_exists_for_bead(board, bead["id"]):
             continue
+        route = next((WAYFINDER_ROUTES[lab] for lab in labels if lab in WAYFINDER_ROUTES), None)
+        if route:
+            actions.extend(dispatch_wayfinder_ticket(board, project_dir, bead, route))
+            continue
         new_beads.append(bead)
+
+    if has_active_po_dispatch_card(board):
+        return actions
 
     if not new_beads:
         return actions
