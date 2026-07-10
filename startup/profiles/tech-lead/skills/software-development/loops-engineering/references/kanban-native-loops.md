@@ -31,7 +31,7 @@ bead ready
   → beads-watchdog → tech-lead card (sole beads→kanban bridge, idempotency-keyed)
   → tech-lead (in-session): Discover + Plan
       contract.md (20-27 assertions) committed to repo, evals_cmd defined
-      → kanban_delegate(contracts=[{...}])   ← creates dev+verifier cards atomically,
+      → kanban_chains(chains=[[...]])   ← creates dev+verifier cards atomically,
                                                    links tech-lead as dependent on verifier,
                                                    blocks with kind=dependency
   → developer works card (developer-loop skill): harness-as-tool, mechanical gates,
@@ -62,7 +62,7 @@ Retry cap: the iteration count is a COMMENT convention — the reviewer heads ea
 
 ## Card schema
 
-**Cards are created by the `kanban_delegate` tool** — do NOT call `kanban_create` manually for developer or verifier cards. The tool creates both atomically (developer card + verifier card as its child), links your card as dependent on the verifier, and blocks you with `kind=dependency`. See SKILL.md Execute phase for usage.
+**Cards are created by the `kanban_chains` tool** — do NOT call `kanban_create` manually for developer or verifier cards. The tool creates both atomically (developer card + verifier card as its child), links your card as dependent on the verifier, and blocks you with `kind=dependency`. See SKILL.md Execute phase for usage.
 
 What the tool creates (for reference — the tool handles this internally):
 
@@ -117,7 +117,7 @@ The dispatch path's lifetime record before commissioning: 0 completions in 29 ru
 
 0. Preconditions: root `~/.hermes/config.yaml` has the `kanban:` block (caps + `auto_decompose: false`) and the gateway has been RESTARTED since (caps load at boot); `bd merge-slot create` run once in the target project; developer + verifier profiles resolvable (`hermes profile list`).
 1. Pick a trivial, real, single-file bead (or write one) on a project board.
-2. tech-lead calls `kanban_delegate` (creates dev+verifier cards atomically, links tech-lead as dependent on verifier, blocks with kind=dependency).
+2. tech-lead calls `kanban_chains` (creates dev+verifier cards atomically, links tech-lead as dependent on verifier, blocks with kind=dependency).
 3. Watch: dispatcher claims dev card → developer completes with trace + report + branch/worktree metadata → verification card auto-promotes with the handoff → verifier executes, verdicts, merges via slot → bead closed.
 4. Verify afterwards: `worker_session_id` stamped, transcript in `~/vault/traces/<board>/<card-id>/`, `session_search(profile=developer)` finds the session, the parent handoff carried branch_name/worktree_path, journal entry written.
 5. Any step fails → fix the config/choreography and rerun. Do not route real work until one commissioning loop is fully green.
