@@ -82,7 +82,7 @@ kanban_chains(
     [{"assignee":"verifier","title":"[probe] fresh-eyes AC verification <your-review-card>",
       "body":"<fresh-eyes mandate — see template. Contract + ACs + branch/worktree ONLY. Title carries YOUR review-card id, never the dev card's — the dev card's thread holds exactly what this worker must not see.>"}],
     [{"assignee":"verifier","title":"[probe] static review <your-review-card>",
-      "body":"<static mandate — code-review axes + ponytail + intent critique>"}],
+      "body":"<static mandate — code-review axes + ponytail + intent critique + ADR-conformance lens — see template>"}],
     [{"assignee":"verifier","title":"[probe] delta check iteration <N> <your-review-card>",
       "body":"<delta mandate (iteration ≥ 2 only) — prior findings + constraint-drift sweep>"}]
   ]
@@ -112,7 +112,7 @@ Common rules for every worker body: work from `git -C <worktree_path>` on `<bran
 
 Plus at least one probe per normalization axis using the NON-normalized input form (uppercase keys, unicode, multi-delimiter variants). Any uncaught crash → **Important finding** — and a crash on schema-violating-but-parseable JSON is the same severity: an `except JSONDecodeError` that leaves `dict["key"]` exposed is a half-written guard.
 
-**Static reviewer** — mandate: load the `code-review` skill for the two-axis method (Standards: repo standards + Fowler smell baseline; Spec: does the diff since `<merge-base>` faithfully implement the contract, quoting the contract line per finding) **but run both axes yourself, sequentially, in this session — do NOT dispatch the skill's parallel sub-agents**. Then `ponytail-review` on the diff (delete/stdlib/yagni/shrink tags). Then the intent critique (the only step that questions the **architecture**, not the implementation):
+**Static reviewer** — mandate: load the `code-review` skill for the two-axis method (Standards: repo standards + Fowler smell baseline; Spec: does the diff since `<merge-base>` faithfully implement the contract, quoting the contract line per finding) **but run both axes yourself, sequentially, in this session — do NOT dispatch the skill's parallel sub-agents**. Then `ponytail-review` on the diff (delete/stdlib/yagni/shrink tags). Then the intent critique (questions whether the chosen **architecture** should exist at all — the ADR-conformance lens below checks conformance to the recorded one):
 
 1. **State the goal in one sentence** — if you can't, the spec is underspecified.
 2. **Simpler alternative?** — could stdlib do this? Does a smaller change solve 90% with 10% risk?
@@ -121,12 +121,15 @@ Plus at least one probe per normalization axis using the NON-normalized input fo
 
 Cross-check contract vs bead ACs (`bd show <bead-id>`): if contract says X but bead says Y → **spec gap**, not a code bug (flag it; the orchestrator routes it).
 
+Then the **ADR-conformance lens**: does the diff honor the venture's ADRs (`docs/adr/` per `docs/agents/adr-convention.md`) and the spec's architecture section (the contract's/card body's architecture or design section, when one is carried)? Architectural drift with zero functional bugs is still a severity-graded finding, and the finding MUST name the violated ADR by number (file:line + the quoted ADR Decision line it violates, like any contract violation). Complete with the conformance result in your structured metadata — violated (with the ADR ids) | clean (with the ADR count checked) | skipped — and when ADRs exist and no drift is found, your completion summary reports the conformance check ran clean ("ADR conformance: clean, N ADRs checked"). When the repo has no `docs/adr/`, the ADR half of this lens is a no-op — note "no docs/adr/ — conformance lens skipped" and file nothing (no noise findings on ADR-less repos); the spec's architecture section is still checked.
+
 **Delta checker** (iteration ≥ 2 only) — body carries the prior `REVIEW-ITERATION: <N-1>` findings + the dev/fix card ids. Mandate: for each prior finding re-run the repro and record exactly one of:
 
 - **FIXED** — no longer reproduces; genuinely corrected.
 - **STILL-FAILING** — reproduces unchanged.
 - **REGRESSED** — reproduces, plus new symptoms in the same area.
 - **RESOLVED-BY-SKIP** ⚠️ — silenced via `@pytest.mark.skip`/`xfail`/test deletion/commented-out assertions rather than fixed. **NOT a fix** — converts to a Critical carrying the original defect. See [probe-patterns.md](references/probe-patterns.md) §"Skip-as-fix detection".
+- **ADR-tamper guard** ⚠️ — a prior ADR-conformance finding may be recorded FIXED only if the cited ADR file is byte-identical since the finding; ADRs are append-only, so any edit or deletion of an accepted ADR in the fix diff converts the finding to a Critical carrying the original drift — the ADR mirror of RESOLVED-BY-SKIP.
 
 Then the **constraint-drift sweep**: read the FULL comment thread on the developer card AND the parent chain (fix card → review card → … → root), newest-first. For each justification the developer cites — in a skip reason, a design-decision docstring, or a "can't do X because Y" in completion metadata ("architecturally impossible", "frozen module", "cannot persist"): find the origin of the constraint, check for a later comment that lifts/supersedes it ("OBSOLETE", "superseded", "SPEC GAP FIX", "resolution", "lifted", "authorized to modify"). A superseded justification is void — the underlying finding reopens as a Critical with evidence = the superseding comment + a fresh probe.
 
@@ -184,7 +187,7 @@ Only merge when a full review is _clean_ — zero findings at any severity. A bu
 
 ### Stamp the verdict (non-negotiable)
 
-**PASS / FAIL**: `kanban_complete` your review card with `summary` beginning `PASS`/`FAIL` + one-line evidence digest, and `metadata` carrying at minimum `{verdict, findings_count, acs_verified, dev_tests, iteration}`. The verdict comment on the dev card is for humans and the next agent; the **completion summary/metadata is what dashboards, audits, and parent-card injection read**. A review that completes with a bare "done"/"noop" summary while the verdict lives only in a comment is a defect (observed live: a passing re-verification whose run metadata said "Noop task — no action taken").
+**PASS / FAIL**: `kanban_complete` your review card with `summary` beginning `PASS`/`FAIL` + one-line evidence digest, and `metadata` carrying at minimum `{verdict, findings_count, acs_verified, dev_tests, iteration, adr_conformance}` — `adr_conformance` is stamped from the static worker's conformance result (the orchestrator carries it into the verdict stamp): `{"status":"violated","ids":["ADR-NNN",...]}` | `{"status":"clean","checked":N}` | `{"status":"skipped","reason":"no-docs-adr"}`; on an ADR-drift FAIL the stamped summary also names the violated ADR id(s). The verdict comment on the dev card is for humans and the next agent; the **completion summary/metadata is what dashboards, audits, and parent-card injection read**. A review that completes with a bare "done"/"noop" summary while the verdict lives only in a comment is a defect (observed live: a passing re-verification whose run metadata said "Noop task — no action taken").
 
 **ESCALATE**: a blocked card never completes, so there is no completion to stamp — instead the `kanban_block` reason MUST begin `ESCALATE:` and the block comment MUST carry the same verdict fields plus your session id (block paths record no run metadata; the comment is the durable record). See [verdict-routing.md](references/verdict-routing.md).
 
