@@ -2,32 +2,27 @@
 
 Learned from end-to-end testing of the QA swarm protocol. Load when debugging swarm failures or designing new swarm-based workflows.
 
-## kanban_link + kanban_block — the dependency invariant
+## kanban_chains — the unified topology tool (LIVE)
 
-`kanban_block(kind=dependency)` sets status to `todo` but does NOT register the dependency. Without a matching `kanban_link(dependency_target, my_card_id)`, the dispatcher's `recompute_ready()` never promotes the card when the target completes. The card stays stuck forever.
+Global plugin at `startup/plugins/kanban_chains/`. Replaces both `kanban_delegate` (tech-lead) and `qa_swarm` (QA). One tool, every topology:
 
-**Always pair them:**
-```python
-kanban_link(synthesizer_id, my_card_id)  # register the dependency
-kanban_block(my_card_id, kind=dependency)  # set status to todo
-```
+- **`chains`**: parallel chains of sequential steps. Each step: `{assignee, title, body, skill, workspace_path}`.
+- **`after`**: optional sequential fan-in after all chains complete. Each step same shape.
+- **`blackboard`**: optional shared context (image_tag, ports, env_facts, spec_path).
+- Caller is linked to terminal card and blocked with `kind=dependency`. Handles all `kanban_link` + `kanban_block` internally.
 
-The `qa_swarm` plugin does this correctly (tools.py Step 5). The bug appeared when an orchestrator blocked manually without linking.
+| Profile | chains | after | Blocks on |
+|---|---|---|---|
+| tech-lead | `[[{dev}, {verifier}]]` | none | all verifiers |
+| QA | `[[{worker}], ...]` | `[{verifier}, {synthesizer}]` | synthesizer |
 
-## hermes kanban swarm CLI — known gotchas
+`kanban_delegate` and `qa_swarm` are deprecated. Skills reference `kanban_chains` exclusively.
 
-### Skill name bracket bug
-`--worker PROFILE:TITLE[:SKILL,SKILL]` — brackets in help text denote optional syntax. Typing literal brackets produces skill name `qa-functional]` → agent crash. Correct: `--worker "qa:Title:qa-functional"`.
+### kanban_link + kanban_block — the dependency invariant
 
-### Hardcoded verifier/synthesizer skills
-`kanban_swarm.py` creates verifier with `skills=["requesting-code-review"]` and synthesizer with `skills=["humanizer"]`. Neither exists on the QA profile by default. Stub versions installed that redirect to QA roles. Do NOT edit platform source.
+`kanban_block(kind=dependency)` sets status to `todo` but does NOT register the dependency. Without `kanban_link(target, my_card_id)`, the dispatcher's `recompute_ready()` never promotes the card — stuck forever. `kanban_chains` handles both internally. If you ever block manually: link first, then block with `kind=dependency`.
 
-### Generic card bodies
-The CLI creates correct topology but generic card bodies. Workers must parse a shared blackboard blob. The `qa_swarm` plugin solves this by baking tailored content into each card body.
-
-## qa_swarm plugin (Option B)
-
-Located at `plugins/qa_workflow/`. Creates root (blackboard) + workers + verifier + synthesizer atomically. Each worker gets: specific checklist in body, auto-allocated port, container start command, skill loaded. No hardcoded skills.
+A generic block (`kind=null`) creates status `blocked` — requires manual unblocking, never auto-promotes. Always use `kind=dependency` when waiting on another card.
 
 ## max_in_progress_per_profile — dispatcher cap
 
@@ -39,8 +34,10 @@ QA findings filed directly to `developer` create lone cards with no verifier chi
 
 ```
 QA synthesizer → dedup by root cause → 1 triage report to tech-lead
-  → tech-lead → kanban_delegate → developer + verifier → merge → QA re-test
+  → tech-lead → kanban_chains → developer + verifier → merge → new QA card for re-test
 ```
+
+The orchestrator COMPLETES after filing the verdict. It does NOT block waiting for the fix. The re-test is a separate QA card created by tech-lead after fixes merge.
 
 ## Auto-decomposer ≠ team self-healing
 
