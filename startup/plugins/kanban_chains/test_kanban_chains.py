@@ -51,13 +51,18 @@ import schemas as kc_schemas
 # Mock kanban_db
 # =============================================================================
 
+_Comment = __import__("collections").namedtuple("_Comment", ["author", "body"])
+
+
 class FakeKanbanDB:
     """Records every kanban_db API call and returns canned responses.
 
     Methods mocked: connect_closing (ctx mgr), create_task, add_comment,
-    complete_task, link_tasks, block_task.
+    list_comments, complete_task, link_tasks, block_task.
 
-    create_task returns successive IDs from `create_ids`.
+    create_task returns successive IDs from `create_ids` and accepts an
+    idempotency_key (recorded, not deduped — see the E2E suite for real
+    idempotency). add_comment/list_comments back the topology-recovery read.
     block_task returns `block_result` (True/False).
     """
 
@@ -66,6 +71,7 @@ class FakeKanbanDB:
         self.block_result = block_result
         self._create_idx = 0
         self.calls = []  # list of (method_name, args_tuple, kwargs_dict)
+        self._comments = {}  # task_id -> list of _Comment (for list_comments)
 
     # -- context manager for connect_closing --
 
@@ -83,7 +89,7 @@ class FakeKanbanDB:
 
     def create_task(self, conn, title=None, body=None, assignee=None,
                     created_by=None, parents=None, skills=None,
-                    workspace_path=None, priority=0):
+                    workspace_path=None, priority=0, idempotency_key=None):
         kwargs = {
             "title": title,
             "body": body,
@@ -93,6 +99,7 @@ class FakeKanbanDB:
             "skills": skills,
             "workspace_path": workspace_path,
             "priority": priority,
+            "idempotency_key": idempotency_key,
         }
         self.calls.append(("create_task", (conn,), kwargs))
         if self._create_idx < len(self.create_ids):
@@ -103,6 +110,11 @@ class FakeKanbanDB:
 
     def add_comment(self, conn, task_id, author, text):
         self.calls.append(("add_comment", (conn, task_id, author, text), {}))
+        self._comments.setdefault(task_id, []).append(_Comment(author, text))
+
+    def list_comments(self, conn, task_id):
+        self.calls.append(("list_comments", (conn, task_id), {}))
+        return list(self._comments.get(task_id, []))
 
     def complete_task(self, conn, task_id, summary=None, metadata=None):
         self.calls.append(("complete_task", (conn, task_id),
@@ -622,12 +634,26 @@ class TestRootCompleted(unittest.TestCase):
 
 
 # =============================================================================
-# 18. Blackboard comment on root with [swarm:blackboard] prefix
+# 18. Blackboard comments on root with [swarm:blackboard] prefix
+#     Two kinds now: an optional `swarm_context` (only when blackboard= given)
+#     and an always-present `topology` record (the idempotency mechanism).
 # =============================================================================
+
+def _blackboard_keys_on(fake, task_id):
+    """Return the list of [swarm:blackboard] payload `key`s posted to task_id."""
+    keys = []
+    for (args, _kw) in _calls(fake, "add_comment"):
+        _conn, tid, _author, text = args
+        if tid != task_id or not text.startswith("[swarm:blackboard]"):
+            continue
+        payload = json.loads(text[len("[swarm:blackboard] "):])
+        keys.append(payload.get("key"))
+    return keys
+
 
 class TestBlackboardComment(unittest.TestCase):
 
-    def test_comment_made_when_blackboard_provided(self):
+    def test_swarm_context_and_topology_when_blackboard_provided(self):
         parsed, fake = _run_handler(
             args={
                 "goal": "shared ctx",
@@ -636,21 +662,18 @@ class TestBlackboardComment(unittest.TestCase):
             },
             create_ids=["t_root", "t_c0"],
         )
-        comments = _calls(fake, "add_comment")
-        self.assertEqual(len(comments), 1)
-        # add_comment(conn, "t_root", author, text)
-        comment_args = comments[0][0]
-        self.assertEqual(comment_args[1], "t_root")
-        payload_text = comment_args[3]
-        self.assertTrue(payload_text.startswith("[swarm:blackboard]"))
+        keys = _blackboard_keys_on(fake, "t_root")
+        self.assertIn("swarm_context", keys)
+        self.assertIn("topology", keys)  # topology always recorded for recovery
 
-    def test_no_comment_when_no_blackboard(self):
+    def test_only_topology_when_no_blackboard(self):
         parsed, fake = _run_handler(
             args={"goal": "no bb", "chains": [[_chain_step()]]},
             create_ids=["t_root", "t_c0"],
         )
-        comments = _calls(fake, "add_comment")
-        self.assertEqual(comments, [])
+        keys = _blackboard_keys_on(fake, "t_root")
+        self.assertNotIn("swarm_context", keys)  # no shared-context blackboard
+        self.assertEqual(keys, ["topology"])      # but topology IS recorded
 
 
 # =============================================================================
