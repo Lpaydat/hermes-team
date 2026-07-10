@@ -20,6 +20,10 @@ decisions-not-deliverables, concurrent sessions expected.
   go to VB over intercom: the `intercom` tool, `ask` action, `to: venture-builder`,
   `topic: <map bead id>` — the per-topic deterministic session keeps parallel ventures from
   mixing context. Include the idea-brief bead id and the ticket's Question in the ask.
+  If the ask errors `target_not_connected` (VB offline), resend as a `send` with
+  `spawn: true` — VB is woken to answer, and the answer arrives in YOUR session
+  asynchronously (it is injected on a later turn: after spawn-sending, keep the session
+  alive and check again after your next tool call; give it a few minutes before escalating).
 - **Asker and answerer are different profiles in different sessions — always.** If you find
   yourself both posing and answering a question, stop: that is the self-answering failure
   wayfinder forbids.
