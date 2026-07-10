@@ -36,7 +36,7 @@ skills:
   - qa
   - request-refactor-plan
   - resolving-merge-conflicts
-  - review
+  - code-review
   - scaffold-exercises
   - setup-matt-pocock-skills
   - setup-pre-commit
@@ -56,7 +56,6 @@ _config_version: 32
 fallback_model: []
 plugins:
   enabled:
-  - kanban_matrix
   - kanban_chains
   disabled: []
   entries:

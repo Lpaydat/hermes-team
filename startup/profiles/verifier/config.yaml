@@ -30,10 +30,8 @@ skills:
   - opencode
   - ponytail
   - ponytail-audit
-  - ponytail-debt
   - ponytail-gain
   - ponytail-help
-  - ponytail-review
   - prototype
   - qa
   - request-refactor-plan
@@ -66,7 +64,6 @@ fallback_model: []
 plugins:
   enabled:
   - intercom
-  - kanban_matrix
   - kanban_chains
   disabled: []
   entries:

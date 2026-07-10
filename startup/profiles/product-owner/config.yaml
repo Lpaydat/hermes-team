@@ -11,7 +11,7 @@ agent:
   api_max_retries: 10
   reasoning_effort: xhigh
 kanban:
-  max_in_progress_per_profile: 1
+  max_in_progress_per_profile: 3
   dispatch_stale_timeout_seconds: 14400
 memory:
   provider: builtin
@@ -65,7 +65,6 @@ fallback_model: []
 plugins:
   enabled:
   - intercom
-  - kanban_matrix
   - kanban_chains
   disabled: []
   entries:

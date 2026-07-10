@@ -16,7 +16,6 @@ agent:
   api_max_retries: 10
 plugins:
   enabled:
-  - kanban_matrix
   - kanban_chains
   disabled: []
   entries:
