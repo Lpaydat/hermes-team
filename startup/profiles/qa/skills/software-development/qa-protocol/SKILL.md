@@ -104,11 +104,17 @@ Tech-lead reads the triage report and uses `kanban_chains` to create dev+verifie
 
 ## Terse reporting overlay
 
-When active (caveman skill loaded), write findings and triage reports at `full` intensity. Ultra/wenyan excluded. Rule: Compress REPORTS, never SPECS — worker mandates, ACs, contracts, and structured metadata fields stay verbatim.
+Report worker findings, triage report prose, and status comments in caveman `full` style (load the `caveman` skill). Compress REPORTS, never SPECS — spec claims, test checklists, and this doctrine stay verbose.
 
-**Hard exemptions (never compressed):** `REVIEW-ITERATION:` headers, verdict metadata JSON, AC-to-evidence mappings, pasted evidence blocks, contracts/ACs/mandates/SOULs, and caveman's own Auto-Clarity triggers (security warnings, irreversible-action confirmations, ambiguity-risk sequences).
+Findings format: one-line per finding (`location: severity: problem. fix.`).
 
-Findings format: `location: severity: problem. fix.`
+**Hard exemptions (never compressed):**
+- Verdict metadata JSON in `kanban_complete`
+- Structured findings fields (claim, severity, reproduction steps, evidence)
+- Pasted evidence blocks
+- Any communication the caveman skill's Auto-Clarity rules would escalate
+
+Intensity capped at `full`. Do NOT use `ultra` or `wenyan`.
 
 ## Evidence flow
 

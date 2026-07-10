@@ -190,11 +190,16 @@ Only merge when a full review is _clean_ — zero findings at any severity. A bu
 
 ### Terse reporting overlay
 
-When active (caveman skill loaded), report findings at `full` intensity. Ultra/wenyan excluded. Rule: Compress REPORTS, never SPECS — contracts, ACs, worker mandates, and SOULs stay exact.
+Report completion summaries, findings prose, and status comments in caveman `full` style (load the `caveman` skill). Compress REPORTS, never SPECS — contracts, ACs, worker mandates, and this doctrine stay verbose.
 
-**Hard exemptions (never compressed):** `REVIEW-ITERATION:` headers, verdict metadata JSON, AC-to-evidence mappings, pasted evidence blocks, contracts/ACs/mandates/SOULs, and caveman Auto-Clarity triggers (security warnings, irreversible-action confirmations, ambiguity-risk sequences).
+**Hard exemptions (never compressed):**
+- `REVIEW-ITERATION:` headers
+- Verdict metadata JSON (`{verdict, findings_count, acs_verified, ...}`)
+- AC-to-evidence mappings
+- Pasted evidence blocks (actual test output, error strings)
+- Any communication the caveman skill's Auto-Clarity rules would escalate (security warnings, irreversible-action confirmations, ambiguity-risk sequences)
 
-One-line finding format: `location: severity: problem. fix.`
+Intensity capped at `full`. Do NOT use `ultra` or `wenyan` (instruction-following risk on weak models).
 
 ## Never
 

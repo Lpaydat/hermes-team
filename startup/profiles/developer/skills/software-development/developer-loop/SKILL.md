@@ -135,9 +135,16 @@ This report is what compensates the trace-blind verifier — human-review resear
 
 ## Terse reporting overlay
 
-When active (caveman skill loaded), write completion reports at `full` intensity. Ultra/wenyan excluded. Rule: Compress REPORTS, never SPECS — contracts, ACs, harness prompts, and structured metadata stay verbatim.
+Write the prose sections of your completion report — **Approach**, **Key decisions**, **Deviations from contract**, **Dead ends** — in caveman `full` style (load the `caveman` skill). Compress REPORTS, never SPECS — contracts, ACs, evals commands, and this doctrine stay verbose.
 
-**Hard exemptions (never compressed):** `REVIEW-ITERATION:` headers, verdict metadata JSON, AC-to-evidence mappings, pasted evidence blocks, contracts/ACs/mandates/SOULs, and caveman's own Auto-Clarity triggers (security warnings, irreversible-action confirmations, ambiguity-risk sequences).
+**Hard exemptions (never compressed):**
+- AC evidence mappings (`[x] AC1: <criterion> → <test>`)
+- Test evidence (actual commands + actual output)
+- Structured metadata in `kanban_complete` (`{harness_session_id, transcript_path, ...}`)
+- Session/trace/cost lines
+- Code, commit messages, error strings
+
+Intensity capped at `full`. Do NOT use `ultra` or `wenyan`.
 
 ## 6. Answering the verifier
 
