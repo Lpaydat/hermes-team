@@ -245,26 +245,17 @@ def kanban_chains(args: dict, **kwargs) -> str:
     for tid in terminal_ids:
         _run_kanban(["link", tid, my_card_id])
 
-    # 5. Block caller (kind=dependency) and verify it took effect.
+    # 5. Block caller (kind=dependency). The block command's exit code is
+    #    authoritative — it returns 0 on success with the landing status printed
+    #    to stdout, 1 on failure. No separate verification needed: block_task's
+    #    SQL already guards `status IN ('running','ready')` before transitioning
+    #    to 'todo', so a 0 exit means the transition happened.
     reason = f"waiting_for_chains:{', '.join(terminal_ids)}"
     ok, block_out = _run_kanban(["block", my_card_id, reason, "--kind", "dependency"])
     if not ok:
         logger.error("Block command failed for %s: %s", my_card_id, block_out)
         return json.dumps({
             "error": f"Block command failed: {block_out}",
-            "root_id": root_id,
-            "chains": chains_created,
-            "after": after_created,
-        })
-
-    verify = _run_kanban_json(["show", my_card_id])
-    actual_status = None
-    if verify:
-        t = verify.get("task", verify)
-        actual_status = t.get("status")
-    if actual_status != "todo":
-        return json.dumps({
-            "error": f"Block did not take effect: status={actual_status} (expected todo)",
             "root_id": root_id,
             "chains": chains_created,
             "after": after_created,
