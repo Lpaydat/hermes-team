@@ -49,7 +49,7 @@ Both tested against cross-browser-ai MVP:
 ## Key findings from e2e testing
 
 1. **Beads for planning, kanban for execution.** Don't create kanban cards when asked for beads. Use `bd create` + `bd dep`.
-2. **Findings route to tech-lead, not developer.** Tech-lead triages and uses kanban_delegate for dev+verifier pairs. No bypassed verifier.
+2. **Findings route to tech-lead, not developer.** Tech-lead triages and uses `kanban_chains` for dev+verifier pairs. No bypassed verifier.
 3. **Synthesizer dedupes before filing.** 3 workers independently found SSRF → 1 finding, not 3. Group by root cause.
 4. **kanban_link must pair with kanban_block.** Block alone = stuck forever.
 5. **Container build takes 10+ min.** Heartbeat every minute during builds.

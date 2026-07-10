@@ -51,6 +51,10 @@ Tasks with `created_by: "auto-decomposer"` are created by the platform's triage-
 
 Ephemeral — dies with parent session, shares parent's API rate limits. Under load, frequently hits HTTP 429 and fails silently. Recovery: check session DB for stuck sessions (1 message, 0 tool calls), kill sandbox, re-dispatch with simpler instructions. Prefer kanban child cards for long tasks.
 
+## Dispatcher scan interval — per-board latency
+
+The dispatcher (whichever gateway holds `.dispatcher.lock`) reaps zombie workers every ~1 min but only does a full per-board scan at irregular intervals (~15 min observed on the `team` board). A `ready` card can sit idle for 15+ minutes before being claimed. This is NOT a stuck card — it's dispatch latency. Check `grep 'dispatcher.*<board>' <dispatcher_profile>/logs/agent.log` to see the actual scan interval. Only investigate further if the card has been `ready` longer than 2x the observed scan interval.
+
 ## End-to-end test results (cross-browser-ai MVP)
 
 | Metric | Option A (CLI) | Option B (Plugin) |

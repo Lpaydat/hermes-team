@@ -67,16 +67,13 @@ spinning agent stalls it.
 
 ## The kanban_chains tool (unified delegation)
 
-`kanban_chains` is a global plugin that replaces `kanban_delegate`, `qa_swarm`, and manual `hermes kanban swarm` CLI calls. It handles every delegation topology — parallel chains + optional sequential fan-in — in one tool call. See the dedicated section above for schema and usage patterns.
+`kanban_chains` is a global plugin that replaces all profile-scoped delegation tools (`kanban_delegate`, `qa_swarm`, manual `hermes kanban swarm` CLI). It handles every delegation topology — parallel chains + optional sequential fan-in — in one atomic tool call.
 
-## kanban_chains — the unified topology tool (LIVE)
-
-`kanban_chains` is a global plugin that replaces profile-scoped delegation tools (`kanban_delegate`, `qa_swarm`). It handles every delegation topology with two parameters:
-
+**Two parameters:**
 - **`chains`**: parallel chains of sequential steps (fan-out). Each chain is `[{assignee, title, body, skill}]`.
 - **`after`**: optional sequential steps that run after ALL chains complete (fan-in — verifier, synthesizer, report compiler).
 
-The caller is linked to the terminal card (last `after` step, or last step of each chain if no `after`) and blocked with `kind=dependency`.
+The caller is linked to the terminal card (last `after` step, or last step of each chain if no `after`) and blocked with `kind=dependency`. The tool handles all linking and blocking internally — never call `kanban_link` or `kanban_block` to set up a topology the tool already manages.
 
 | Profile | chains | after | Caller blocks on |
 |---|---|---|---|
@@ -84,7 +81,7 @@ The caller is linked to the terminal card (last `after` step, or last step of ea
 | QA | `[[{worker}], ...]` | `[{verifier}, {synthesizer}]` | synthesizer |
 | research | `[[{scout}], ...]` | `[{report_compiler}]` | report |
 
-`kanban_delegate` and `qa_swarm` are deprecated — skills reference `kanban_chains` exclusively. Spec at `/home/lpaydat/kanban-chains-spec.md`.
+`kanban_delegate` and `qa_swarm` are deprecated — skills reference `kanban_chains` exclusively.
 
 ## Finding routing: findings go to tech-lead, not developer
 
@@ -111,6 +108,11 @@ The platform source at `startup/hermes-agent/` is a git submodule tracking `Nous
 
 Beads live at `<project_path>/.beads/`. A project must be in `~/.hermes-teams/startup/active-projects.json` for the watchdog to scan it. `bd init` creates the database; `bd create --title "..." --description "..."` adds an issue; `bd dep <blocker-id> --blocks <blocked-id>` wires dependencies.
 - **Creating a second swarm/chains on re-dispatch.** When the orchestrator is auto-promoted after a swarm/chain completes, the dispatcher re-dispatches it. The model sometimes interprets this as "create another swarm" instead of "read the synthesizer's results and proceed." Before creating any new topology on re-dispatch, check `kanban_show` on your own card for child task completions. If a synthesizer/verifier already completed, consume those results — do not create duplicate topology.
+- **Calling `kanban_chains` again to re-block on fix verifiers.** When the verifier creates fix cards on FAIL, the tech-lead is re-dispatched. Do NOT call `kanban_chains` again — that creates a brand new topology (new root, new workers). Instead, link yourself to the existing fix verifier cards and block with `--kind dependency`: `kanban_link <fix_verifier_id> <my_card_id>` then `kanban_block <my_card_id> "dependency: waiting for fix verifier" --kind dependency`. `kanban_chains` creates topology; it is not a re-block mechanism.
+- **Leaking manual tool calls the plugin handles internally.** When a skill documents how to use a plugin tool (`kanban_chains`), the skill body must NOT also teach the agent to call `kanban_link` or `kanban_block` for the same topology — the plugin handles all linking and blocking. Teaching manual calls alongside the plugin creates two execution paths: the agent sometimes uses the plugin (correct), sometimes falls back to manual calls (error-prone). The skill should say "the tool handles linking and blocking internally" and never show manual link/block for the same purpose.
+- **Skills must show the actual call shape.** A skill that says "call `kanban_chains` with chains and after" without showing the object structure leaves the agent guessing at parameter shapes. Always include a concrete call example with the real parameter structure: `chains=[[{"assignee": "qa", "skill": "qa-functional", "title": "...", "body": "..."}]], after=[{"assignee": "qa", "title": "..."}]`. The agent needs to see the shape, not infer it from prose.
+- **Dispatcher per-board scan interval can be 15+ minutes.** The dispatcher (whichever gateway holds `.dispatcher.lock`) reaps zombie workers every ~1 min but only does a full board scan at irregular intervals (~15 min observed). A `ready` card can sit idle for 15+ minutes before the dispatcher picks it up. This is NOT a stuck card — it's dispatch latency. Check the dispatcher log (`grep 'dispatcher.*team' <dispatcher_profile>/logs/agent.log`) to see the actual scan interval before assuming a card is stuck.
+- **Checking skills for cross-profile regressions after migration.** When migrating a skill from one tool to another (e.g., `kanban_delegate` → `kanban_chains`), check ALL profiles' skills AND their reference files for stale references. The main SKILL.md may be updated but `references/*.md` files can still reference the old tool name. Run `grep -rn '<old_tool_name>' <all_profiles>/skills/` to catch stale references before testing.
 - **Claiming system behavior without reading actual logs.** When asked "who triggered this?" or "is the team self-healing?", do NOT guess from card titles and statuses. Read the session DB (`sqlite3 <profile>/state.db`), task events, and the `created_by` field. Tasks with `created_by: "auto-decomposer"` are the platform's response to dashboard/intercom submissions — they are NOT agents self-correcting. Verify against source before making claims about why something happened.
 - **Designing workflow before verifying against the actual codebase.** When designing or modifying a workflow that involves kanban topology, delegation plugins, or cross-profile coordination, read the real platform source (`kanban_swarm.py`, `kanban.py`), the real skill files of other profiles, and the kanban DB schema BEFORE making architecture decisions. The user catches this pattern reliably — a design that looks right on paper but doesn't match the platform's real mechanisms will fail silently. Ground every design decision in code you've actually read.
 - **Synthesizing approaches before all research is complete.** If you've dispatched research subagents to inform a design decision, do not write specs or make architecture decisions until ALL research streams have returned or definitively failed. Partial research produces partial designs that miss entire dimensions.

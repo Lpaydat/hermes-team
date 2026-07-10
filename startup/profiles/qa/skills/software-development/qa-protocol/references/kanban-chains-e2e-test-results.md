@@ -28,6 +28,17 @@ Plugin baked tailored checklists directly into each worker card body. Workers st
 
 **But:** orchestrator created a SECOND swarm on re-dispatch (bug), and blocked itself with `kind=null` instead of `kind=dependency` (bug). Both fixed in qa-protocol v3.1.0.
 
+## Round 4: `kanban_chains` (v3.2.0 — eliminate manual link/block)
+
+**Result: clean flow, orchestrator completes after verdict, no manual link/block leaks**
+
+Two additional bugs found and fixed:
+1. **QA skill leaked manual `kanban_link`/`kanban_block`** in Step 5 (Triage). The skill told the orchestrator to manually link+block on the tech-lead's fix card — but `kanban_chains` handles all linking/blocking internally. Fixed: orchestrator completes immediately after the verdict, no manual link/block. The re-test is a separate QA card created by tech-lead.
+2. **QA skill lacked call shape example.** Step 4 said "call `kanban_chains`" without showing the parameter object structure. The agent guessed wrong. Fixed: concrete call example added with full chains+after+blackboard shape.
+3. **Tech-lead skill said "call `kanban_chains` again" to re-block on fix verifiers.** This creates a duplicate topology. Fixed: use `kanban_link` + `kanban_block --kind dependency` on existing fix verifier cards instead.
+
+**Architecture lesson:** when a skill documents a plugin tool, the skill must NOT also teach the agent to call the underlying primitives (`kanban_link`, `kanban_block`) for the same purpose. Two execution paths → the agent sometimes uses the plugin, sometimes falls back to error-prone manual calls.
+
 ## Key metrics across all rounds
 
 | Metric | Option A (CLI) | Option B (qa_swarm) | kanban_chains |

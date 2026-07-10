@@ -4,69 +4,69 @@ model:
   base_url: https://api.z.ai/api/coding/paas/v4
   context_length: 1000000
 toolsets:
-- hermes-cli
-- kanban
+  - hermes-cli
+  - kanban
 agent:
   api_max_retries: 10
   reasoning_effort: xhigh
 skills:
   disabled:
-  - ask-matt
-  - claude-code
-  - claude-handoff
-  - code-review
-  - codebase-design
-  - codex
-  - decision-mapping
-  - design-an-interface
-  - diagnosing-bugs
-  - domain-modeling
-  - edit-article
-  - git-guardrails-claude-code
-  - grill-me
-  - grill-with-docs
-  - grilling
-  - handoff
-  - implement
-  - improve-codebase-architecture
-  - loop-me
-  - migrate-to-shoehorn
-  - obsidian
-  - obsidian-vault
-  - opencode
-  - ponytail
-  - ponytail-audit
-  - ponytail-debt
-  - ponytail-gain
-  - ponytail-help
-  - ponytail-review
-  - prototype
-  - qa
-  - request-refactor-plan
-  - research
-  - resolving-merge-conflicts
-  - review
-  - scaffold-exercises
-  - setup-matt-pocock-skills
-  - setup-pre-commit
-  - tdd
-  - teach
-  - triage
-  - ubiquitous-language
-  - wayfinder
-  - wizard
-  - writing-beats
-  - writing-fragments
-  - writing-shape
-  - live-testing
+    - ask-matt
+    - claude-code
+    - claude-handoff
+    - code-review
+    - codebase-design
+    - codex
+    - decision-mapping
+    - design-an-interface
+    - diagnosing-bugs
+    - domain-modeling
+    - edit-article
+    - git-guardrails-claude-code
+    - grill-me
+    - grill-with-docs
+    - grilling
+    - handoff
+    - implement
+    - improve-codebase-architecture
+    - loop-me
+    - migrate-to-shoehorn
+    - obsidian
+    - obsidian-vault
+    - opencode
+    - ponytail
+    - ponytail-audit
+    - ponytail-debt
+    - ponytail-gain
+    - ponytail-help
+    - ponytail-review
+    - prototype
+    - qa
+    - request-refactor-plan
+    - research
+    - resolving-merge-conflicts
+    - review
+    - scaffold-exercises
+    - setup-matt-pocock-skills
+    - setup-pre-commit
+    - tdd
+    - teach
+    - triage
+    - ubiquitous-language
+    - wayfinder
+    - wizard
+    - writing-beats
+    - writing-fragments
+    - writing-shape
+    - live-testing
 approvals:
   mode: 'off'
   cron_mode: deny
 command_allowlist:
-- execute_code
-- copy/move file into sensitive credential/SSH/shell-rc path
-- script execution via -e/-c flag
-- recursive delete
+  - execute_code
+  - copy/move file into sensitive credential/SSH/shell-rc path
+  - script execution via -e/-c flag
+  - recursive delete
 onboarding:
   seen:
     tool_progress_prompt: true
@@ -82,8 +82,10 @@ qa:
   risk_based: true
 plugins:
   enabled:
-  - kanban_chains
+    - kanban_chains
   disabled: []
   entries:
     kanban_chains:
       allow_tool_override: false
+display:
+  skin: vault-tec
