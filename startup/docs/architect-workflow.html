@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architect — Decision Workflow</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --orange: #db6d28;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --teal: #39d0d8;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+
+  h1 {
+    font-size: 2em;
+    text-align: center;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .subtitle {
+    text-align: center;
+    color: var(--muted);
+    margin-bottom: 40px;
+    font-size: 1.1em;
+  }
+
+  /* Stance banner */
+  .stance {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 28px;
+    margin-bottom: 40px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .stance-icon { font-size: 2.5em; }
+  .stance-text { flex: 1; }
+  .stance-text strong { color: var(--accent); }
+  .stance-text .rule {
+    display: inline-block;
+    background: rgba(248,81,73,0.1);
+    border: 1px solid var(--red);
+    border-radius: 6px;
+    padding: 2px 8px;
+    margin-top: 6px;
+    font-size: 0.85em;
+    color: var(--red);
+  }
+
+  /* Flow sections */
+  .section {
+    margin-bottom: 48px;
+  }
+  .section-title {
+    font-size: 1.4em;
+    margin-bottom: 20px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-num {
+    background: var(--accent);
+    color: var(--bg);
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8em;
+    font-weight: 700;
+  }
+
+  /* Triage questions */
+  .triage-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .triage-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    text-align: center;
+    transition: transform 0.2s;
+  }
+  .triage-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+  .triage-card .q-icon { font-size: 1.8em; margin-bottom: 8px; }
+  .triage-card .q-text { font-size: 0.95em; color: var(--text); }
+  .triage-card .q-detect { font-size: 0.8em; color: var(--muted); margin-top: 4px; }
+
+  /* Tier cards */
+  .tier-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+  @media (max-width: 900px) { .tier-row { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 500px) { .tier-row { grid-template-columns: 1fr; } }
+
+  .tier-card {
+    border-radius: 12px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .tier-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+  }
+  .tier-t0 { background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.3); }
+  .tier-t0::before { background: var(--green); }
+  .tier-t1 { background: rgba(210,153,34,0.08); border: 1px solid rgba(210,153,34,0.3); }
+  .tier-t1::before { background: var(--yellow); }
+  .tier-t2 { background: rgba(219,109,40,0.08); border: 1px solid rgba(219,109,40,0.3); }
+  .tier-t2::before { background: var(--orange); }
+  .tier-t3 { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.3); }
+  .tier-t3::before { background: var(--red); }
+
+  .tier-badge {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 20px;
+    font-size: 0.75em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+  }
+  .tier-t0 .tier-badge { background: var(--green); color: var(--bg); }
+  .tier-t1 .tier-badge { background: var(--yellow); color: var(--bg); }
+  .tier-t2 .tier-badge { background: var(--orange); color: var(--bg); }
+  .tier-t3 .tier-badge { background: var(--red); color: var(--bg); }
+
+  .tier-name { font-size: 1.1em; font-weight: 600; margin-bottom: 8px; }
+  .tier-desc { font-size: 0.85em; color: var(--muted); margin-bottom: 12px; }
+  .tier-cost {
+    font-size: 0.8em;
+    padding: 8px 10px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 6px;
+    border-left: 3px solid var(--border);
+  }
+
+  /* Flow diagram */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    align-items: center;
+  }
+  .flow-step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 24px;
+    min-width: 400px;
+    max-width: 600px;
+    text-align: center;
+    position: relative;
+  }
+  .flow-step.has-skill { border-color: var(--purple); }
+  .flow-step .step-label {
+    font-size: 0.75em;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .flow-step .step-title { font-weight: 600; font-size: 1.05em; }
+  .flow-step .step-detail { font-size: 0.85em; color: var(--muted); margin-top: 4px; }
+  .flow-step .skill-tag {
+    display: inline-block;
+    background: rgba(188,140,255,0.15);
+    border: 1px solid var(--purple);
+    border-radius: 4px;
+    padding: 1px 8px;
+    font-size: 0.75em;
+    color: var(--purple);
+    margin: 4px 2px 0;
+  }
+  .flow-arrow {
+    color: var(--border);
+    font-size: 1.5em;
+    line-height: 1;
+    padding: 4px 0;
+  }
+  .flow-arrow.down::before { content: "↓"; }
+  .flow-branch {
+    display: flex;
+    gap: 40px;
+    align-items: flex-start;
+  }
+
+  /* Alternatives box */
+  .alternatives {
+    background: rgba(88,166,255,0.05);
+    border: 1px dashed var(--accent);
+    border-radius: 10px;
+    padding: 16px;
+    margin: 12px 0;
+  }
+  .alternatives-title {
+    font-size: 0.85em;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .alt-list {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .alt-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 0.8em;
+  }
+  .alt-item.winner { border-color: var(--green); color: var(--green); }
+  .alt-item.winner::after { content: " ← PICKED"; font-size: 0.8em; }
+
+  /* ADR box */
+  .adr {
+    background: rgba(63,185,80,0.05);
+    border: 1px solid var(--green);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-top: 16px;
+  }
+  .adr-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .adr-header .adr-icon { font-size: 1.3em; }
+  .adr-title { font-weight: 600; color: var(--green); }
+  .adr-body { font-size: 0.85em; color: var(--muted); }
+  .adr-body code {
+    background: rgba(255,255,255,0.06);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
+    color: var(--text);
+  }
+
+  /* Handoff box */
+  .handoff {
+    background: rgba(248,81,73,0.05);
+    border: 1px dashed var(--red);
+    border-radius: 10px;
+    padding: 14px 20px;
+    text-align: center;
+    margin-top: 16px;
+  }
+  .handoff-title { color: var(--red); font-size: 0.9em; font-weight: 600; }
+  .handoff-detail { font-size: 0.8em; color: var(--muted); margin-top: 4px; }
+
+  /* Skills section */
+  .skills-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 16px;
+  }
+  .skill-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .skill-card.active { border-left: 3px solid var(--green); }
+  .skill-card.deprecated { border-left: 3px solid var(--red); opacity: 0.6; }
+  .skill-card.gate { border-left: 3px solid var(--accent); }
+  .skill-name { font-weight: 600; font-size: 1em; margin-bottom: 4px; }
+  .skill-name .status {
+    float: right;
+    font-size: 0.7em;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+  .status.active { background: var(--green); color: var(--bg); }
+  .status.deprecated { background: var(--red); color: var(--bg); }
+  .status.gate { background: var(--accent); color: var(--bg); }
+  .skill-desc { font-size: 0.85em; color: var(--muted); margin-bottom: 6px; }
+  .skill-uses { font-size: 0.8em; color: var(--purple); }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    margin-bottom: 30px;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85em;
+    color: var(--muted);
+  }
+  .legend-dot {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+  }
+  .legend-dot.green { background: var(--green); }
+  .legend-dot.yellow { background: var(--yellow); }
+  .legend-dot.orange { background: var(--orange); }
+  .legend-dot.red { background: var(--red); }
+  .legend-dot.purple { background: var(--purple); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>🏛️ Architect — Decision Workflow</h1>
+<p class="subtitle">Gatekeeper, not builder. Owns decisions that outlive a slice.</p>
+
+<!-- Stance -->
+<div class="stance">
+  <div class="stance-icon">⚖️</div>
+  <div class="stance-text">
+    <strong>Stance: Gatekeeper.</strong> I weigh alternatives before approving; own ADRs and spec architecture sections;
+    never implement, never slice work, never run the dev loop.
+    <br>
+    <span class="rule">Hard rule: A decision approved without comparing at least one alternative is a decision not made.</span>
+    <span class="rule" style="border-color: var(--red);">Hard rule: Never implement. Never slice. Never run the dev loop.</span>
+  </div>
+</div>
+
+<!-- Legend -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot purple"></div> Skill invoked</div>
+  <div class="legend-item"><div class="legend-dot green"></div> Architect owns</div>
+  <div class="legend-item"><div class="legend-dot red"></div> Hard handoff (not mine)</div>
+  <div class="legend-item"><div class="legend-dot yellow"></div> Human approval needed</div>
+</div>
+
+<!-- Step 1: Intake -->
+<div class="section">
+  <div class="section-title"><div class="section-num">1</div> Intake — Change Proposal Arrives</div>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="step-label">Trigger</div>
+      <div class="step-title">A change enters the gate</div>
+      <div class="step-detail">Kanban card, intercom ask, spec section, or user request</div>
+    </div>
+    <div class="flow-arrow down"></div>
+    <div class="flow-step has-skill">
+      <div class="step-label">Skill</div>
+      <div class="step-title">Load the gate procedure</div>
+      <span class="skill-tag">architecture-gate</span>
+      <div class="step-detail">Force-loaded: blast-radius rubric, design-doc anatomy, paved-road stack, spec-authorship split</div>
+    </div>
+  </div>
+</div>
+
+<!-- Step 2: Triage -->
+<div class="section">
+  <div class="section-title"><div class="section-num">2</div> Blast-Radius Triage — 5 Mechanical Questions</div>
+  <p style="color: var(--muted); margin-bottom: 20px; font-size: 0.9em;">
+    Each "yes" pushes the tier up. Assignment is mechanical, not a judgment call.
+  </p>
+  <div class="triage-grid">
+    <div class="triage-card">
+      <div class="q-icon">🔌</div>
+      <div class="q-text">Interface change?</div>
+      <div class="q-detect">Contract breakage</div>
+    </div>
+    <div class="triage-card">
+      <div class="q-icon">🗄️</div>
+      <div class="q-text">Data-model change?</div>
+      <div class="q-detect">Migration burden</div>
+    </div>
+    <div class="triage-card">
+      <div class="q-icon">📦</div>
+      <div class="q-text">New dependency?</div>
+      <div class="q-detect">Supply-chain / lock-in</div>
+    </div>
+    <div class="triage-card">
+      <div class="q-icon">🏢</div>
+      <div class="q-text">Crosses team boundary?</div>
+      <div class="q-detect">Coordination surface</div>
+    </div>
+    <div class="triage-card">
+      <div class="q-icon">🔐</div>
+      <div class="q-text">Security/privacy surface?</div>
+      <div class="q-detect">Risk exposure</div>
+    </div>
+  </div>
+
+  <div class="tier-row">
+    <div class="tier-card tier-t0">
+      <div class="tier-badge">T0</div>
+      <div class="tier-name">Patch</div>
+      <div class="tier-desc">All five answers = no</div>
+      <div class="tier-cost">No design artifact — wave through</div>
+    </div>
+    <div class="tier-card tier-t1">
+      <div class="tier-badge">T1</div>
+      <div class="tier-name">Feature</div>
+      <div class="tier-desc">At least one "yes"</div>
+      <div class="tier-cost">One ADR, async peer look</div>
+    </div>
+    <div class="tier-card tier-t2">
+      <div class="tier-badge">T2</div>
+      <div class="tier-name">System</div>
+      <div class="tier-desc">Multiple "yes"</div>
+      <div class="tier-cost">Full design doc, independent candidate comparison, async human approval</div>
+    </div>
+    <div class="tier-card tier-t3">
+      <div class="tier-badge">T3</div>
+      <div class="tier-name">Platform</div>
+      <div class="tier-desc">Fundamental shift</div>
+      <div class="tier-cost">Vision → wayfinder decomposition; sub-slices re-enter at T1/T2</div>
+    </div>
+  </div>
+</div>
+
+<!-- Step 3: Gate Ceremony -->
+<div class="section">
+  <div class="section-title"><div class="section-num">3</div> Gate Ceremony — Per Tier</div>
+
+  <div class="flow">
+    <!-- T0 -->
+    <div class="flow-step" style="border-color: var(--green);">
+      <div class="step-label" style="color: var(--green);">T0 — Patch</div>
+      <div class="step-title">Wave through — no ceremony</div>
+      <div class="step-detail">Ship without me. Construction belongs to tech-lead + dev profiles.</div>
+    </div>
+
+    <div class="flow-arrow down"></div>
+
+    <!-- T1 -->
+    <div class="flow-step" style="border-color: var(--yellow);">
+      <div class="step-label" style="color: var(--yellow);">T1 — Feature</div>
+      <div class="step-title">Weigh ≥2 alternatives → pick one → record ADR</div>
+      <div class="alternatives">
+        <div class="alternatives-title">📋 Alternatives weighed (mandatory)</div>
+        <div class="alt-list">
+          <div class="alt-item">Option A: e.g., PostgreSQL JSON columns</div>
+          <div class="alt-item">Option B: e.g., Separate document store</div>
+          <div class="alt-item winner">Option C: e.g., Hybrid — relational core + JSON extension</div>
+        </div>
+      </div>
+      <div class="step-detail">Async peer look. ADR cites inputs and rationale.</div>
+    </div>
+
+    <div class="flow-arrow down"></div>
+
+    <!-- T2 -->
+    <div class="flow-step" style="border-color: var(--orange);">
+      <div class="step-label" style="color: var(--orange);">T2 — System</div>
+      <div class="step-title">Design-it-twice fan-out + independent candidate comparison</div>
+      <div class="step-detail" style="margin-bottom: 10px;">
+        Spawn parallel subagents generating radically different architectures.
+        Compare candidates against defined criteria. Pick winner.
+      </div>
+      <span class="skill-tag">codebase-design</span>
+      <span class="skill-tag">domain-modeling</span>
+      <div class="alternatives">
+        <div class="alternatives-title">🏗️ Independent candidates compared</div>
+        <div class="alt-list">
+          <div class="alt-item">Candidate 1: Monolith + module boundaries</div>
+          <div class="alt-item">Candidate 2: Event-driven microservices</div>
+          <div class="alt-item">Candidate 3: Modular monolith + CQRS read models</div>
+          <div class="alt-item winner">Winner chosen by: reversibility, team velocity, operational complexity</div>
+        </div>
+      </div>
+      <div class="step-detail" style="color: var(--yellow);">⏸️ Requires async human approval before proceeding</div>
+    </div>
+
+    <div class="flow-arrow down"></div>
+
+    <!-- T3 -->
+    <div class="flow-step" style="border-color: var(--red);">
+      <div class="step-label" style="color: var(--red);">T3 — Platform</div>
+      <div class="step-title">Vision → Wayfinder decomposition</div>
+      <div class="step-detail">
+        Produce platform vision. Decompose into sub-slices.
+        Each sub-slice re-enters the gate at T1 or T2.
+      </div>
+      <span class="skill-tag">codebase-design</span>
+      <span class="skill-tag">domain-modeling</span>
+      <span class="skill-tag">improve-codebase-architecture</span>
+    </div>
+  </div>
+</div>
+
+<!-- Step 4: Record -->
+<div class="section">
+  <div class="section-title"><div class="section-num">4</div> Record — Append-Only ADR</div>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="step-label">Decision recorded</div>
+      <div class="step-title">ADR written to <code>docs/adr/</code></div>
+      <div class="step-detail">Cites: inputs weighed, alternatives compared, winner, rationale, supersession pointer</div>
+    </div>
+  </div>
+
+  <div class="adr">
+    <div class="adr-header">
+      <span class="adr-icon">📜</span>
+      <span class="adr-title">ADR-0XX: [Decision Title]</span>
+    </div>
+    <div class="adr-body">
+      <strong>Status:</strong> Accepted &nbsp;|&nbsp; <strong>Date:</strong> 2026-07-11<br>
+      <strong>Context:</strong> Why this decision was needed — the problem, constraints, inputs<br>
+      <strong>Decision:</strong> What we chose and why — the winner from the alternatives<br>
+      <strong>Alternatives weighed:</strong> Option A (rejected because…), Option B (rejected because…)<br>
+      <strong>Consequences:</strong> What this enables, what it costs, what it locks in<br>
+      <strong>Supersedes:</strong> ADR-0YY (if applicable) — history is never rewritten<br>
+      <br>
+      <code style="color: var(--red);">⚠️ Changing an ADR requires an architecture ticket — never a dev-loop card.</code>
+    </div>
+  </div>
+</div>
+
+<!-- Step 5: Stamp -->
+<div class="section">
+  <div class="section-title"><div class="section-num">5</div> Stamp — Spec Architecture Section</div>
+  <div class="flow">
+    <div class="flow-step has-skill">
+      <div class="step-label">Before decomposition</div>
+      <div class="step-title">Review and stamp the spec's architecture section</div>
+      <div class="step-detail">So slicing inherits reviewed boundaries — tech-lead can't deviate without a new gate pass</div>
+      <span class="skill-tag">codebase-design</span>
+      <span class="skill-tag">domain-modeling</span>
+    </div>
+  </div>
+</div>
+
+<!-- Step 6: Handoff -->
+<div class="section">
+  <div class="section-title"><div class="section-num">6</div> Handoff — Construction Begins (Not Mine)</div>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="step-label">Decision is final</div>
+      <div class="step-title">ADR is recorded, spec is stamped</div>
+      <div class="step-detail">The decision is durable. Construction begins.</div>
+    </div>
+    <div class="flow-arrow down"></div>
+  </div>
+
+  <div class="handoff">
+    <div class="handoff-title">🚧 HARD HANDOFF — Beyond this line, I do not go 🚧</div>
+    <div class="handoff-detail">
+      <strong>tech-lead</strong> → slices work, sequences delegation, owns contracts within the slice<br>
+      <strong>developer</strong> → implements the code<br>
+      <strong>verifier/qa</strong> → validates the output<br>
+      <br>
+      I answer architecture questions (kanban cards, intercom asks) in gate posture:<br>
+      <em>Tier. Decision. Alternatives weighed. ADR reference.</em>
+    </div>
+  </div>
+</div>
+
+<!-- Design Skills -->
+<div class="section">
+  <div class="section-title"><div class="section-num">7</div> Design Doctrine — 3 Active Skills</div>
+  <div class="skills-grid">
+    <div class="skill-card active">
+      <div class="skill-name">codebase-design <span class="status active">Active</span></div>
+      <div class="skill-desc">Shared vocabulary for designing deep modules. Interface seams, testability, AI-navigability.</div>
+      <div class="skill-uses">📊 41 uses — loaded at every gate</div>
+    </div>
+    <div class="skill-card active">
+      <div class="skill-name">domain-modeling <span class="status active">Active</span></div>
+      <div class="skill-desc">Build and sharpen a project's domain model. Pin down terminology, record architectural decisions.</div>
+      <div class="skill-uses">📊 41 uses — loaded at every gate</div>
+    </div>
+    <div class="skill-card active">
+      <div class="skill-name">improve-codebase-architecture <span class="status active">Active</span></div>
+      <div class="skill-desc">Scan a codebase for deepening opportunities. Present them visually, grill through picks.</div>
+      <div class="skill-uses">📊 0 uses — invoked on brownfield intake</div>
+    </div>
+    <div class="skill-card gate">
+      <div class="skill-name">architecture-gate <span class="status gate">Gate</span></div>
+      <div class="skill-desc">The gate procedure itself: T0-T3 rubric, design-doc anatomy, paved-road stack, spec-authorship split.</div>
+      <div class="skill-uses">📊 46 uses — force-loaded on every gate card</div>
+    </div>
+    <div class="skill-card gate">
+      <div class="skill-name">brownfield-intake <span class="status gate">Gate</span></div>
+      <div class="skill-desc">One-time adoption flow for existing codebases. Maps de-facto architecture, writes retro-ADRs.</div>
+      <div class="skill-uses">📊 4 uses</div>
+    </div>
+    <div class="skill-card deprecated">
+      <div class="skill-name">design-an-interface <span class="status deprecated">Deprecated</span></div>
+      <div class="skill-desc">Generate radical interface designs via parallel subagents.</div>
+      <div class="skill-uses">❌ Dropped — functionality lives in T2 design-it-twice fan-out</div>
+    </div>
+    <div class="skill-card deprecated">
+      <div class="skill-name">request-refactor-plan <span class="status deprecated">Deprecated</span></div>
+      <div class="skill-desc">Create a refactor plan with tiny commits via user interview.</div>
+      <div class="skill-uses">❌ Dropped — overlaps with to-spec → to-tickets flow</div>
+    </div>
+    <div class="skill-card deprecated">
+      <div class="skill-name">ubiquitous-language <span class="status deprecated">Deprecated</span></div>
+      <div class="skill-desc">Extract a DDD-style ubiquitous language glossary.</div>
+      <div class="skill-uses">❌ Dropped — absorbed into domain-modeling</div>
+    </div>
+  </div>
+</div>
+
+<!-- Example: Full project walkthrough -->
+<div class="section">
+  <div class="section-title"><div class="section-num">8</div> Example — Tech Stack Selection for a New Project</div>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="step-label">Input</div>
+      <div class="step-title">"Build a recipe cost calculator SaaS"</div>
+    </div>
+    <div class="flow-arrow down"></div>
+    <div class="flow-step">
+      <div class="step-label">Triage</div>
+      <div class="step-title">New dependency? Yes. Data model? Yes. Crosses boundary? Yes → T2</div>
+    </div>
+    <div class="flow-arrow down"></div>
+    <div class="flow-step has-skill">
+      <div class="step-label">Domain model</div>
+      <div class="step-title">Map the domain: Recipe, Ingredient, PriceSource, CostCalculation, User</div>
+      <span class="skill-tag">domain-modeling</span>
+    </div>
+    <div class="flow-arrow down"></div>
+    <div class="flow-step has-skill">
+      <div class="step-label">Module boundaries</div>
+      <div class="step-title">Deep modules: PricingEngine (deep interface), RecipeStore (shallow), PriceScraper (deep)</div>
+      <span class="skill-tag">codebase-design</span>
+    </div>
+    <div class="flow-arrow down"></div>
+    <div class="flow-step" style="border-color: var(--orange);">
+      <div class="step-label" style="color: var(--orange);">T2 — Design-it-twice</div>
+      <div class="step-title">Fan out 3 independent architecture candidates</div>
+      <div class="alternatives">
+        <div class="alternatives-title">3 radically different stacks compared</div>
+        <div class="alt-list">
+          <div class="alt-item">A: Django monolith + Celery + PostgreSQL</div>
+          <div class="alt-item">B: FastAPI + Redis + MongoDB</div>
+          <div class="alt-item winner">C: Next.js + tRPC + PostgreSQL + Drizzle</div>
+        </div>
+      </div>
+      <div class="step-detail">
+        Winner: C — chosen for type safety end-to-end, smallest team footprint, best DX velocity.
+        Rejected A: monolith too heavy for the scraping workload. Rejected B: MongoDB adds migration risk.
+      </div>
+      <span class="skill-tag">codebase-design</span>
+      <span class="skill-tag">domain-modeling</span>
+    </div>
+    <div class="flow-arrow down"></div>
+    <div class="adr">
+      <div class="adr-header">
+        <span class="adr-icon">📜</span>
+        <span class="adr-title">ADR-001: Use Next.js + tRPC + PostgreSQL + Drizzle ORM</span>
+      </div>
+      <div class="adr-body">
+        <strong>Status:</strong> Accepted &nbsp;|&nbsp; <strong>Tier:</strong> T2<br>
+        <strong>Context:</strong> Recipe cost SaaS, solo dev, need type safety + scraping + low ops overhead<br>
+        <strong>Decision:</strong> Next.js (fullstack) + tRPC (type-safe API) + PostgreSQL (relational) + Drizzle (typed ORM)<br>
+        <strong>Alternatives:</strong> Django monolith (rejected: heavier ops), FastAPI+Mongo (rejected: migration risk)<br>
+        <strong>Consequences:</strong> TypeScript everywhere, serverless scraping needs external worker, Prisma rejected for query control
+      </div>
+    </div>
+    <div class="flow-arrow down"></div>
+    <div class="handoff">
+      <div class="handoff-title">→ tech-lead slices ADR-001 into tickets → developer implements</div>
+      <div class="handoff-detail">Architect role: answer questions, verify ADR adherence, gate any new changes</div>
+    </div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>
