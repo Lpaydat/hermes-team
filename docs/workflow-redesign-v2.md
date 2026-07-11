@@ -135,11 +135,14 @@ multiple perspectives.
 ### How the team works
 
 The architect orchestrates a parallel design fan-out using
-`kanban_chains` or `delegate_task`. Each design dimension gets its own
-focused subagent:
+`kanban_chains`. Each design dimension becomes a real tracked card on
+the board — durable, observable, with its own workspace. NOT subagents
+(`delegate_task` is fragile: background-only, unreliable self-reports,
+doesn't survive session boundaries). Board cards are the team's native
+coordination surface.
 
-| Design dimension | Subagent focus | Output |
-|-----------------|---------------|--------|
+| Design dimension | Card focus | Output |
+|-----------------|------------|--------|
 | **Domain model** | Entities, relationships, bounded contexts, ubiquitous language | Domain model doc |
 | **System architecture** | Module boundaries, service decomposition, communication patterns | Architecture diagram + boundary contracts |
 | **Data layer** | Schema design, storage strategy, migration plan, query patterns | Data model + storage ADR |
@@ -201,7 +204,7 @@ affects the API design).
 | Candidate | Verdict | Reasoning |
 |-----------|---------|-----------|
 | **planner** | ❌ No | Planning is co-authored by PO + architect, not a separate role. Adding a profile creates ownership ambiguity. |
-| **designer** | ❌ No | Design is the architect's core job, executed via fan-out subagents. A separate profile can't own decisions the architect must own. |
+| **designer** | ❌ No | Design is the architect's core job, executed via kanban_chains fan-out cards. A separate profile can't own decisions the architect must own. |
 | **tech-architect** vs **architect** | ❌ No rename | "Architect" is the standard industry term and matches the spec. No ambiguity. |
 
 **No new profiles needed. No renames needed.** The fix is to the
@@ -234,7 +237,7 @@ Add to architect's identity:
 
 - "Proactive design partner: when you receive a brief from PO, you run
   the full design phase — domain model, stack selection, data model,
-  boundaries, risks, ADRs — using the design team fan-out pattern."
+  boundaries, risks, ADRs — using the kanban_chains design fan-out."
 - "Co-author the spec with PO: you write the architecture sections, PO
   writes the product sections."
 - "The T0-T3 gate ceremony applies to incremental changes on existing
@@ -270,7 +273,7 @@ v2 (refined):
 | Who writes architecture sections | PO (alone) | Architect (with fan-out team) |
 | Who plans milestones | PO (alone) | PO + architect (co-authors) |
 | Design depth | One stamp (yes/no) | Full design phase with alternatives |
-| Single-threaded? | Yes — one agent stamps | No — parallel design fan-out |
+| Single-threaded? | Yes — one agent stamps | No — parallel kanban_chains fan-out |
 | Big-tech alignment | Weak (no design phase) | Strong (design doc → review → plan) |
 | Gate ceremony | Primary function | Secondary (incremental changes only) |
 
