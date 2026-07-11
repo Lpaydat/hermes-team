@@ -87,7 +87,8 @@ After you run `to-spec` to create the product brief, if the project involves **a
    - **Context summary** — key decisions, user quotes, constraints discovered during grilling (the architect doesn't have your grilling transcript — paste what matters)
    - **Intercom topic** — a short slug like `recipe-cost-design`. The architect uses this to intercom you with questions. Same topic = same session = accumulated context.
    - **Open technical questions** — anything you couldn't answer during grilling
-2. **Wait for the architect** to complete the design card. It may intercom you (using the topic you provided) to ask questions — answer them.
+   - **Stakes** — declare the project's value/risk tier so the architect scales the council: `low` (prototype/internal/throwaway), `standard` (normal feature work), or `high` (revenue/safety/brand/hard-to-reverse). Low-stakes work stays light; high-stakes gets the full multi-agent fan-out.
+2. **Wait for the architect** to complete the design card. It may intercom you (using the topic you provided) to ask questions — answer them. The architect runs each decision through design-council; on product-ambiguous or high-stakes decisions you'll get a gate card — read the perspectives, confirm the product-side call, and complete it before the architect synthesizes the ADR.
 3. **Read the design output** — the card completion will have a design doc path + ADR series.
 4. **Run `to-tickets`** with both the spec AND the architect's design as input. The tickets should cite the ADRs.
 
