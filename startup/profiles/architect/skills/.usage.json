@@ -4,13 +4,13 @@
     "created_at": "2026-07-11T01:42:12.110688+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-11T06:00:24.269270+00:00",
-    "last_viewed_at": null,
+    "last_used_at": "2026-07-11T13:36:26.679190+00:00",
+    "last_viewed_at": "2026-07-11T13:36:26.676143+00:00",
     "patch_count": 0,
     "pinned": true,
     "state": "active",
-    "use_count": 46,
-    "view_count": 0
+    "use_count": 48,
+    "view_count": 2
   },
   "architecture/architecture-gate": {
     "archived_at": null,
@@ -68,14 +68,14 @@
     "archived_at": null,
     "created_at": "2026-07-11T08:24:45.273825+00:00",
     "created_by": "agent",
-    "last_patched_at": "2026-07-11T09:22:46.006853+00:00",
-    "last_used_at": "2026-07-11T09:22:01.676990+00:00",
-    "last_viewed_at": "2026-07-11T09:22:01.672049+00:00",
-    "patch_count": 18,
+    "last_patched_at": "2026-07-11T13:38:22.618361+00:00",
+    "last_used_at": "2026-07-11T13:36:53.268752+00:00",
+    "last_viewed_at": "2026-07-11T13:36:53.263346+00:00",
+    "patch_count": 25,
     "pinned": false,
     "state": "active",
-    "use_count": 15,
-    "view_count": 15
+    "use_count": 27,
+    "view_count": 27
   },
   "design-an-interface": {
     "archived_at": null,

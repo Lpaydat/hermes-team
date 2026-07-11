@@ -74,6 +74,15 @@ created). They should NOT be symlinked — they're meant to diverge.
 Already symlinked. Patching one propagates to all profiles. Pinning
 still works per-profile independently.
 
+## Cross-referencing with usage data
+
+After classification, check `.usage.json` (field names: `use_count`,
+`view_count`, `patch_count` — NOT `use`/`view`/`patches`) to find dead
+weight. Skills classified as "profile-specific" with `use_count: 0`
+across all sessions are candidates for removal — especially if they're
+also deprecated upstream. See the SKILL.md section "Checking skill usage
+data" for the full workflow.
+
 ## Detecting the shared (symlinked) set separately
 
 ```bash

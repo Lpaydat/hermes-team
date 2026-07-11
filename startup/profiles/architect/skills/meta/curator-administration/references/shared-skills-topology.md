@@ -145,3 +145,19 @@ symlinked from each profile that previously had an independent copy:
 
 This list should be re-verified with the detection commands above if the
 shared-skills directory changes.
+
+## Cross-profile references to deprecated skills
+
+When cleaning up deprecated skills from ONE profile, these are known
+references in OTHER profiles that keep the skill active in the shared dir:
+
+| Deprecated skill | Referenced by | File | Context |
+|-----------------|---------------|------|---------|
+| `ubiquitous-language` | tech-lead | `SOUL.md` line 25 | Identity prompt: "produce a domain glossary (`ubiquitous-language`)" |
+| `ubiquitous-language` | tech-lead | `loops-engineering/SKILL.md` line 47 | Workflow: "Artifacts: glossary (`ubiquitous-language`)" |
+| `request-refactor-plan` | tech-lead | `loops-engineering/SKILL.md` line 169 | Workflow: "file a tech-debt issue (`request-refactor-plan`)" |
+
+These references mean the skills CANNOT be removed from the shared
+`mattpocock/` dir or disabled on tech-lead without first updating the
+referencing prompts. The architect profile disabled them locally only;
+they remain enabled on tech-lead, advisor, product-owner, and ops.
