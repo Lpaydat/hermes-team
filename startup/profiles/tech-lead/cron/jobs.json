@@ -27,15 +27,15 @@
       "schedule_display": "0 */4 * * *",
       "repeat": {
         "times": 999999,
-        "completed": 42
+        "completed": 50
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T09:00:32.413473+07:00",
-      "next_run_at": "2026-07-10T08:00:00+07:00",
-      "last_run_at": "2026-07-10T04:06:06.643719+07:00",
+      "next_run_at": "2026-07-11T16:00:00+07:00",
+      "last_run_at": "2026-07-11T12:03:49.965715+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -51,7 +51,87 @@
       ],
       "workdir": null,
       "fire_claim": null
+    },
+    {
+      "id": "f006738c6dc4",
+      "name": "w",
+      "prompt": "echo hi",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 5,
+        "display": "every 5m"
+      },
+      "schedule_display": "every 5m",
+      "repeat": {
+        "times": null,
+        "completed": 109
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-10T21:27:42.873278+00:00",
+      "next_run_at": "2026-07-11T15:26:40.424576+07:00",
+      "last_run_at": "2026-07-11T15:21:40.424576+07:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
+    },
+    {
+      "id": "008f424cca3f",
+      "name": "alpha",
+      "prompt": "say hello",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": null,
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "interval",
+        "minutes": 60,
+        "display": "every 60m"
+      },
+      "schedule_display": "every 60m",
+      "repeat": {
+        "times": null,
+        "completed": 11
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-11T04:31:49.973424+07:00",
+      "next_run_at": "2026-07-11T15:42:34.099112+07:00",
+      "last_run_at": "2026-07-11T14:42:34.099112+07:00",
+      "last_status": "ok",
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null,
+      "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-10T04:06:06.644085+07:00"
+  "updated_at": "2026-07-11T15:21:40.424722+07:00"
 }

@@ -5,8 +5,8 @@ model:
   context_length: 1000000
   rate_limit_delay: 30
 toolsets:
-- hermes-cli
-- kanban
+  - hermes-cli
+  - kanban
 agent:
   api_max_retries: 10
   reasoning_effort: xhigh
@@ -19,56 +19,59 @@ delegation:
   reasoning_effort: xhigh
 skills:
   disabled:
-  - claude-code
-  - codex
-  - opencode
-  - implement
-  - tdd
-  - prototype
-  - codegraph
-  - diagnosing-bugs
-  - request-refactor-plan
-  - improve-codebase-architecture
-  - setup-pre-commit
-  - git-guardrails-claude-code
-  - resolving-merge-conflicts
-  - migrate-to-shoehorn
-  - ponytail
-  - ponytail-debt
-  - ponytail-help
-  - ponytail-audit
-  - ponytail-gain
-  - ponytail-review
-  - edit-article
-  - writing-beats
-  - writing-fragments
-  - writing-shape
-  - ask-matt
-  - teach
-  - wizard
-  - scaffold-exercises
-  - codebase-design
-  - design-an-interface
+    - claude-code
+    - codex
+    - opencode
+    - implement
+    - tdd
+    - prototype
+    - codegraph
+    - diagnosing-bugs
+    - request-refactor-plan
+    - improve-codebase-architecture
+    - setup-pre-commit
+    - git-guardrails-claude-code
+    - resolving-merge-conflicts
+    - migrate-to-shoehorn
+    - ponytail
+    - ponytail-debt
+    - ponytail-help
+    - ponytail-audit
+    - ponytail-gain
+    - ponytail-review
+    - edit-article
+    - writing-beats
+    - writing-fragments
+    - writing-shape
+    - ask-matt
+    - teach
+    - wizard
+    - scaffold-exercises
+    - codebase-design
+    - design-an-interface
 approvals:
   mode: 'off'
 command_allowlist:
-- sudo with combined-flag privilege escalation
-- SQL TRUNCATE
-- script execution via -e/-c flag
-- overwrite system file via redirection
-- recursive delete
-- shell command via -c/-lc flag
-- execute_code
-- sudo with privilege flag (stdin/askpass/shell/list)
+  - sudo with combined-flag privilege escalation
+  - SQL TRUNCATE
+  - script execution via -e/-c flag
+  - overwrite system file via redirection
+  - recursive delete
+  - shell command via -c/-lc flag
+  - execute_code
+  - sudo with privilege flag (stdin/askpass/shell/list)
 _config_version: 33
 fallback_model: []
 plugins:
   enabled:
-  - intercom
-  - kanban_chains
+    - intercom
+    - kanban_chains
   disabled: []
   entries:
     intercom:
       allow_tool_override: true
     kanban_chains:
       allow_tool_override: false
+onboarding:
+  seen:
+    tool_progress_prompt: true
