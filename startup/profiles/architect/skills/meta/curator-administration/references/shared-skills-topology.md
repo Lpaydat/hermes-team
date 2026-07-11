@@ -109,15 +109,39 @@ active on another will be handled differently by each profile's curator.
 
 ## Known shared packages
 
-As of the last audit (2026-07-11):
+As of the last audit (2026-07-11, post-consolidation):
 
 | Package | Source | Profiles |
 |---------|--------|----------|
-| `mattpocock` (~40 skills) | `shared-skills/mattpocock/` | all 9 profiles |
+| `mattpocock` (38 skills) | `shared-skills/mattpocock/` | all 9 profiles |
 | `ponytail` (1 skill, 6 sub-skills) | `shared-skills/ponytail-hub/` | 8 profiles (not architect) |
 | `caveman` | `shared-skills/caveman/` | architect, developer, tech-lead |
 | `wayfinding-auto` | `shared-skills/wayfinding-auto/` | product-owner, tech-lead |
-| `competitive-analysis`, `fundraising`, `lean-startup`, etc. | `.agents/skills/<name>/` | advisor only |
+| `bundled` (21 skills) | `shared-skills/bundled/` | varies per skill (2–8 profiles each) |
+
+### `shared-skills/bundled/` contents (post-consolidation)
+
+Each skill below lives once in `shared-skills/bundled/<name>/` and is
+symlinked from each profile that previously had an independent copy:
+
+| Skill | Profiles | Canonical source |
+|-------|----------|-----------------|
+| `claude-code`, `codex`, `opencode` | 7 each | base |
+| `team-delegation`, `find-skills`, `transform` | 8 each | base (transform: v2.3.0 newest) |
+| `obsidian` | 6 | base |
+| `hermes-agent-skill-authoring` | 6 | base |
+| `arxiv`, `blogwatcher`, `xurl` | 3 each | researcher |
+| `9arm-skills`, `codegraph` | 2 each | product-owner |
+| `bundled-skills-opt-out` | 3 | developer |
+| `messaging-delivery`, `youtube-content` | 2 each | researcher |
+| `deep-research`, `llm-wiki` | 2 each | researcher |
+| `evaluation`, `inference`, `models` | 2 each | advisor |
+
+**Not consolidated** (left as independent copies due to profile-specific paths):
+- `research-scout` — has `~/.hermes/profiles/scout/scripts/scout-db.py` hardcoded
+
+**Removed from advisor** (dead symlinks, source never existed):
+- `competitive-analysis`, `fundraising`, `lean-startup`, `startup-financial-modeling`, `startup-ideation`, `startup-metrics-framework`
 
 This list should be re-verified with the detection commands above if the
 shared-skills directory changes.

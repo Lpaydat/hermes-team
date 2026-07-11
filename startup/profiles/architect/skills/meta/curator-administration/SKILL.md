@@ -2,13 +2,15 @@
 name: curator-administration
 description: >-
   Bulk curator operations across all Hermes profiles — pinning, unpinning,
-  status checks, and dry-runs. Use when the user says "pin all skills",
-  "pin every skill across profiles", "check curator on all profiles",
-  "unpin everything", or wants to protect/manage skills at scale rather
-  than one at a time. Also use when you need to enumerate what skills
-  exist on a profile you don't control (cross-profile visibility).
-  Trigger words: pin all, unpin all, curator status everywhere,
-  protect skills, skill inventory.
+  status checks, dry-runs, skill classification, upstream auditing, and
+  symlink consolidation. Use when the user says "pin all skills", "pin
+  every skill across profiles", "check curator on all profiles", "unpin
+  everything", wants to protect/manage skills at scale, asks about shared
+  vs copied skills, wants to audit installed skills against upstream, or
+  wants to consolidate duplicate skill copies into shared symlinks.
+  Trigger words: pin all, unpin all, curator status everywhere, protect
+  skills, skill inventory, consolidate skills, shared skills, symlink
+  skills.
 ---
 
 # Curator Administration
@@ -136,7 +138,11 @@ Some category-level directories are symlinks to a single source:
 | `ponytail/` | `~/.hermes-teams/shared-skills/ponytail-hub/` |
 | `caveman/` | `~/.hermes-teams/shared-skills/caveman/` |
 | `wayfinding-auto/` | `~/.hermes-teams/shared-skills/wayfinding-auto/` |
-| advisor's `competitive-analysis/`, `fundraising/`, etc. | `~/.hermes-teams/.agents/skills/<name>/` |
+| individual bundled skills (e.g. `meta/transform`, `coordination/team-delegation`) | `~/.hermes-teams/shared-skills/bundled/<name>/` |
+
+Note: advisor previously had symlinks to `.agents/skills/` for business
+skills (competitive-analysis, fundraising, etc.) but those were **dead
+symlinks** (source never existed) and were removed during consolidation.
 
 **Patching a symlinked skill on one profile changes it for ALL profiles instantly**
 — they share the same files on disk. Pinning still works per-profile (curator
@@ -217,17 +223,21 @@ any extras.
 ## Consolidating independent copies into shared symlinks
 
 When the user wants to eliminate copy drift by moving bundled skills to
-shared symlinks:
+shared symlinks under `shared-skills/bundled/`:
 
-1. **Bundled skills** (in 2+ profiles): pick one canonical copy, move to
-   `shared-skills/<name>/`, replace each profile's copy with a symlink.
-2. **Profile-specific skills**: leave as independent copies — they're
-   unique to each profile by design.
-3. **Misfiled skills**: move out of the wrong package dir to their own
-   location.
+1. **Divergence check** — md5 each copy across profiles; pick a canonical version (majority wins, or newest version if versions differ).
+2. **Profile-specific path check** — grep for `~/.hermes/profiles/` in each copy; skip any skill with hardcoded profile paths (it can't be safely shared).
+3. **Execute** — copy canonical to `shared-skills/bundled/<skill>/`, replace each profile's real dir with a relative symlink.
+4. **Dead symlink cleanup** — scan for and remove pre-existing broken symlinks (e.g. advisor's `.agents/skills/` pointers whose source was never populated).
+5. **Verify** — all symlinks must resolve before committing.
 
-This is a destructive operation (removing real dirs). Always
-commit-and-push the current state first so git history can recover.
+**Read-only packages**: installed skill packages (mattpocock, ponytail) are often read-only (555/444). `chmod -R u+w` before any rm/mv operation inside them — Python's `shutil.move` will fail with PermissionError otherwise.
+
+**Misfiled skills**: detect by comparing against upstream; move to the correct location (`shared-skills/bundled/`) before symlinking.
+
+This is a destructive operation (removing real dirs). Always commit-and-push the current state first so git history can recover.
+
+See `references/consolidation-recipe.md` for the full 7-phase execution recipe with copy-paste Python scripts.
 
 ## When to use this skill
 
@@ -252,3 +262,7 @@ commit-and-push the current state first so git history can recover.
 - `references/skill-classification.md` — Python script to classify all
   skills into shared/bundled/profile-specific, and the consolidation
   decision for each category.
+- `references/consolidation-recipe.md` — full 7-phase execution recipe
+  for converting bundled copies to shared symlinks: divergence check,
+  canonical selection, read-only permission handling, dead symlink
+  cleanup, and verification.
