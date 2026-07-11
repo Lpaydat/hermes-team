@@ -62,15 +62,21 @@ Use judgement only at the T1/T2/T3 line; the floor itself is mechanical.
   protocol in `references/t2-ceremony.md`, summarised in the T2 protocol section below:
   design-it-twice candidate fan-out via `kanban_chains`, a synthesis that grafts the best
   non-winning ideas, then an async human-approval escalation on the gate bead. At
-  escalation the gate stamps `approval="escalated-t2"`, names what needs human sign-off,
-  and **does not self-approve**. Critically, **do NOT complete a T2 gate card as `done`** — completing a
+  escalation the gate carries `escalated-t2:` in the block reason/summary (a blocked card
+  has no structured metadata), names what needs human sign-off, and **does not self-approve**. Critically, **do NOT complete a T2 gate card as `done`** — completing a
   T2 card done would close the gate bead and unblock to-tickets, exactly what escalation
   must prevent. Instead **block the card** (leave it blocked / needs-input pending human
   sign-off) so bead-sync leaves the gate bead open and to-tickets stays blocked until a
   human approves and the card is genuinely completed.
 - **T3 — platform.** A change too large to be one decision. Do not ADR it: hand it back
   as a vision for **wayfinder decomposition** into sub-changes, each of which re-enters
-  the gate at its own tier (usually T1/T2).
+  the gate at its own tier (usually T1/T2). Like a T2 a T3 **blocks the card** (do not
+  complete it done — the platform change must be decomposed before any to-tickets
+  proceeds). A blocked card carries **no structured completion metadata** — `kanban block`
+  takes only a reason, not a `metadata` object — so state the verdict in a **parseable
+  summary + block reason**: begin the summary `T3 handback-wayfinder:` followed by the
+  decomposition. That prefix is the board seam a consumer reads for a blocked verdict;
+  structured metadata is stamped only on a `done` completion (T0/T1, and T2 after approval).
 
 ## T2 protocol — design-it-twice + async human approval
 
@@ -166,21 +172,26 @@ book.
 
 ## Completion contract (the board seam every observer audits)
 
-Complete the gate card with a one-line summary and stamp completion metadata EXACTLY in
-this shape — it is queryable at the board seam and is how downstream to-tickets inherits
-your verdict:
+A verdict that **completes the card `done`** (T0, T1, and T2 after approval) stamps
+structured completion metadata EXACTLY in this shape — it is queryable at the board seam and
+is how downstream to-tickets inherits your verdict:
 
 ```json
-{"tier": "T0|T1|T2|T3", "artifacts": ["ADR-001", ...] or [], "approval": "waved-through|adr-recorded|escalated-t2|human-approved", "gate_bead": "<gate-bead-id>"}
+{"tier": "T0|T1|T2", "artifacts": ["ADR-001", ...] or [], "approval": "waved-through|adr-recorded|human-approved", "gate_bead": "<gate-bead-id>"}
 ```
 
 - `tier` — the triaged tier.
 - `artifacts` — the ADR **number** ids you produced (`ADR-001`, `ADR-002`, …), **never
   the filename**; `[]` for a T0.
-- `approval` — `waved-through` (T0), `adr-recorded` (T1), `escalated-t2` (T2 at escalation,
-  card blocked, awaiting human sign-off), or `human-approved` (T2 at completion, the human
-  signed off).
+- `approval` — `waved-through` (T0), `adr-recorded` (T1), or `human-approved` (T2 at
+  completion, the human signed off).
 - `gate_bead` — the gate bead this card completes.
+
+A verdict that **blocks the card** (T2 at escalation, T3 handback) carries **no structured
+metadata** — `kanban block` has no `metadata` param — so its disposition lives in a
+**parseable summary + block reason**: `escalated-t2:` (T2 awaiting human sign-off) or
+`T3 handback-wayfinder:` (platform decomposition). Consumers read the summary for a blocked
+verdict; they read the metadata JSON for a `done` verdict.
 
 **T2 completion** carries the human citation + ceremony provenance (see
 `references/t2-ceremony.md`): `approval` is `human-approved`, plus `approval_citation`
@@ -196,7 +207,10 @@ bead-sync then closes the gate bead, which unblocks the blocked-by to-tickets be
 tracer-cutting proceeds inheriting your tier + ADR list. On a **T2**, do the opposite —
 **block the card** rather than complete it done: completing a T2 card done would close the
 gate and unblock to-tickets, exactly what escalation must prevent; leave it blocked until
-a human approves. And **never archive a gate card until** bead-sync has confirmed the gate
+a human approves. On a **T3**, likewise **block the card** — the platform change is
+decomposed by wayfinder, not cut as-is, so to-tickets must not proceed; carry the
+`T3 handback-wayfinder:` disposition in the summary/reason. And **never archive a gate card
+until** bead-sync has confirmed the gate
 bead closed — an archived card maps the bead back to `open` (STATUS_MAP), stranding it
 open and leaving to-tickets blocked forever.
 

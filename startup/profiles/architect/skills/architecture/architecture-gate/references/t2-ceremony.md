@@ -148,9 +148,10 @@ tracer-cutting proceeds inheriting the T2 verdict + ADR list.
 
 ## Completion contract (T2, at completion)
 
-At escalation time the gate stamps `approval="escalated-t2"` (card blocked). At
-completion — after the human answer — it stamps the full contract, `approval` flipped to
-**`human-approved`** and carrying the ceremony's provenance:
+At escalation time the gate carries `escalated-t2:` in the block reason/summary (card
+blocked — a blocked card has no structured metadata). At completion — after the human
+answer — the card completes `done` and stamps the full structured contract, `approval` =
+**`human-approved`**, carrying the ceremony's provenance:
 
 ```json
 {"tier": "T2",
