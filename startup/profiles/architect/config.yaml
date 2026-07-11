@@ -82,10 +82,13 @@ command_allowlist:
 plugins:
   enabled:
     - intercom
+    - kanban_chains
   disabled: []
   entries:
     intercom:
       allow_tool_override: true
+    kanban_chains:
+      allow_tool_override: false
 onboarding:
   seen:
     tool_progress_prompt: true

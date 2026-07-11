@@ -58,10 +58,12 @@ Use judgement only at the T1/T2/T3 line; the floor itself is mechanical.
 - **T2 — system.** A yes with wide/irreversible blast radius (a boundary move, a
   cross-cutting data model, a new dependency with lock-in). Demands a **full design doc**
   (the anatomy checklist below, mandatory), an **independent candidate review**
-  (design-it-twice), and **async human approval**. The T2 protocol is ticket
-  hermes-teams-1y1.5 and is NOT yet wired: for now the gate stamps
-  `approval="escalated-t2"`, names what needs human sign-off, and **does not
-  self-approve**. Critically, **do NOT complete a T2 gate card as `done`** — completing a
+  (design-it-twice), and **async human approval**. Run the **T2 ceremony** — the ordered
+  protocol in `references/t2-ceremony.md`, summarised in the T2 protocol section below:
+  design-it-twice candidate fan-out via `kanban_chains`, a synthesis that grafts the best
+  non-winning ideas, then an async human-approval escalation on the gate bead. At
+  escalation the gate stamps `approval="escalated-t2"`, names what needs human sign-off,
+  and **does not self-approve**. Critically, **do NOT complete a T2 gate card as `done`** — completing a
   T2 card done would close the gate bead and unblock to-tickets, exactly what escalation
   must prevent. Instead **block the card** (leave it blocked / needs-input pending human
   sign-off) so bead-sync leaves the gate bead open and to-tickets stays blocked until a
@@ -69,6 +71,39 @@ Use judgement only at the T1/T2/T3 line; the floor itself is mechanical.
 - **T3 — platform.** A change too large to be one decision. Do not ADR it: hand it back
   as a vision for **wayfinder decomposition** into sub-changes, each of which re-enters
   the gate at its own tier (usually T1/T2).
+
+## T2 protocol — design-it-twice + async human approval
+
+When you triage a change **T2**, run the ordered ceremony in `references/t2-ceremony.md`.
+Every dispatch is a fresh session: run its **phase preamble** FIRST — route on durable
+state read from `bd show` / `bd comments <gate-bead>` (labels + the `ESCALATE:` / `APPROVED:`
+comments) and the board `list`, never on session memory. The **safe default in any
+ambiguous state is to (re)block — NEVER `kanban_complete`**; never complete the gate
+without a durable `APPROVED:` comment on the gate bead. In one screen:
+
+1. **Fan out** — create **2-3 independent design-candidate cards** (distinct design
+   **angles**: storage-first / api-first / cost-first) + a synthesis card via
+   **`kanban_chains`** (the fan-out primitive the architect force-loads as gate
+   machinery). The gate card is the caller; it parks on the synthesis and auto-promotes.
+   On any **re-dispatch, do NOT re-fan-out** — the candidate/synthesis topology already
+   exists and a second call would duplicate it.
+2. **Synthesize** — the synthesis card picks a winner and **grafts the best ideas of the
+   non-winning candidate(s)** into the chosen design (never winner-only), emitting the
+   graft provenance as **structured completion metadata** (`{"winner": …, "grafts":
+   [{"idea": …, "from": …}]}`, winner ≠ the grafted idea's source), not a prose summary.
+3. **Escalate** — `bd tag <gate-bead> human` + an `ESCALATE:` comment naming exactly what
+   needs human sign-off; the engine mints one **idempotent hq operator card**
+   (`bead-human-<gate-bead>`). The gate card **stays blocked** — it **does not complete**
+   — so bead-sync leaves the gate bead open and **to-tickets stays blocked**. Meanwhile
+   **unrelated frontier work keeps flowing** (other ready frontier tickets still route).
+4. **Human answer** — the human answer (a `bd comment` on the gate bead; the hq card
+   resolved) becomes the approval **citation**, carried in the **gate metadata** AND the
+   **ADR(s)**. Land the winning design as ADR(s) + the spec architecture section, then
+   complete the gate card `done` → bead-sync closes the gate bead → **to-tickets
+   unblocks**.
+
+The T2 completion contract adds the human citation + ceremony provenance — see the
+completion contract below.
 
 ## Design-doc anatomy checklist
 
@@ -136,15 +171,25 @@ this shape — it is queryable at the board seam and is how downstream to-ticket
 your verdict:
 
 ```json
-{"tier": "T0|T1|T2|T3", "artifacts": ["ADR-001", ...] or [], "approval": "waved-through|adr-recorded|escalated-t2", "gate_bead": "<gate-bead-id>"}
+{"tier": "T0|T1|T2|T3", "artifacts": ["ADR-001", ...] or [], "approval": "waved-through|adr-recorded|escalated-t2|human-approved", "gate_bead": "<gate-bead-id>"}
 ```
 
 - `tier` — the triaged tier.
 - `artifacts` — the ADR **number** ids you produced (`ADR-001`, `ADR-002`, …), **never
   the filename**; `[]` for a T0.
-- `approval` — `waved-through` (T0), `adr-recorded` (T1), or `escalated-t2` (T2, awaiting
-  human sign-off).
+- `approval` — `waved-through` (T0), `adr-recorded` (T1), `escalated-t2` (T2 at escalation,
+  card blocked, awaiting human sign-off), or `human-approved` (T2 at completion, the human
+  signed off).
 - `gate_bead` — the gate bead this card completes.
+
+**T2 completion** carries the human citation + ceremony provenance (see
+`references/t2-ceremony.md`): `approval` is `human-approved`, plus `approval_citation`
+(the quoted decisive line of the human answer — the same citation the ADR carries),
+`candidates` (the design-candidate card ids), and `synthesis` (the synthesis card id):
+
+```json
+{"tier": "T2", "artifacts": ["ADR-001", ...], "approval": "human-approved", "approval_citation": "<quoted human answer>", "candidates": ["<card id>", ...], "synthesis": "<card id>", "gate_bead": "<gate-bead-id>"}
+```
 
 Do NOT `bd close` the gate bead yourself. On a **T0/T1** the card is completed **done**;
 bead-sync then closes the gate bead, which unblocks the blocked-by to-tickets bead so
