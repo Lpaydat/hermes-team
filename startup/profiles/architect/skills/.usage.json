@@ -68,14 +68,14 @@
     "archived_at": null,
     "created_at": "2026-07-11T08:24:45.273825+00:00",
     "created_by": "agent",
-    "last_patched_at": "2026-07-11T09:12:23.246292+00:00",
-    "last_used_at": "2026-07-11T09:11:46.599105+00:00",
-    "last_viewed_at": "2026-07-11T09:11:46.593974+00:00",
-    "patch_count": 15,
+    "last_patched_at": "2026-07-11T09:22:46.006853+00:00",
+    "last_used_at": "2026-07-11T09:22:01.676990+00:00",
+    "last_viewed_at": "2026-07-11T09:22:01.672049+00:00",
+    "patch_count": 18,
     "pinned": false,
     "state": "active",
-    "use_count": 13,
-    "view_count": 13
+    "use_count": 15,
+    "view_count": 15
   },
   "design-an-interface": {
     "archived_at": null,
@@ -85,7 +85,7 @@
     "last_used_at": null,
     "last_viewed_at": null,
     "patch_count": 0,
-    "pinned": true,
+    "pinned": false,
     "state": "active",
     "use_count": 0,
     "view_count": 0
@@ -124,7 +124,7 @@
     "last_used_at": null,
     "last_viewed_at": null,
     "patch_count": 0,
-    "pinned": true,
+    "pinned": false,
     "state": "active",
     "use_count": 0,
     "view_count": 0
@@ -137,7 +137,7 @@
     "last_used_at": null,
     "last_viewed_at": null,
     "patch_count": 0,
-    "pinned": true,
+    "pinned": false,
     "state": "active",
     "use_count": 0,
     "view_count": 0

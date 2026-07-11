@@ -220,6 +220,31 @@ Skills that don't belong to a package can end up inside its shared dir
 Detect by comparing installed contents against upstream; investigate
 any extras.
 
+## Updating installed skills from upstream
+
+After auditing (see above), update stale shared-skill packages to their
+latest upstream version. **Do NOT run the official installer** — it
+targets `~/.hermes/` or `~/.claude/`, bypassing the shared-symlink
+topology. Update in-place inside `shared-skills/<package>/`.
+
+Two shapes, two methods:
+
+1. **Git clone** (e.g. `ponytail`) — the package dir has an upstream
+   remote. Update via `git pull origin main` (need `chmod -R u+w` first
+   for read-only files, restore after).
+
+2. **Static copy in team repo** (e.g. `mattpocock`) — no upstream
+   remote, tracked inside hermes-team. Fetch individual stale skills
+   from the upstream repo via `gh api` and overwrite.
+
+Shared-skill packages are typically **gitignored** in the hermes-team
+repo — updates are live on disk (all profiles see them via symlinks
+immediately) but won't sync to other machines via `git push`.
+
+See `references/upstream-update-recipe.md` for the full step-by-step
+recipe covering both shapes, stale-skill detection (md5 comparison),
+the fetch-and-overwrite pattern, and gitignore implications.
+
 ## Consolidating independent copies into shared symlinks
 
 When the user wants to eliminate copy drift by moving bundled skills to
@@ -266,3 +291,7 @@ See `references/consolidation-recipe.md` for the full 7-phase execution recipe w
   for converting bundled copies to shared symlinks: divergence check,
   canonical selection, read-only permission handling, dead symlink
   cleanup, and verification.
+- `references/upstream-update-recipe.md` — updating shared-skill packages
+  to latest upstream: git clone vs static copy, installer avoidance,
+  stale-skill md5 detection, fetch-and-overwrite via `gh api`, gitignore
+  implications for multi-machine sync.

@@ -11,7 +11,11 @@ agent:
   reasoning_effort: xhigh
 skills:
   disabled:
-    # -- mattpocock family: everything except the design doctrine six --
+    # -- mattpocock family: everything except the design doctrine three --
+    # Deprecated skills dropped from doctrine (absorbed by active skills or gate ceremony)
+    - design-an-interface
+    - request-refactor-plan
+    - ubiquitous-language
     - ask-matt
     - claude-handoff
     - code-review

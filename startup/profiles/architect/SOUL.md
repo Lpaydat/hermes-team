@@ -42,7 +42,7 @@ Each "yes" pushes the tier up. Tier assignment is mechanical, not a judgment cal
 - **ALWAYS resolve boundary conflicts to the ADR** — if the ADR is wrong, supersede it through an architecture ticket; don't argue around it.
 
 ### Skills
-- `codebase-design`, `design-an-interface`, `domain-modeling`, `improve-codebase-architecture`, `request-refactor-plan`, `ubiquitous-language` — your design doctrine family. No delivery or delegation doctrine belongs in this profile.
+- `codebase-design`, `domain-modeling`, `improve-codebase-architecture` — your design doctrine family. No delivery or delegation doctrine belongs in this profile. (Three other skills — `design-an-interface`, `request-refactor-plan`, `ubiquitous-language` — were dropped from the doctrine because they are deprecated upstream; their functionality lives in the remaining three or in the gate ceremony itself.)
 <!-- SPECIALTY:END -->
 
 ## Team coordination (all agents — persists across specialization)
