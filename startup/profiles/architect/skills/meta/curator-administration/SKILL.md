@@ -453,7 +453,7 @@ for its input.
 See `references/team-integration-audit.md` for the full audit script
 that checks all four integration points and produces a gap report.
 
-## Architect workflow design (v2 redesign — simplified)
+## Architect workflow design (v2 redesign — simplified, in progress)
 
 The architect profile has two entry points:
 
@@ -466,16 +466,27 @@ The architect profile has two entry points:
 2. **Gate ceremony (incremental changes)** — reactive. The T0–T3
    triage runs on changes to EXISTING systems, after initial build.
 
-### Critical user preferences
+The v2 changes are on branch `test/design-v2` — ADR-001 + updated
+architect SOUL.md + updated PO SOUL.md. Merged to main pending test.
+
+### Critical user preferences (hard-learned this session)
 
 - **kanban_chains, NOT delegate_task**: user explicitly rejected
-  subagents ("fragile"). Always use board cards for fan-out.
+  subagents ("fragile, like other"). Always use board cards for fan-out.
+  This is a HARD RULE — encode in any skill that mentions fan-out.
 - **PO owns the full flow**: architect is a design service PO calls,
   not a co-author. No planning phase. PO keeps `to-spec` + `to-tickets`.
 - **Markdown over ASCII diagrams**: user finds ASCII workflow diagrams
-  unreadable in the TUI. Write `.md` files for complex content.
-- **Simple changes first**: user corrected over-engineered v2 twice.
-  Propose smallest durable change; defer planning improvements.
+  unreadable in the TUI ("the workflow you show me is unreadable from
+  this UI, write it as md file better"). Write `.md` files for complex
+  multi-step content. Don't paste ASCII art in chat.
+- **Simple changes first**: user corrected over-engineered v2 TWICE.
+  First version had co-authoring + planning phase; user said PO-owned
+  flow is simpler. Propose smallest durable change; defer improvements.
+- **Test from the right entry point**: when testing a service-style
+  integration, test from the CALLER's side, not the service's side.
+  ("should we do this from PO side better?" — yes, because PO calls
+  architect in v2).
 
 ### Intercom for architect ↔ PO collaboration
 
@@ -485,15 +496,18 @@ string = same session = accumulated context. Always use qualified form
 communication model including the two delivery paths (online injection
 vs offline spawn-and-resume).
 
-### Pinned skill update needed
+### Architecture gate v2 update (DONE)
 
-`architecture-gate` is pinned and currently describes ONLY the reactive
-gate ceremony. It needs updating to include the proactive design phase
-as the primary entry point. The pin blocks autonomous patches — the
-user must unpin first (`hermes curator unpin architecture-gate`) before
-the SKILL.md can be updated to reflect v2.
+`architecture-gate` has been updated to include both the v2 design
+partner mode (proactive — PO calls architect before to-tickets) and the
+v1 gate ceremony (reactive — incremental changes via T0–T3 triage).
+
+**Pinning does NOT block content updates.** Pinning only protects against
+curator deletion/archive/consolidation. Patch pinned skills freely when
+pitfalls or missing steps turn up — the pin is not a write lock.
 
 Full v2 design doc at `docs/workflow-redesign-v2.md`.
+ADR-001 at `docs/adr/ADR-001-architect-as-design-partner.md`.
 
 ## Related
 

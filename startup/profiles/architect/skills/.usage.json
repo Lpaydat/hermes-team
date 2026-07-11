@@ -4,13 +4,13 @@
     "created_at": "2026-07-11T01:42:12.110688+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-11T14:26:54.005352+00:00",
-    "last_viewed_at": "2026-07-11T14:26:54.001506+00:00",
+    "last_used_at": "2026-07-11T15:30:07.301979+00:00",
+    "last_viewed_at": "2026-07-11T15:30:07.296113+00:00",
     "patch_count": 0,
     "pinned": true,
     "state": "active",
-    "use_count": 49,
-    "view_count": 3
+    "use_count": 51,
+    "view_count": 5
   },
   "architecture/architecture-gate": {
     "archived_at": null,
@@ -56,26 +56,26 @@
     "created_at": "2026-07-10T22:44:51.556406+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-11T06:00:24.279852+00:00",
-    "last_viewed_at": null,
+    "last_used_at": "2026-07-11T15:29:32.933805+00:00",
+    "last_viewed_at": "2026-07-11T15:29:32.930195+00:00",
     "patch_count": 0,
     "pinned": true,
     "state": "active",
-    "use_count": 41,
-    "view_count": 0
+    "use_count": 42,
+    "view_count": 1
   },
   "curator-administration": {
     "archived_at": null,
     "created_at": "2026-07-11T08:24:45.273825+00:00",
     "created_by": "agent",
-    "last_patched_at": "2026-07-11T15:03:09.436223+00:00",
-    "last_used_at": "2026-07-11T15:02:02.806596+00:00",
-    "last_viewed_at": "2026-07-11T15:02:02.800834+00:00",
-    "patch_count": 34,
+    "last_patched_at": "2026-07-11T15:32:22.360361+00:00",
+    "last_used_at": "2026-07-11T15:31:53.202902+00:00",
+    "last_viewed_at": "2026-07-11T15:31:53.195983+00:00",
+    "patch_count": 38,
     "pinned": false,
     "state": "active",
-    "use_count": 32,
-    "view_count": 32
+    "use_count": 36,
+    "view_count": 36
   },
   "design-an-interface": {
     "archived_at": null,
@@ -95,13 +95,13 @@
     "created_at": "2026-07-10T22:44:51.564846+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-11T06:00:24.286642+00:00",
-    "last_viewed_at": null,
+    "last_used_at": "2026-07-11T15:29:32.931814+00:00",
+    "last_viewed_at": "2026-07-11T15:29:32.928148+00:00",
     "patch_count": 0,
     "pinned": true,
     "state": "active",
-    "use_count": 41,
-    "view_count": 0
+    "use_count": 42,
+    "view_count": 1
   },
   "improve-codebase-architecture": {
     "archived_at": null,

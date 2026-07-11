@@ -4,12 +4,12 @@
     "created_at": "2026-07-01T15:30:04.959071+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-11T12:30:14.008468+00:00",
+    "last_used_at": "2026-07-11T15:30:16.658005+00:00",
     "last_viewed_at": null,
     "patch_count": 0,
     "pinned": true,
     "state": "active",
-    "use_count": 65,
+    "use_count": 66,
     "view_count": 0
   },
   "ask-matt": {
@@ -30,12 +30,12 @@
     "created_at": "2026-07-01T15:30:04.989146+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-11T12:30:14.019643+00:00",
+    "last_used_at": "2026-07-11T15:30:16.669148+00:00",
     "last_viewed_at": null,
     "patch_count": 0,
     "pinned": true,
     "state": "active",
-    "use_count": 65,
+    "use_count": 66,
     "view_count": 0
   },
   "claude-code": {
@@ -303,12 +303,12 @@
     "created_at": "2026-07-01T13:25:29.184491+00:00",
     "created_by": "agent",
     "last_patched_at": "2026-07-01T14:25:06.636201+00:00",
-    "last_used_at": "2026-07-11T12:30:14.030545+00:00",
+    "last_used_at": "2026-07-11T15:30:16.680400+00:00",
     "last_viewed_at": "2026-07-01T18:57:18.573403+00:00",
     "patch_count": 2,
     "pinned": true,
     "state": "active",
-    "use_count": 69,
+    "use_count": 70,
     "view_count": 4
   },
   "migrate-to-shoehorn": {
@@ -498,12 +498,12 @@
     "created_at": "2026-07-01T14:00:02.272281+00:00",
     "created_by": null,
     "last_patched_at": "2026-07-03T18:37:12.150305+00:00",
-    "last_used_at": "2026-07-11T12:30:13.997280+00:00",
+    "last_used_at": "2026-07-11T15:30:16.646678+00:00",
     "last_viewed_at": "2026-07-10T17:19:27.469503+00:00",
     "patch_count": 42,
     "pinned": true,
     "state": "active",
-    "use_count": 107,
+    "use_count": 108,
     "view_count": 42
   },
   "resolving-merge-conflicts": {

@@ -4,8 +4,37 @@
 > at the design phase as a **design service PO calls**, not a co-author
 > PO negotiates with. PO owns the full flow.
 >
-> When `architecture-gate` is unpinned, move this reference there —
-> it is architect doctrine, not curator-administration doctrine.
+> This is architect doctrine that belongs in `architecture-gate` SKILL.md.
+> It's filed here temporarily because the gate skill is pinned (background
+> curator can't patch pinned skills). To move it: unpin the gate skill,
+> merge this content as the primary section, re-pin.
+
+## PENDING: architecture-gate v2 update
+
+The `architecture-gate` skill is **pinned** and has NOT yet been updated
+to reflect v2. It still describes only the reactive gate ceremony.
+
+**Pinning does NOT block content updates at the CLI level** — pin only
+protects against curator deletion/archive/consolidation. But the
+`skill_manage` background curator pass enforces a stricter policy that
+refuses patches to pinned skills. To update:
+
+```bash
+hermes -p architect curator unpin architecture-gate
+# ... patch the skill (merge the v2 content below as primary section) ...
+hermes -p architect curator pin architecture-gate
+```
+
+## The v2 content to merge into architecture-gate
+
+```
+You operate in two modes:
+1. Design partner mode (new projects) — PO calls you with a design card
+   after writing the spec, before cutting tickets. You run the full
+   design phase proactively.
+2. Gatekeeper mode (incremental changes) — changes to an EXISTING system
+   go through the T0–T3 triage ceremony (the existing gate content).
+```
 
 ## The corrected flow (operator's version)
 
@@ -175,8 +204,8 @@ unified design doc + ADR series, resolving cross-dimension conflicts.
 
 | v1 concept | Status | Why |
 |------------|--------|-----|
-| Co-authoring / planning phase | ❌ Removed | Operator: too complex, PO owns flow |
-| `to-tickets` on tech-lead | ❌ Removed | PO has full context, should cut tickets |
+| Co-authoring / planning phase | Removed | Operator: too complex, PO owns flow |
+| `to-tickets` on tech-lead | Removed | PO has full context, should cut tickets |
 | Reactive gate as primary function | → Secondary | Gate is for incremental changes only |
 | Architecture sections written by PO | → Architect | PO isn't technical; architect owns design |
 
