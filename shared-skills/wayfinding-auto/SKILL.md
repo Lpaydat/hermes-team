@@ -71,6 +71,40 @@ closed by `bd human respond`, carry its answer to the map index citing the human
 - A **work-the-map card**: claim ONE frontier ticket (`bd update <id> --claim`), resolve it,
   record the cited resolution, graduate fog — then COMPLETE the card. One ticket, no more.
 
+## Map completion → architecture gate (before to-tickets)
+
+When a map's frontier empties, do NOT go straight to to-tickets. Architecture is reviewed
+BEFORE tracer beads are cut, and the architect — not you — owns that verdict. You stay the
+product authority; you never assign the tier or write the ADR yourself. Wire the gate in
+this order — the **blocked-by edge FIRST**, so a session death mid-setup leaves a safe,
+visible deadlock (to-tickets blocked) rather than a silent ungated proceed:
+
+1. **Create the gate bead.** One bead per completed spec — its id is the gate handle
+   (bead-sync closes it when the gate card is done).
+2. **Block to-tickets on it FIRST.** Make the to-tickets / tracer-cutting work
+   **blocked-by** the gate bead: `bd dep add <to-tickets-bead> <gate-bead>`. The
+   to-tickets bead is now immediately blocked and cannot be dispatched ungated — even if
+   the next step never runs.
+3. **Raise the gate card.** Only now create the **architecture gate card**:
+   `--assignee architect`, `--workspace dir:<venture>`, force-load `architecture-gate`
+   together with the design skills (`--skill architecture-gate --skill codebase-design
+   --skill domain-modeling`), and idempotency key `bead-<gate-bead>` so completion is
+   durable. The body carries the map pointer + the completed spec path and instructs the
+   gate to triage by blast radius, produce the tier's artifact (T0: none; T1: one ADR;
+   T2: escalate — a T2 card is left **blocked**, never completed done, so the gate bead
+   stays open), stamp the spec's architecture sections surgically without touching the
+   product sections, and complete with the gate's completion-contract metadata.
+
+Only when the architect completes the gate card (T0/T1) does **bead-sync** close the gate
+bead and unblock to-tickets — which then proceeds and **inherits** the gate's tier + ADR
+list from the stamped verdict.
+
+The gate card is created by YOU (this doctrine), never by the engine: the engine's dispatch
+skips any bead that already has a `bead-<id>` card, so a re-run never duplicates the gate.
+Keep it to ONE gate card per completed spec — wire the blocked-by edge, raise the card,
+then complete your own map card. PO stays the asker and product authority; the architect
+owns the architecture verdict.
+
 ## Completion discipline
 
 Complete the card with a summary naming the map and what changed (charted N tickets / resolved
