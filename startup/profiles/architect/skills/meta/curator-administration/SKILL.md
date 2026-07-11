@@ -405,6 +405,96 @@ tracer beads 1y1.1–1y1.7, then live-tested with 6 edge-case drills on
 isolated boards (test39–test43). Two defects were found and fixed during
 testing.
 
+## Auditing team integration for gateway-less profiles
+
+When a gateway-less profile (card-spawned, like architect or qa) is added
+to a team, the routing infrastructure and identity prompts are separate
+concerns. Both must be verified:
+
+### Four integration points to check
+
+1. **Wayfinder/routing table** — does the routing layer know to send
+   work to this profile?
+   ```bash
+   grep -r "<profile-name>" ~/.hermes-teams/shared-skills/wayfinding-auto/
+   grep -r "<profile-name>" ~/.hermes-teams/startup/profiles/product-owner/skills/wayfinding-auto/
+   ```
+
+2. **Other profiles' SOUL.md** — do sender profiles know this profile
+   exists and when to route to it? Search identity prompts:
+   ```bash
+   grep -rl "<profile-name>" ~/.hermes-teams/startup/profiles/*/SOUL.md
+   ```
+
+3. **Consumer skills** — do downstream profiles (verifier, tech-lead)
+   reference this profile's artifacts? E.g. verifier's conformance lens
+   checking ADRs, tech-lead citing ADRs in slice contracts.
+   ```bash
+   grep -rl "architect\|ADR\|conformance" ~/.hermes-teams/startup/profiles/verifier/skills/
+   ```
+
+4. **Gate/ceremony skills** — does the profile's gate skill reference
+   the workflow it sits inside (map → gate → to-tickets)?
+
+### Common pitfall: wired infrastructure, unwired identities
+
+The routing layer (wayfinder-auto) and gate skill can be fully wired and
+tested in isolation, while the identity prompts (SOUL.md) of other profiles
+remain silent about the new profile. This means:
+- Autonomous routing *might* fire (via wayfinder)
+- But profiles won't *proactively* seek out the new profile
+- The integration is passive, not active
+
+When adding or auditing a gateway-less profile, verify BOTH layers. If
+the SOUL.md gap exists, it means the profile will only be called when
+wayfinder routes to it — never when another profile proactively asks
+for its input.
+
+See `references/team-integration-audit.md` for the full audit script
+that checks all four integration points and produces a gap report.
+
+## Architect workflow design (v2 redesign — simplified)
+
+The architect profile has two entry points:
+
+1. **Design phase (new projects)** — proactive. PO creates a kanban card
+   with spec + context + intercom topic. The architect picks it up, runs
+   the full design phase (domain model, stack, boundaries, data model,
+   ADRs), intercoms PO when needed, and completes the card with design
+   output. PO then reads the design and cuts tickets.
+
+2. **Gate ceremony (incremental changes)** — reactive. The T0–T3
+   triage runs on changes to EXISTING systems, after initial build.
+
+### Critical user preferences
+
+- **kanban_chains, NOT delegate_task**: user explicitly rejected
+  subagents ("fragile"). Always use board cards for fan-out.
+- **PO owns the full flow**: architect is a design service PO calls,
+  not a co-author. No planning phase. PO keeps `to-spec` + `to-tickets`.
+- **Markdown over ASCII diagrams**: user finds ASCII workflow diagrams
+  unreadable in the TUI. Write `.md` files for complex content.
+- **Simple changes first**: user corrected over-engineered v2 twice.
+  Propose smallest durable change; defer planning improvements.
+
+### Intercom for architect ↔ PO collaboration
+
+Topic-based session targeting — NO session IDs needed. Same `topic`
+string = same session = accumulated context. Always use qualified form
+`startup/<profile>`. See `references/design-phase.md` for the full
+communication model including the two delivery paths (online injection
+vs offline spawn-and-resume).
+
+### Pinned skill update needed
+
+`architecture-gate` is pinned and currently describes ONLY the reactive
+gate ceremony. It needs updating to include the proactive design phase
+as the primary entry point. The pin blocks autonomous patches — the
+user must unpin first (`hermes curator unpin architecture-gate`) before
+the SKILL.md can be updated to reflect v2.
+
+Full v2 design doc at `docs/workflow-redesign-v2.md`.
+
 ## Related
 
 - `references/batch-pinning-recipe.md` — copy-paste-ready batch pin script
@@ -428,3 +518,11 @@ testing.
 - `references/architect-testing-evidence.md` — the architect gate's
   build-and-test evidence: 7 beads, 6 edge drills, 2 defects found and
   fixed, test boards still on disk.
+- `references/team-integration-audit.md` — methodology + script for
+  auditing whether a gateway-less profile is wired into the team workflow
+  (wayfinder routing, identity prompts, consumer skills, gate skill).
+- `references/design-phase.md` — the v2 simplified design phase: PO-owned
+  flow (architect as design service, not co-author), intercom topic-based
+  session targeting, kanban_chains fan-out (NOT delegate_task), skill
+  ownership (to-spec/to-tickets stay with PO), fan-out scaling by tier.
+  When `architecture-gate` is unpinned, move this there.
