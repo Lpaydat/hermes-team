@@ -74,6 +74,24 @@ The output shows pinned skill count under `pinned (N):` for agent-created
 skills. Note: installed (non-agent-created) skills don't appear in the
 curator status output, but they ARE pinned — the pin applies regardless.
 
+### Git side-effects of bulk operations
+
+Bulk pinning modifies files inside each profile's `skills/` directory:
+`.usage.json`, `.curator_state`, and `.hub/` (audit log, lock files,
+taps). If the profile directory lives inside a git repo (e.g.
+`~/.hermes-teams/`), these appear as untracked or modified files in
+`git status`. This is expected — commit them alongside the operation
+so the pinning state is reproducible across machines.
+
+For the commit-and-push workflow (when the user asks to persist the
+changes), check auth first and stop if unavailable:
+1. Test SSH: `ssh -T git@github.com` (works even when `gh auth` token
+   is invalid — they are independent auth paths).
+2. Check the remote: `git remote -v` — the repo may have unusual
+   branch tracking (e.g. `main` pulls from `origin/config` but pushes
+   to `origin/main`). Verify ahead/behind counts before pushing.
+3. `git add -A && git commit && git push origin <branch>`.
+
 ## Pitfalls
 
 ### Ghost profiles
@@ -96,6 +114,121 @@ profile with "no agent-created skills" has no skills to pin.
 Re-pinning an already-pinned skill is idempotent — no error, no duplicate.
 Safe to re-run batch operations.
 
+### gh CLI auth vs SSH auth are independent
+`gh auth status` may show an invalid/expired token while SSH (`git@github.com`)
+works perfectly. Git push/pull over SSH does not depend on the `gh` token.
+If the user asks to commit-and-push and `gh` is broken, don't stop — test
+SSH first (`ssh -T git@github.com`). Only flag the broken `gh` token as a
+separate issue for the user to fix if they need `gh` CLI commands (PRs,
+issues, API calls) that SSH can't cover.
+
+## Shared vs independent skills (blast radius)
+
+Not all skills in a profile are independent copies. The skill library uses a
+**hybrid topology** — understand which is which before bulk operations:
+
+### Symlinked (shared) skills
+Some category-level directories are symlinks to a single source:
+
+| Symlink | Source |
+|---------|--------|
+| `mattpocock/` | `~/.hermes-teams/shared-skills/mattpocock/` |
+| `ponytail/` | `~/.hermes-teams/shared-skills/ponytail-hub/` |
+| `caveman/` | `~/.hermes-teams/shared-skills/caveman/` |
+| `wayfinding-auto/` | `~/.hermes-teams/shared-skills/wayfinding-auto/` |
+| advisor's `competitive-analysis/`, `fundraising/`, etc. | `~/.hermes-teams/.agents/skills/<name>/` |
+
+**Patching a symlinked skill on one profile changes it for ALL profiles instantly**
+— they share the same files on disk. Pinning still works per-profile (curator
+state is tracked separately in each profile's `.curator_state`), but content
+edits propagate everywhere.
+
+### Independent copies
+Skills that are real directories (not symlinks) under `skills/<category>/` are
+per-profile copies. Editing them only affects that one profile. These include
+profile-specific doctrine (`architecture-gate`, `developer-loop`), bundled skills
+(`team-delegation`, `find-skills`, `transform`), and agent-created skills.
+
+### How to check
+```bash
+# List symlinked categories for a profile
+find ~/.hermes/profiles/<profile>/skills/ -maxdepth 1 -type l -exec basename {} \;
+```
+
+See `references/shared-skills-topology.md` for the full audit methodology and
+the disk-layout relationship between `~/.hermes/` and `~/.hermes-teams/startup/`.
+
+## Classifying skills: taxonomy
+
+Skills on disk fall into three categories that cross-cut each other:
+
+1. **Shared (symlinked)** — category-level symlink to `shared-skills/`
+   or `.agents/skills/`. Patching one profile propagates to all.
+   Identifiable with `find <skills_dir> -maxdepth 1 -type l`.
+
+2. **Bundled (independent copies)** — real dirs copied to **2+ profiles**
+   at install time (e.g. `claude-code` on 7 profiles, `team-delegation`
+   on 8). These drift apart over time. Candidates for symlink
+   consolidation.
+
+3. **Profile-specific** — real dir in **only one** profile. Includes:
+   - **Doctrine**: installed as part of the profile's identity
+     (`architecture-gate`, `developer-loop`, `startup-advisory`)
+   - **Tool integrations**: unique to one profile's workflow
+     (`airtable`, `github-*` on venture-builder)
+   - **Agent-created**: written by an agent during runtime, tracked in
+     `.curator_state` (`team-observability`, `intercom`)
+
+To classify: iterate every profile's skills, resolve symlinks, then
+count how many profiles each real-dir skill appears in. Skills in 1
+profile = profile-specific; in 2+ = bundled. See
+`references/skill-classification.md` for the audit script.
+
+## Auditing installed skills against upstream
+
+When verifying installed skills match their source repo (e.g.
+`github.com/mattpocock/skills`):
+
+1. List upstream skills via GitHub API:
+   ```bash
+   gh api repos/<owner>/<repo>/contents/skills --jq '.[].name'
+   # Then drill into each category dir
+   gh api repos/<owner>/<repo>/contents/skills/<category> --jq '.[].name'
+   ```
+2. For plugin-provided packages, check `plugin.json` for the official
+   (promoted) skill list:
+   ```bash
+   gh api repos/<owner>/<repo>/contents/.claude-plugin/plugin.json \
+     --jq '.content' | base64 -d
+   ```
+3. Compare the upstream set against installed skills at
+   `shared-skills/<package>/`.
+4. Flag: missing (in repo, not installed), extra (installed, not in
+   repo — likely a misfiled skill from another package).
+
+### Misfile detection
+
+Skills that don't belong to a package can end up inside its shared dir
+(e.g. `find-skills` — a Hermes bundled skill — was found inside
+`shared-skills/mattpocock/` despite not existing in the upstream repo).
+Detect by comparing installed contents against upstream; investigate
+any extras.
+
+## Consolidating independent copies into shared symlinks
+
+When the user wants to eliminate copy drift by moving bundled skills to
+shared symlinks:
+
+1. **Bundled skills** (in 2+ profiles): pick one canonical copy, move to
+   `shared-skills/<name>/`, replace each profile's copy with a symlink.
+2. **Profile-specific skills**: leave as independent copies — they're
+   unique to each profile by design.
+3. **Misfiled skills**: move out of the wrong package dir to their own
+   location.
+
+This is a destructive operation (removing real dirs). Always
+commit-and-push the current state first so git history can recover.
+
 ## When to use this skill
 
 - **Pin all skills everywhere**: user wants maximum protection before a
@@ -104,8 +237,18 @@ Safe to re-run batch operations.
   skills.
 - **Skill inventory**: user asks "what skills does profile X have?"
 - **Pre-migration audit**: check curator state before restructuring.
+- **Upstream comparison**: verify installed skills match their source
+  repo, detect misfiles or missing skills.
+- **Consolidation planning**: convert independent copies to shared
+  symlinks.
 
 ## Related
 
 - `references/batch-pinning-recipe.md` — copy-paste-ready batch pin script
   with ghost-profile filtering and per-profile results.
+- `references/shared-skills-topology.md` — how to audit which skills are
+  symlinked (shared) vs independent copies, and the blast-radius
+  implications for pinning vs patching.
+- `references/skill-classification.md` — Python script to classify all
+  skills into shared/bundled/profile-specific, and the consolidation
+  decision for each category.
