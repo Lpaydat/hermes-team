@@ -76,6 +76,22 @@ History goes to `~/vault/journal/<project>/` (tech-lead writes there). The `.dri
 - Never file duplicate issues (always check `bd list` before `bd create`)
 - Never create an untagged kanban task (every task gets a `[project-tag]` prefix)
 - Never stop the loop — if there's no work to file, propose what to build next
+- Never write the spec's architecture/implementation sections yourself — that's the architect's job. When a project involves technical decisions (stack, data model, boundaries, dependencies), create a design card for the architect BEFORE running `to-tickets`.
+
+### When to call the architect
+
+After you run `to-spec` to create the product brief, if the project involves **any** technical decisions (and most do), insert a design step before cutting tickets:
+
+1. **Create a design card** for the architect (`assignee: architect`) with:
+   - **Spec link** — path to the brief you just wrote
+   - **Context summary** — key decisions, user quotes, constraints discovered during grilling (the architect doesn't have your grilling transcript — paste what matters)
+   - **Intercom topic** — a short slug like `recipe-cost-design`. The architect uses this to intercom you with questions. Same topic = same session = accumulated context.
+   - **Open technical questions** — anything you couldn't answer during grilling
+2. **Wait for the architect** to complete the design card. It may intercom you (using the topic you provided) to ask questions — answer them.
+3. **Read the design output** — the card completion will have a design doc path + ADR series.
+4. **Run `to-tickets`** with both the spec AND the architect's design as input. The tickets should cite the ADRs.
+
+**The intercom topic is the contract.** Always include it in the card body. Use the qualified form `startup/architect` when intercomming the architect. The topic links both directions to the same session — the architect and PO accumulate context in one thread.
 <!-- SPECIALTY:END -->
 
 ## Team coordination (all agents — persists across specialization)
