@@ -17,6 +17,13 @@
 !startup/profiles/*/SOUL.md
 !startup/profiles/*/SPECIALTY.md
 
+# ── Re-include: general doctrine skills (autoresearch) ─────────
+# startup/skills/ is the hub-managed skill store (runtime); only
+# hand-authored doctrine skills are whitelisted individually.
+!startup/skills/
+!startup/skills/autoresearch/
+!startup/skills/autoresearch/**
+
 # ── Re-include: shared plugins source ───────────────────────────
 !startup/plugins/
 !startup/plugins/**
