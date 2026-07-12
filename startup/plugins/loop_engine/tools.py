@@ -153,10 +153,47 @@ def _write_blackboard(kb, conn, root_id, author, key, value):
 # ── Validation ────────────────────────────────────────────────────────────────
 
 
+def _validate_phases(phases):
+    """Validate the T3 multi-phase `phases` list."""
+    if not isinstance(phases, list) or len(phases) < 1:
+        return "phases must be a non-empty array"
+    for i, phase in enumerate(phases):
+        if not isinstance(phase, dict):
+            return f"phases[{i}] must be an object"
+        pexec = phase.get("execution")
+        if not isinstance(pexec, dict):
+            return (f"phases[{i}].execution is required and must be "
+                    f"an object")
+        for field in ("assignee", "title", "body"):
+            val = pexec.get(field)
+            if not isinstance(val, str) or not val.strip():
+                return (f"phases[{i}].execution.{field} is required and "
+                        f"must be a non-empty string")
+        pver = phase.get("verifier")
+        if pver is not None:
+            if not isinstance(pver, dict):
+                return f"phases[{i}].verifier must be an object"
+            for field in ("assignee", "title", "body"):
+                val = pver.get(field)
+                if not isinstance(val, str) or not val.strip():
+                    return (f"phases[{i}].verifier.{field} is required "
+                            f"and must be a non-empty string")
+        pmax = phase.get("max_iterations")
+        if pmax is not None:
+            if isinstance(pmax, bool) or not isinstance(pmax, int) \
+                    or pmax < 1:
+                return (f"phases[{i}].max_iterations must be a positive "
+                        f"integer")
+    return None
+
+
 def _validate(args):
     goal = args.get("goal")
     if not isinstance(goal, str) or not goal.strip():
         return "goal is required and must be a non-empty string"
+    phases = args.get("phases")
+    if phases is not None:
+        return _validate_phases(phases)
     execution = args.get("execution")
     if not isinstance(execution, dict):
         return "execution is required and must be an object"
@@ -303,7 +340,8 @@ def loop_engine(args: dict, **kwargs) -> str:
         })
 
     goal = args["goal"].strip()
-    execution = args["execution"]
+    phases = args.get("phases")
+    execution = args.get("execution")
     verifier = args.get("verifier")
     max_iterations = args.get("max_iterations")
     author = _author(**kwargs)
@@ -332,18 +370,24 @@ def loop_engine(args: dict, **kwargs) -> str:
         if loop_state is None:
             return _first_invocation(
                 kb, conn, root_id, goal, execution, author,
-                my_card_id, run_id, verifier, max_iterations,
+                my_card_id, run_id, verifier, max_iterations, phases,
             )
 
         return _reinvoke(
             kb, conn, root_id, loop_state, author, run_id,
-            my_card_id, execution, verifier,
+            my_card_id, execution, verifier, phases,
         )
 
 
 def _first_invocation(kb, conn, root_id, goal, execution, author,
-                      my_card_id, run_id, verifier, max_iterations):
-    """Build root + execution (+ optional verifier), write loop_state, park."""
+                      my_card_id, run_id, verifier, max_iterations, phases):
+    """Build root + execution (+ optional verifier), write loop_state, park.
+
+    When ``phases`` is supplied (T3 multi-phase), the first phase's specs are
+    resolved from ``phases[0]`` and the full phase plan is stored in
+    loop_state. Otherwise the top-level execution/verifier/max_iterations
+    drive a single phase (backward compat with T1/T2).
+    """
     # Complete the root FIRST so the execution card is `ready` immediately
     # (mirrors kanban_chains: complete root, then create children).
     kb.complete_task(
@@ -352,16 +396,30 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
         metadata={"goal": goal},
     )
 
-    exec_id = _create_execution_card(kb, conn, root_id, execution, author)
+    # Resolve the first phase's specs.
+    if phases is not None:
+        phase_0 = phases[0]
+        exec_spec = phase_0["execution"]
+        verifier_spec = phase_0.get("verifier")
+        phase_cap = phase_0.get("max_iterations")
+    else:
+        exec_spec = execution
+        verifier_spec = verifier
+        phase_cap = max_iterations
 
-    if verifier is None:
+    exec_id = _create_execution_card(kb, conn, root_id, exec_spec, author)
+
+    if verifier_spec is None:
         # T1 spine: one execution card, park on it.
-        _write_blackboard(kb, conn, root_id, author, "loop_state", {
+        loop_state = {
             "phase_index": 0,
             "iteration_counter": 0,
             "terminal_ids": [exec_id],
             "execution_card": exec_id,
-        })
+        }
+        if phases is not None:
+            loop_state["phases"] = phases
+        _write_blackboard(kb, conn, root_id, author, "loop_state", loop_state)
 
         state = _park_driver(kb, conn, my_card_id, exec_id, run_id)
         if state == "failed":
@@ -383,17 +441,20 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
         }, indent=2)
 
     # T2 verifier-gated converge loop.
-    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier, author)
-    cap = max_iterations or DEFAULT_MAX_ITERATIONS
+    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier_spec, author)
+    cap = phase_cap or DEFAULT_MAX_ITERATIONS
 
-    _write_blackboard(kb, conn, root_id, author, "loop_state", {
+    loop_state = {
         "phase_index": 0,
         "iteration_counter": 1,
         "terminal_ids": [verifier_id],
         "execution_card": exec_id,
         "verifier_card": verifier_id,
         "max_iterations": cap,
-    })
+    }
+    if phases is not None:
+        loop_state["phases"] = phases
+    _write_blackboard(kb, conn, root_id, author, "loop_state", loop_state)
 
     state = _park_driver(kb, conn, my_card_id, verifier_id, run_id)
     if state == "failed":
@@ -419,20 +480,30 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
 
 
 def _reinvoke(kb, conn, root_id, loop_state, author, run_id,
-              my_card_id, execution, verifier):
+              my_card_id, execution, verifier, phases):
     """Read the terminal result and decide.
 
     T1 path (no verifier_card in loop_state): stub-decide at the T1 hard cap.
     T2 path (verifier_card present): verdict-gated advance / replan / hard cap.
+    Multi-phase (phases in loop_state with len > 1): DoD-met on a non-last
+    phase advances to the next phase; DoD-met on the last phase completes the
+    workflow.
     """
     if "verifier_card" not in loop_state:
-        return _reinvoke_t1(kb, conn, root_id, loop_state, author, run_id)
+        return _reinvoke_t1(kb, conn, root_id, loop_state, author, run_id,
+                            my_card_id)
     return _reinvoke_verifier(kb, conn, root_id, loop_state, author, run_id,
                               my_card_id, execution, verifier)
 
 
-def _reinvoke_t1(kb, conn, root_id, loop_state, author, run_id):
-    """T1: read the execution result and stub-decide at the hard cap of 1."""
+def _reinvoke_t1(kb, conn, root_id, loop_state, author, run_id,
+                 my_card_id=None):
+    """T1: read the execution result and stub-decide at the hard cap of 1.
+
+    In a multi-phase workflow (phases in loop_state with len > 1), advancing
+    past the T1 hard cap on a non-last phase transitions to the next phase
+    instead of terminating.
+    """
     exec_id = loop_state.get("execution_card")
     if not exec_id:
         terminal_ids = loop_state.get("terminal_ids") or []
@@ -451,6 +522,15 @@ def _reinvoke_t1(kb, conn, root_id, loop_state, author, run_id):
     # Persist the advanced counter (durable across a session boundary).
     loop_state["iteration_counter"] = iteration_counter
     _write_blackboard(kb, conn, root_id, author, "loop_state", loop_state)
+
+    # Multi-phase T1: advance to the next phase if there is one.
+    stored_phases = loop_state.get("phases")
+    phase_index = int(loop_state.get("phase_index", 0))
+    if (stored_phases and len(stored_phases) > 1
+            and phase_index < len(stored_phases) - 1
+            and my_card_id):
+        return _advance_phase(kb, conn, root_id, loop_state, author, run_id,
+                              my_card_id, stored_phases, phase_index + 1)
 
     # T1 stub-decide: hard cap = 1 -> report the result, terminate. Later beads
     # add the real verifier / DoD + advance/replan/escalate layered exits.
@@ -475,6 +555,11 @@ def _reinvoke_verifier(kb, conn, root_id, loop_state, author, run_id,
     The verifier is the terminal parent the driver parked on; its completion
     promoted the driver. The driver reads the verdict via latest_run (direct
     read), not the injected _metadata_ line — the same clean path T1 used.
+
+    T3 multi-phase: when loop_state carries a phases plan with len > 1, DoD-met
+    on a non-last phase advances to the next phase (creates its sub-graph,
+    advances phase_index, re-parks). DoD-met on the LAST phase completes the
+    workflow.
     """
     verifier_id = loop_state.get("verifier_card")
     exec_id = loop_state.get("execution_card")
@@ -489,6 +574,32 @@ def _reinvoke_verifier(kb, conn, root_id, loop_state, author, run_id,
 
     # Advance: DoD met (or the verifier explicitly recommends advancing).
     if dod_met or recommendation == "advance":
+        stored_phases = loop_state.get("phases")
+        phase_index = int(loop_state.get("phase_index", 0))
+        if stored_phases and len(stored_phases) > 1:
+            if phase_index < len(stored_phases) - 1:
+                # Advance to the next phase: create its sub-graph, re-park.
+                return _advance_phase(
+                    kb, conn, root_id, loop_state, author, run_id,
+                    my_card_id, stored_phases, phase_index + 1,
+                    iteration_counter, verdict,
+                )
+            # Last phase DoD-met -> workflow complete.
+            return json.dumps({
+                "status": "complete",
+                "decision": "workflow_complete",
+                "root_id": root_id,
+                "phase_index": phase_index,
+                "execution_card": exec_id,
+                "verifier_card": verifier_id,
+                "iteration": iteration_counter,
+                "verdict": verdict,
+                "message": (
+                    f"Last phase {phase_index} DoD met on iteration "
+                    f"{iteration_counter}; workflow complete."
+                ),
+            }, indent=2)
+        # Single-phase (backward compat T2): phase complete.
         return json.dumps({
             "status": "complete",
             "decision": "advance",
@@ -524,8 +635,13 @@ def _reinvoke_verifier(kb, conn, root_id, loop_state, author, run_id,
     # deterministic cap terminates the loop (termination must not depend on the
     # model — loop engineering core tenet).
     if iteration_counter < cap:
+        # Resolve the current phase's specs for replan (multi-phase uses the
+        # phase plan stored in loop_state; single-phase uses the top-level
+        # execution/verifier).
+        replan_exec, replan_verifier = _resolve_phase_specs(
+            loop_state, execution, verifier)
         return _replan(kb, conn, root_id, loop_state, author, run_id,
-                       my_card_id, execution, verifier,
+                       my_card_id, replan_exec, replan_verifier,
                        iteration_counter, cap, verdict)
 
     return json.dumps({
@@ -539,6 +655,97 @@ def _reinvoke_verifier(kb, conn, root_id, loop_state, author, run_id,
         "message": (
             f"Hard cap {cap} reached without DoD met; terminating the "
             f"verifier-gated loop."
+        ),
+    }, indent=2)
+
+
+def _resolve_phase_specs(loop_state, execution, verifier):
+    """Return (execution_spec, verifier_spec) for the current phase.
+
+    Multi-phase: read from loop_state['phases'][phase_index]. Single-phase:
+    use the top-level execution/verifier passed to the handler.
+    """
+    stored_phases = loop_state.get("phases")
+    if stored_phases is not None:
+        phase_index = int(loop_state.get("phase_index", 0))
+        current = stored_phases[phase_index]
+        return current["execution"], current.get("verifier")
+    return execution, verifier
+
+
+def _advance_phase(kb, conn, root_id, loop_state, author, run_id,
+                   my_card_id, phases, next_phase_index,
+                   prev_iteration=None, prev_verdict=None):
+    """Create the next phase's execution (+ optional verifier) sub-graph,
+    advance phase_index, dependency-park the driver, return.
+
+    Called from _reinvoke_verifier (T2 DoD-met) and _reinvoke_t1 (T1 hard cap)
+    when the current phase is not the last in a multi-phase workflow.
+    """
+    next_phase = phases[next_phase_index]
+    exec_spec = next_phase["execution"]
+    verifier_spec = next_phase.get("verifier")
+    phase_cap = next_phase.get("max_iterations")
+
+    exec_id = _create_execution_card(kb, conn, root_id, exec_spec, author)
+
+    if verifier_spec is None:
+        # T1 phase within multi-phase: park on the execution card.
+        loop_state["phase_index"] = next_phase_index
+        loop_state["iteration_counter"] = 0
+        loop_state["execution_card"] = exec_id
+        loop_state["terminal_ids"] = [exec_id]
+        loop_state.pop("verifier_card", None)
+        _write_blackboard(kb, conn, root_id, author, "loop_state", loop_state)
+
+        state = _park_driver(kb, conn, my_card_id, exec_id, run_id)
+        if state == "failed":
+            logger.error("Dependency block failed for %s during phase advance "
+                         "(run_id=%s)", my_card_id, run_id)
+            return _park_failure(root_id, exec_id, None, exec_id, run_id)
+        return json.dumps({
+            "status": "blocked",
+            "decision": "phase_advance",
+            "phase_index": next_phase_index,
+            "root_id": root_id,
+            "execution_card": exec_id,
+            "terminal_ids": [exec_id],
+            "message": (
+                f"Phase {next_phase_index - 1} complete; advanced to phase "
+                f"{next_phase_index}/{len(phases) - 1}."
+            ),
+        }, indent=2)
+
+    # T2 phase within multi-phase: create verifier card, park on it.
+    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier_spec, author)
+    cap = phase_cap or DEFAULT_MAX_ITERATIONS
+
+    loop_state["phase_index"] = next_phase_index
+    loop_state["iteration_counter"] = 1
+    loop_state["execution_card"] = exec_id
+    loop_state["verifier_card"] = verifier_id
+    loop_state["terminal_ids"] = [verifier_id]
+    loop_state["max_iterations"] = cap
+    _write_blackboard(kb, conn, root_id, author, "loop_state", loop_state)
+
+    state = _park_driver(kb, conn, my_card_id, verifier_id, run_id)
+    if state == "failed":
+        logger.error("Dependency block failed for %s during phase advance "
+                     "(run_id=%s)", my_card_id, run_id)
+        return _park_failure(root_id, exec_id, verifier_id, verifier_id, run_id)
+    return json.dumps({
+        "status": "blocked",
+        "decision": "phase_advance",
+        "phase_index": next_phase_index,
+        "root_id": root_id,
+        "execution_card": exec_id,
+        "verifier_card": verifier_id,
+        "terminal_ids": [verifier_id],
+        "iteration": 1,
+        "max_iterations": cap,
+        "message": (
+            f"Phase {next_phase_index - 1} complete; advanced to phase "
+            f"{next_phase_index}/{len(phases) - 1}."
         ),
     }, indent=2)
 

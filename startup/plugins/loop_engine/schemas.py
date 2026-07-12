@@ -119,8 +119,69 @@ LOOP_ENGINE = {
                     "The loop replans while dod_met is false and the iteration count "
                     "is under this cap; on reaching the cap without the DoD met it "
                     "terminates with decision=hard_cap_reached. Defaults to "
-                    "DEFAULT_MAX_ITERATIONS when omitted. Ignored in T1 mode."
+                    "DEFAULT_MAX_ITERATIONS when omitted. Ignored in T1 mode and "
+                    "when `phases` is supplied (each phase carries its own cap)."
                 ),
+            },
+            "phases": {
+                "type": "array",
+                "description": (
+                    "T3 multi-phase decomposition. When supplied, the goal is "
+                    "decomposed into an ordered list of phases (subgoals). Each "
+                    "phase runs its own converge-loop (execution + optional "
+                    "verifier) and carries its own DoD (embedded in the verifier "
+                    "body). When phase N's DoD is met, the engine advances to "
+                    "phase N+1; when the LAST phase's DoD is met, the workflow is "
+                    "complete. Omit to use the single-phase path (the top-level "
+                    "execution/verifier/max_iterations drive one converge-loop). "
+                    "When phases is supplied, the top-level execution/verifier are "
+                    "not required."
+                ),
+                "items": {
+                    "type": "object",
+                    "description": "One phase of the workflow.",
+                    "properties": {
+                        "execution": {
+                            "type": "object",
+                            "description": (
+                                "The execution card spec for this phase. Same shape "
+                                "as the top-level execution property."
+                            ),
+                            "properties": {
+                                "assignee": {"type": "string"},
+                                "title": {"type": "string"},
+                                "body": {"type": "string"},
+                                "skill": {"type": "string"},
+                            },
+                            "required": ["assignee", "title", "body"],
+                        },
+                        "verifier": {
+                            "type": "object",
+                            "description": (
+                                "The verifier card spec for this phase (carries "
+                                "the phase DoD in its body). Same shape as the "
+                                "top-level verifier property. Omit for a T1 "
+                                "(single-shot, no-DoD) phase."
+                            ),
+                            "properties": {
+                                "assignee": {"type": "string"},
+                                "title": {"type": "string"},
+                                "body": {"type": "string"},
+                                "skill": {"type": "string"},
+                            },
+                            "required": ["assignee", "title", "body"],
+                        },
+                        "max_iterations": {
+                            "type": "integer",
+                            "description": (
+                                "Per-phase hard iteration cap for this phase's "
+                                "verifier-gated converge loop. Defaults to "
+                                "DEFAULT_MAX_ITERATIONS when omitted."
+                            ),
+                        },
+                    },
+                    "required": ["execution"],
+                },
             },
         },
         "required": ["goal", "execution"],

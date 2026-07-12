@@ -285,6 +285,61 @@ def _create_calls_new(fake):
             if method == "create_task" and kw.get("parents")]
 
 
+# -- T3 (multi-phase) helpers --------------------------------------------------
+
+def _last_loop_state(fake, root_id):
+    """Return the last loop_state value written on root's blackboard, or None."""
+    states = []
+    for (args, _kw) in _calls(fake, "add_comment"):
+        _conn, tid, _author, text = args
+        if tid != root_id or not text.startswith("[swarm:blackboard]"):
+            continue
+        try:
+            payload = json.loads(text[len("[swarm:blackboard] "):])
+        except (ValueError, TypeError):
+            continue
+        if payload.get("key") == "loop_state":
+            states.append(payload["value"])
+    return states[-1] if states else None
+
+
+def _phases(n=2, with_verifier=True):
+    """Build n ordered phases, each with execution + optional verifier (DoD)."""
+    result = []
+    for i in range(n):
+        phase = {
+            "execution": _execution(
+                assignee="developer",
+                title=f"phase {i}: build",
+                body=f"phase {i} work"),
+        }
+        if with_verifier:
+            phase["verifier"] = _verifier(
+                assignee="verifier",
+                title=f"phase {i}: verify",
+                body=f"phase {i} DoD: tests pass. Write dod_verdict.")
+        result.append(phase)
+    return result
+
+
+def _loop_state_comment_phases(root_id, phases, phase_index=0,
+                               execution_card="t_exec",
+                               verifier_card="t_verifier",
+                               iteration_counter=1, max_iterations=5):
+    """T3 multi-phase loop_state: driver parked on a phase's verifier."""
+    value = {
+        "phase_index": phase_index,
+        "phases": phases,
+        "iteration_counter": iteration_counter,
+        "terminal_ids": [verifier_card],
+        "execution_card": execution_card,
+        "verifier_card": verifier_card,
+        "max_iterations": max_iterations,
+    }
+    payload = json.dumps({"key": "loop_state", "value": value})
+    return _Comment("loop_engine", f"[swarm:blackboard] {payload}")
+
+
 # =============================================================================
 # 1. Schema
 # =============================================================================
@@ -970,6 +1025,271 @@ class TestHardCap(unittest.TestCase):
 
 
 # =============================================================================
+# 13. T3 — schema + validation for multi-phase decomposition
+# =============================================================================
+
+class TestPhaseSchema(unittest.TestCase):
+
+    def test_schema_has_phases_property(self):
+        props = le_schemas.LOOP_ENGINE["parameters"]["properties"]
+        self.assertIn("phases", props)
+        self.assertEqual(props["phases"]["type"], "array")
+
+    def test_phase_item_has_execution_and_optional_verifier(self):
+        props = le_schemas.LOOP_ENGINE["parameters"]["properties"]
+        phase_item = props["phases"]["items"]
+        self.assertIn("execution", phase_item["properties"])
+        self.assertIn("verifier", phase_item["properties"])
+
+
+class TestPhaseValidation(unittest.TestCase):
+
+    def test_empty_phases_rejected(self):
+        fake = FakeKanbanDB(create_ids=[])
+        with patch.object(le_tools, "_kb", return_value=fake):
+            result = le_tools.loop_engine(
+                args={"goal": "x", "phases": []}, task_id="t_driver")
+        parsed = json.loads(result)
+        self.assertIn("error", parsed)
+
+    def test_phases_missing_execution_rejected(self):
+        fake = FakeKanbanDB(create_ids=[])
+        with patch.object(le_tools, "_kb", return_value=fake):
+            result = le_tools.loop_engine(
+                args={"goal": "x",
+                      "phases": [{"verifier": _verifier()}]},
+                task_id="t_driver")
+        parsed = json.loads(result)
+        self.assertIn("error", parsed)
+
+    def test_valid_phases_accepted_without_top_level_execution(self):
+        """When phases is supplied, top-level execution is NOT required."""
+        parsed, fake = _run_handler(
+            args={"goal": "ship it", "phases": _phases(2)},
+            create_ids=["t_root", "t_exec0", "t_verifier0"],
+        )
+        self.assertNotIn("error", parsed)
+
+
+# =============================================================================
+# 14. T3 — goal decomposes into ≥2 ordered phases with per-phase DoD
+# =============================================================================
+
+class TestPhaseDecomposition(unittest.TestCase):
+
+    def test_first_invocation_stores_phase_plan(self):
+        phases = _phases(2)
+        parsed, fake = _run_handler(
+            args={"goal": "ship the feature", "phases": phases},
+            create_ids=["t_root", "t_exec0", "t_verifier0"],
+        )
+        state = _last_loop_state(fake, "t_root")
+        self.assertIsNotNone(state)
+        self.assertEqual(state["phase_index"], 0)
+        self.assertEqual(len(state["phases"]), 2)
+
+    def test_first_phase_execution_card_created_on_root(self):
+        phases = _phases(2)
+        parsed, fake = _run_handler(
+            args={"goal": "ship the feature", "phases": phases},
+            create_ids=["t_root", "t_exec0", "t_verifier0"],
+        )
+        creates = _create_calls_new(fake)
+        # Phase 0: exec on root, verifier on exec.
+        self.assertEqual(len(creates), 2)
+        self.assertEqual(creates[0]["parents"], ["t_root"])
+        self.assertEqual(creates[1]["parents"], ["t_exec0"])
+
+    def test_first_invocation_returns_blocked(self):
+        phases = _phases(2)
+        parsed, fake = _run_handler(
+            args={"goal": "ship the feature", "phases": phases},
+            create_ids=["t_root", "t_exec0", "t_verifier0"],
+        )
+        self.assertEqual(parsed["status"], "blocked")
+        self.assertEqual(parsed["terminal_ids"], ["t_verifier0"])
+
+    def test_per_phase_dod_in_verifier_body(self):
+        """Each phase carries its own DoD embedded in its verifier body."""
+        phases = [
+            {"execution": _execution(title="phase 0: build API"),
+             "verifier": _verifier(body="DoD: API returns 200")},
+            {"execution": _execution(title="phase 1: build UI"),
+             "verifier": _verifier(body="DoD: UI renders data")},
+        ]
+        parsed, fake = _run_handler(
+            args={"goal": "ship it", "phases": phases},
+            create_ids=["t_root", "t_exec0", "t_verifier0"],
+        )
+        creates = _create_calls_new(fake)
+        # Phase 0 verifier carries phase 0's DoD.
+        self.assertIn("API returns 200", creates[1]["body"])
+
+    def test_driver_parks_on_phase_zero_verifier(self):
+        phases = _phases(2)
+        parsed, fake = _run_handler(
+            args={"goal": "ship it", "phases": phases},
+            create_ids=["t_root", "t_exec0", "t_verifier0"],
+            task_id="t_driver",
+        )
+        links = _calls(fake, "link_tasks")
+        _conn, parent_id, child_id = links[-1][0]
+        self.assertEqual(parent_id, "t_verifier0")
+        self.assertEqual(child_id, "t_driver")
+
+
+# =============================================================================
+# 15. T3 — DoD-met on phase N creates phase N+1 sub-graph + advances phase_index
+# =============================================================================
+
+class TestPhaseAdvance(unittest.TestCase):
+
+    def test_dod_met_creates_next_phase_subgraph(self):
+        phases = _phases(2)
+        seeded = _loop_state_comment_phases(
+            "t_root", phases, phase_index=0,
+            execution_card="t_exec0", verifier_card="t_verifier0",
+            iteration_counter=1)
+        parsed, fake = _run_handler(
+            args={"goal": "ship it", "phases": phases},
+            create_ids=["t_root", "t_exec1", "t_verifier1"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier0":
+                          _verifier_run(_dod_verdict(dod_met=True))},
+        )
+        self.assertEqual(parsed["status"], "blocked")
+        self.assertEqual(parsed["decision"], "phase_advance")
+        new_cards = _create_calls_new(fake)
+        self.assertEqual(len(new_cards), 2)
+        self.assertEqual(new_cards[0]["parents"], ["t_root"])
+        self.assertEqual(new_cards[1]["parents"], ["t_exec1"])
+
+    def test_dod_met_advances_phase_index(self):
+        phases = _phases(2)
+        seeded = _loop_state_comment_phases(
+            "t_root", phases, phase_index=0,
+            execution_card="t_exec0", verifier_card="t_verifier0")
+        parsed, fake = _run_handler(
+            args={"goal": "ship it", "phases": phases},
+            create_ids=["t_root", "t_exec1", "t_verifier1"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier0":
+                          _verifier_run(_dod_verdict(dod_met=True))},
+        )
+        state = _last_loop_state(fake, "t_root")
+        self.assertEqual(state["phase_index"], 1)
+        self.assertEqual(state["execution_card"], "t_exec1")
+        self.assertEqual(state["verifier_card"], "t_verifier1")
+
+    def test_dod_met_parks_driver_on_new_phase_verifier(self):
+        phases = _phases(2)
+        seeded = _loop_state_comment_phases(
+            "t_root", phases, phase_index=0,
+            execution_card="t_exec0", verifier_card="t_verifier0")
+        parsed, fake = _run_handler(
+            args={"goal": "ship it", "phases": phases},
+            create_ids=["t_root", "t_exec1", "t_verifier1"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier0":
+                          _verifier_run(_dod_verdict(dod_met=True))},
+            task_id="t_driver",
+        )
+        links = _calls(fake, "link_tasks")
+        _conn, parent_id, child_id = links[-1][0]
+        self.assertEqual(parent_id, "t_verifier1")
+        self.assertEqual(child_id, "t_driver")
+
+
+# =============================================================================
+# 16. T3 — last-phase DoD-met → workflow complete
+# =============================================================================
+
+class TestPhaseWorkflowComplete(unittest.TestCase):
+
+    def test_last_phase_dod_met_returns_workflow_complete(self):
+        phases = _phases(2)
+        seeded = _loop_state_comment_phases(
+            "t_root", phases, phase_index=1,
+            execution_card="t_exec1", verifier_card="t_verifier1")
+        parsed, fake = _run_handler(
+            args={"goal": "ship it", "phases": phases},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier1":
+                          _verifier_run(_dod_verdict(dod_met=True))},
+        )
+        self.assertEqual(parsed["status"], "complete")
+        self.assertEqual(parsed["decision"], "workflow_complete")
+
+    def test_last_phase_complete_does_not_dispatch_new_cards(self):
+        phases = _phases(2)
+        seeded = _loop_state_comment_phases(
+            "t_root", phases, phase_index=1,
+            execution_card="t_exec1", verifier_card="t_verifier1")
+        parsed, fake = _run_handler(
+            args={"goal": "ship it", "phases": phases},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier1":
+                          _verifier_run(_dod_verdict(dod_met=True))},
+        )
+        new_cards = _create_calls_new(fake)
+        self.assertEqual(len(new_cards), 0)
+
+
+# =============================================================================
+# 17. T3 — 2-phase workflow runs start-to-complete
+# =============================================================================
+
+class TestMultiPhaseWorkflow(unittest.TestCase):
+
+    def test_two_phase_workflow_runs_to_complete(self):
+        """Drive a 2-phase workflow by re-invoking the handler against ONE
+        stateful fake. Phase 0 advances, phase 1 completes."""
+        phases = _phases(2)
+        args = {"goal": "ship the feature", "phases": phases}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec0", "t_verifier0",
+            "t_exec1", "t_verifier1",
+        ], run_for_task={
+            "t_verifier0": _verifier_run(
+                _dod_verdict(dod_met=True, recommendation="advance")),
+            "t_verifier1": _verifier_run(
+                _dod_verdict(dod_met=True, recommendation="advance")),
+        })
+
+        # Invocation 1 — first: build phase 0, park.
+        p1, _ = _run_with_fake(fake, args)
+        self.assertEqual(p1["status"], "blocked")
+
+        # Invocation 2 — phase 0 DoD met: advance to phase 1.
+        p2, _ = _run_with_fake(fake, args)
+        self.assertEqual(p2["status"], "blocked")
+        self.assertEqual(p2["decision"], "phase_advance")
+
+        # Invocation 3 — phase 1 DoD met: workflow complete.
+        p3, _ = _run_with_fake(fake, args)
+        self.assertEqual(p3["status"], "complete")
+        self.assertEqual(p3["decision"], "workflow_complete")
+
+    def test_two_phase_workflow_dispatches_two_execution_cards(self):
+        phases = _phases(2)
+        args = {"goal": "ship the feature", "phases": phases}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec0", "t_verifier0",
+            "t_exec1", "t_verifier1",
+        ], run_for_task={
+            "t_verifier0": _verifier_run(_dod_verdict(dod_met=True)),
+            "t_verifier1": _verifier_run(_dod_verdict(dod_met=True)),
+        })
+        for _ in range(3):  # first + advance + complete
+            _run_with_fake(fake, args)
+        new_cards = _create_calls_new(fake)
+        exec_cards = [c for c in new_cards if c["parents"] == ["t_root"]]
+        self.assertEqual(len(exec_cards), 2)
+
+
+# =============================================================================
 # Runner
 # =============================================================================
 
@@ -991,6 +1311,12 @@ if __name__ == "__main__":
         TestReplan,
         TestConvergeLoop,
         TestHardCap,
+        TestPhaseSchema,
+        TestPhaseValidation,
+        TestPhaseDecomposition,
+        TestPhaseAdvance,
+        TestPhaseWorkflowComplete,
+        TestMultiPhaseWorkflow,
     ]
 
     for cls in test_classes:
