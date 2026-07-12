@@ -425,3 +425,309 @@ def test_runner_per_card_override_wins(kernel, monkeypatch):
     with kb.connect(board=BOARD) as conn:
         assert kb.get_task(conn, out["execution_card"]).assignee == "developer"
         assert kb.get_task(conn, out["verifier_card"]).assignee == "verifier"
+
+
+# -- T6: durability — idempotent re-drive + crash-resume -----------------------
+#
+# These prove the durability property end-to-end against the REAL kanban_db
+# kernel (a mock cannot prove cross-run resume). Scenarios:
+#   * intent-stable idempotency keys on phase cards
+#   * re-drive on a new run re-reads loop_state, does not duplicate phase cards
+#   * crash between create-cards and park -> re-drive reconciles (no orphans)
+#   * kill-mid-loop simulation: driver resumes and the workflow completes
+#   * stale/missing-verdict detection triggers re-evaluate, not phantom advance
+
+
+def _reclaim_run(monkeypatch, driver_id):
+    """Simulate the dispatcher reclaiming a dead worker's run and re-queueing
+    the driver so it re-claims into a NEW run. Mirrors ``release_stale_claims``:
+    the stale run ends as ``reclaimed`` and the task's claim fields are cleared
+    so ``claim_task``'s ``claim_lock IS NULL`` CAS mints a fresh run_id. This is
+    the "kill mid-loop" primitive."""
+    with kb.connect(board=BOARD) as conn:
+        kb._end_run(conn, driver_id, outcome="reclaimed", status="reclaimed",
+                    summary="worker killed mid-loop (simulated)")
+        conn.execute(
+            "UPDATE tasks SET status='ready', current_run_id=NULL, "
+            "claim_lock=NULL, claim_expires=NULL, worker_pid=NULL "
+            "WHERE id=?", (driver_id,))
+        conn.commit()
+        kb.recompute_ready(conn)
+        conn.commit()
+        claimed = kb.claim_task(conn, driver_id, claimer="qa")
+        conn.commit()
+        assert claimed is not None, "driver should re-claim into a new run"
+        run = kb.latest_run(conn, driver_id)
+        assert run is not None
+        monkeypatch.setenv("HERMES_KANBAN_RUN_ID", str(run.id))
+
+
+def _loop_card_count(conn, driver_id, suffix=None):
+    """Count non-archived tasks carrying this driver's intent-stable idempotency
+    keys (``loop:{driver}:...``). ``suffix`` filters by role (e.g. 'exec',
+    'verify', 'reeval'). The root card is included when suffix is None."""
+    pat = f"loop:{driver_id}:%"
+    if suffix is not None:
+        pat = f"loop:{driver_id}:%:{suffix}"
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM tasks "
+        "WHERE idempotency_key LIKE ? AND status != 'archived'",
+        (pat,)).fetchone()
+    return row["n"]
+
+
+class _FailParkN:
+    """Monkeypatch side-effect: make ``_park_driver`` return 'failed' (simulate
+    a crash between create-cards and park) for the first N calls, then defer to
+    the real implementation so subsequent parks succeed."""
+
+    def __init__(self, real, fail_times):
+        self._real = real
+        self._fail_times = fail_times
+        self._calls = 0
+
+    def __call__(self, *a, **kw):
+        self._calls += 1
+        if self._calls <= self._fail_times:
+            return "failed"
+        return self._real(*a, **kw)
+
+
+def test_phase_cards_carry_intent_stable_idempotency_keys(kernel, monkeypatch):
+    """AC: idempotency salt stable for recovery — phase exec + verifier cards
+    carry intent-stable keys (``loop:{driver}:phase0:iter1:{role}``) so a
+    re-drive dedups against cards already created that iteration."""
+    driver = _running_driver(monkeypatch)
+    args = _loop_args("DoD: pass", max_iterations=3)
+    out = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+
+    with kb.connect(board=BOARD) as conn:
+        exec_card = kb.get_task(conn, out["execution_card"])
+        ver_card = kb.get_task(conn, out["verifier_card"])
+        assert exec_card.idempotency_key == \
+            f"loop:{driver}:phase0:iter1:exec"
+        assert ver_card.idempotency_key == \
+            f"loop:{driver}:phase0:iter1:verify"
+
+
+def test_crash_before_park_reparks_existing_terminal_no_duplicates(
+        kernel, monkeypatch):
+    """AC: reclaim mid-loop -> driver re-reads board state; no orphan/partial
+    topology.
+
+    Simulate a crash BETWEEN creating the phase cards + writing loop_state and
+    dependency-parking (the partial-topology crash window). On re-drive (a NEW
+    run), the engine detects the in-flight terminal is NOT done and RE-PARKS on
+    the existing verifier — it does not create duplicate phase cards and does
+    not read a phantom verdict."""
+    driver = _running_driver(monkeypatch)
+    args = _loop_args("DoD: pass", max_iterations=3)
+
+    # First invocation: create cards + write loop_state, but CRASH before park
+    # (_park_driver returns 'failed' on the first call only).
+    real_park = le._park_driver
+    failer = _FailParkN(real_park, fail_times=1)
+    monkeypatch.setattr(le, "_park_driver", failer)
+    out = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert "error" in out, "first invocation should report the failed park"
+    # Cards + loop_state were written before the park failed.
+    exec_id = out["execution_card"]
+    verifier_id = out["verifier_card"]
+
+    # Kill mid-loop: reclaim the stale run, re-claim into a NEW run.
+    _reclaim_run(monkeypatch, driver)
+
+    # Re-drive on the new run: re-park on the EXISTING in-flight verifier.
+    out2 = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert out2["status"] == "blocked", out2
+    assert out2["decision"] == "repark", out2
+
+    with kb.connect(board=BOARD) as conn:
+        # THE durability property: no duplicate phase cards on re-drive.
+        assert _loop_card_count(conn, driver, "exec") == 1
+        assert _loop_card_count(conn, driver, "verify") == 1
+        # The existing verifier is still in-flight (never ran).
+        assert kb.get_task(conn, verifier_id).status != "done"
+        # Driver is dependency-parked (todo) on the existing verifier.
+        assert _status(conn, driver) == "todo"
+
+
+def test_kill_mid_loop_resumes_and_completes(kernel, monkeypatch):
+    """AC: kill-mid-loop test — driver resumes and the workflow completes.
+
+    Full story: crash-before-park -> reclaim -> resume (re-park) -> phase
+    completes -> workflow completes. Proves the whole property against the real
+    kernel: the topology survives the crash, the driver re-reads board state on
+    a NEW run, and convergence still succeeds."""
+    driver = _running_driver(monkeypatch)
+    args = _loop_args("DoD: pass", max_iterations=3)
+
+    # 1. First invocation: cards + loop_state written, CRASH before park.
+    real_park = le._park_driver
+    monkeypatch.setattr(le, "_park_driver",
+                        _FailParkN(real_park, fail_times=1))
+    out = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert "error" in out
+    verifier_id = out["verifier_card"]
+
+    # 2. Kill mid-loop + reclaim into a NEW run.
+    _reclaim_run(monkeypatch, driver)
+
+    # 3. Re-drive: reconcile -> re-park on the existing in-flight verifier.
+    out2 = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert out2["decision"] == "repark", out2
+
+    # 4. Complete the phase (DoD met) and resume on a fresh run.
+    verdict = {"dod_met": True, "recommendation": "advance", "gaps": []}
+    exec_id = out["execution_card"]
+    with kb.connect(board=BOARD) as conn:
+        assert kb.complete_task(conn, exec_id, summary="exec done")
+        conn.commit()
+        kb.recompute_ready(conn)
+        conn.commit()
+        assert kb.complete_task(
+            conn, verifier_id, summary="verdict",
+            metadata={"dod_verdict": verdict})
+        conn.commit()
+        kb.recompute_ready(conn)
+        conn.commit()
+    _reclaim_driver(monkeypatch, driver)
+
+    # 5. Re-invoke: reads the advance verdict -> workflow completes.
+    out3 = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert out3["status"] == "complete", out3
+    assert out3["decision"] == "advance", out3
+
+    with kb.connect(board=BOARD) as conn:
+        # Exactly one exec + one verifier across the whole crash-resume story.
+        assert _loop_card_count(conn, driver, "exec") == 1
+        assert _loop_card_count(conn, driver, "verify") == 1
+
+
+def test_redrive_after_replan_does_not_duplicate_iteration_cards(
+        kernel, monkeypatch):
+    """AC: no duplicate phase cards (dedup by intent) — a replan mints iter-2
+    cards, then a crash-before-park on iter-2 leaves them in-flight; the re-drive
+    re-parks on iter-2's verifier without minting iter-3 cards or duplicating."""
+    driver = _running_driver(monkeypatch)
+    args = _loop_args("DoD: pass", max_iterations=5)
+
+    # Iter-1: first invocation parks normally.
+    out = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert out["status"] == "blocked"
+    # Verifier says replan.
+    _complete_phase(monkeypatch, out,
+                    {"dod_met": False, "recommendation": "replan",
+                     "gaps": [{"dimension": "x", "issue": "1"}]})
+    _reclaim_driver(monkeypatch, driver)
+
+    # Iter-2 replan: create iter-2 cards, but CRASH before park.
+    real_park = le._park_driver
+    monkeypatch.setattr(le, "_park_driver",
+                        _FailParkN(real_park, fail_times=1))
+    out2 = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert "error" in out2, "replan should report the failed park"
+    iter2_exec = out2["execution_card"]
+    iter2_ver = out2["verifier_card"]
+
+    # Kill mid-loop on iter-2 + reclaim.
+    _reclaim_run(monkeypatch, driver)
+
+    # Re-drive: reconcile iter-2's in-flight verifier -> re-park (no iter-3).
+    monkeypatch.setattr(le, "_park_driver", real_park)
+    out3 = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert out3["decision"] == "repark", out3
+
+    with kb.connect(board=BOARD) as conn:
+        # Two exec cards (iter1 + iter2) and two verifier cards — NO iter-3.
+        assert _loop_card_count(conn, driver, "exec") == 2
+        assert _loop_card_count(conn, driver, "verify") == 2
+        # The iter-2 verifier is the one we re-parked on; still in-flight.
+        assert kb.get_task(conn, iter2_ver).status != "done"
+
+
+def test_stale_missing_verdict_triggers_reevaluate_not_phantom_advance(
+        kernel, monkeypatch):
+    """AC: stale/missing-verdict detection triggers re-evaluate, not phantom
+    advance.
+
+    The verifier completes WITHOUT a dod_verdict (the run was reclaimed
+    mid-verdict — the silent optimistic-lock-drop residual risk). The engine
+    must NOT act on that as a verdict (no phantom advance/replan); it dispatches
+    a fresh verifier (re-evaluate) and re-parks."""
+    driver = _running_driver(monkeypatch)
+    args = _loop_args("DoD: pass", max_iterations=3)
+    out = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    exec_id = out["execution_card"]
+    verifier_id = out["verifier_card"]
+
+    # Complete exec, then verifier with NO dod_verdict (stale/dropped).
+    with kb.connect(board=BOARD) as conn:
+        assert kb.complete_task(conn, exec_id, summary="exec done")
+        conn.commit()
+        kb.recompute_ready(conn)
+        conn.commit()
+        assert kb.complete_task(conn, verifier_id, summary="",
+                                metadata=None)  # no verdict
+        conn.commit()
+        kb.recompute_ready(conn)
+        conn.commit()
+    _reclaim_driver(monkeypatch, driver)
+
+    # Re-invoke: done terminal + no verdict -> RE-EVALUATE (not advance/replan).
+    out2 = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert out2["status"] == "blocked", out2
+    assert out2["decision"] == "reevaluate", out2
+    fresh_verifier = out2["verifier_card"]
+    assert fresh_verifier != verifier_id, "a FRESH verifier must be dispatched"
+    assert out2["stale_verifier"] == verifier_id
+
+    with kb.connect(board=BOARD) as conn:
+        # The fresh verifier carries an intent-stable reeval1 key.
+        assert kb.get_task(conn, fresh_verifier).idempotency_key == \
+            f"loop:{driver}:phase0:iter1:reeval1"
+        # Driver parked (todo) on the fresh verifier.
+        assert _status(conn, driver) == "todo"
+
+
+def test_reevaluate_then_advance_completes_workflow(kernel, monkeypatch):
+    """After a re-evaluate, completing the fresh verifier with a real DoD-met
+    verdict advances the workflow — the re-evaluate path is a real recovery, not
+    a dead end."""
+    driver = _running_driver(monkeypatch)
+    args = _loop_args("DoD: pass", max_iterations=3)
+    out = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    exec_id = out["execution_card"]
+    verifier_id = out["verifier_card"]
+
+    # Stale verdict (no metadata) -> re-evaluate dispatches a fresh verifier.
+    with kb.connect(board=BOARD) as conn:
+        assert kb.complete_task(conn, exec_id, summary="exec done")
+        conn.commit()
+        kb.recompute_ready(conn)
+        conn.commit()
+        assert kb.complete_task(conn, verifier_id, summary="", metadata=None)
+        conn.commit()
+        kb.recompute_ready(conn)
+        conn.commit()
+    _reclaim_driver(monkeypatch, driver)
+
+    out2 = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert out2["decision"] == "reevaluate"
+    fresh_verifier = out2["verifier_card"]
+
+    # Complete the fresh verifier with a real DoD-met verdict.
+    verdict = {"dod_met": True, "recommendation": "advance", "gaps": []}
+    with kb.connect(board=BOARD) as conn:
+        assert kb.complete_task(
+            conn, fresh_verifier, summary="verdict",
+            metadata={"dod_verdict": verdict})
+        conn.commit()
+        kb.recompute_ready(conn)
+        conn.commit()
+    _reclaim_driver(monkeypatch, driver)
+
+    # Re-invoke reads the fresh verdict -> workflow completes.
+    out3 = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert out3["status"] == "complete", out3
+    assert out3["decision"] == "advance", out3

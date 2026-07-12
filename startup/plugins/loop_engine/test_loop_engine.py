@@ -59,6 +59,20 @@ class _FakeRun:
     outcome: str = "completed"
 
 
+@dataclass
+class _FakeTask:
+    """Minimal stand-in for hermes_cli.kanban_db.Task (the fields we read).
+
+    T6 durability reconciliation reads the terminal card's ``status`` to decide
+    whether an in-flight iteration has finished (re-park) or produced a verdict
+    (decide). The default ``status='done'`` keeps every prior re-invoke test
+    green — they always assumed the terminal was already complete.
+    """
+    id: str = ""
+    status: str = "done"
+    assignee: str = None
+
+
 class FakeKanbanDB:
     """Records every kanban_db API call and returns canned responses.
 
@@ -70,7 +84,7 @@ class FakeKanbanDB:
     """
 
     def __init__(self, create_ids=None, block_result=True,
-                 preseed_comments=None, run_for_task=None):
+                 preseed_comments=None, run_for_task=None, task_status=None):
         self.create_ids = create_ids or []
         self.block_result = block_result
         self._create_idx = 0
@@ -81,6 +95,9 @@ class FakeKanbanDB:
                 self._comments[tid] = list(comments)
         self.run_for_task = run_for_task or {}
         self._idem = {}  # idempotency_key -> task_id (mirrors the DB's UNIQUE index)
+        # T6: per-task status overrides for reconciliation tests. Default is
+        # 'done' (see _FakeTask) so existing re-invoke tests are unaffected.
+        self._task_status = dict(task_status or {})
 
     # -- context manager for connect_closing --
 
@@ -156,6 +173,13 @@ class FakeKanbanDB:
         self.calls.append(("latest_run", (conn, task_id), {}))
         return self.run_for_task.get(task_id)
 
+    def get_task(self, conn, task_id):
+        self.calls.append(("get_task", (conn, task_id), {}))
+        return _FakeTask(
+            id=task_id,
+            status=self._task_status.get(task_id, "done"),
+        )
+
     def _append_event(self, conn, task_id, kind, payload=None, *, run_id=None):
         # Records the event-emission seam (T4 HITL escalation). Mirrors the real
         # kanban_db._append_event signature: (conn, task_id, kind, payload, *, run_id).
@@ -187,11 +211,11 @@ def _execution(assignee="developer", title="build the thing",
 
 
 def _run_handler(args, create_ids, block_result=True, task_id="t_driver",
-                 preseed_comments=None, run_for_task=None):
+                 preseed_comments=None, run_for_task=None, task_status=None):
     """Convenience: run loop_engine with a FakeKanbanDB, return (parsed, fake)."""
     fake = FakeKanbanDB(create_ids=create_ids, block_result=block_result,
                         preseed_comments=preseed_comments,
-                        run_for_task=run_for_task)
+                        run_for_task=run_for_task, task_status=task_status)
     with patch.object(le_tools, "_kb", return_value=fake):
         result = le_tools.loop_engine(args=args, task_id=task_id)
     return json.loads(result), fake
@@ -875,20 +899,23 @@ class TestDoDVerdictRead(unittest.TestCase):
         self.assertEqual(parsed["decision"], "advance")
 
     def test_no_verdict_when_verifier_run_missing(self):
-        # Verifier never completed (no run) -> treat as not-met, replan under cap.
+        # T6: a done terminal with no verdict (dropped/stale completion — the
+        # optimistic-lock-drop residual risk) is NOT treated as not-met->replan,
+        # which would phantom-decide on empty evidence. The engine re-evaluates
+        # (dispatches a fresh verifier for the same iteration).
         seeded = _loop_state_comment_verifier(
             "t_root", verifier_card="t_verifier", iteration_counter=1,
             max_iterations=3)
         parsed, fake = _run_handler(
             args={"goal": "x", "execution": _execution_t2(),
                   "verifier": _verifier()},
-            create_ids=["t_root", "t_exec2", "t_verifier2"],
+            create_ids=["t_root", "t_reeval1"],
             preseed_comments={"t_root": [seeded]},
-            run_for_task={},  # no verifier run
+            run_for_task={},  # no verdict — stale/dropped completion
         )
-        # No verdict -> not met -> replan (under cap).
+        # Done terminal, no verdict -> re-evaluate (not replan, not phantom).
         self.assertEqual(parsed["status"], "blocked")
-        self.assertEqual(parsed["decision"], "replan")
+        self.assertEqual(parsed["decision"], "reevaluate")
 
 
 # =============================================================================
@@ -2118,6 +2145,192 @@ def _loop_state_comment_phases_runner(root_id, phases, resolved_runner="worker",
 
 
 # =============================================================================
+# T6 — durability: idempotent re-drive + crash-resume (unit / mock-level)
+# =============================================================================
+
+class TestCardIdempotencyKey(unittest.TestCase):
+    """T6: intent-stable idempotency keys for phase cards (dedup by intent).
+
+    A re-drive after a crash must dedup against cards already created that
+    iteration. The key is stable for (driver, phase, iteration, role) and
+    distinct on every axis (SPEC §Constraints respected — idempotency is a
+    pre-check; we design for dedup-by-intent, not locking).
+    """
+
+    def test_key_format_and_stability(self):
+        k = le_tools._card_idempotency_key("t_drv", 0, 1, "exec")
+        self.assertEqual(k, "loop:t_drv:phase0:iter1:exec")
+        # Stable across repeated calls (same inputs -> same key).
+        self.assertEqual(
+            le_tools._card_idempotency_key("t_drv", 0, 1, "exec"), k)
+
+    def test_key_distinguishes_each_axis(self):
+        base = le_tools._card_idempotency_key("t_drv", 0, 1, "exec")
+        self.assertNotEqual(  # phase axis
+            base, le_tools._card_idempotency_key("t_drv", 1, 1, "exec"))
+        self.assertNotEqual(  # iteration axis (replan -> new cards)
+            base, le_tools._card_idempotency_key("t_drv", 0, 2, "exec"))
+        self.assertNotEqual(  # role axis (exec vs verify)
+            base, le_tools._card_idempotency_key("t_drv", 0, 1, "verify"))
+        self.assertNotEqual(  # driver axis (two workflows on one board)
+            base, le_tools._card_idempotency_key("t_other", 0, 1, "exec"))
+
+
+class TestIntentStableCardKeys(unittest.TestCase):
+    """T6: phase execution + verifier cards carry intent-stable idempotency keys
+    so a crash-replay that re-enters card creation dedups against cards already
+    created that iteration rather than duplicating them."""
+
+    def test_first_invocation_t1_stamps_exec_key(self):
+        parsed, fake = _run_handler(
+            args={"goal": "debug the flake", "execution": _execution()},
+            create_ids=["t_root", "t_exec"], task_id="t_drv",
+        )
+        creates = _create_calls(fake)
+        # [0] root (goal-hash key from T4); [1] exec (intent-stable key).
+        self.assertIsNotNone(creates[0]["idempotency_key"])  # root
+        self.assertEqual(creates[1]["idempotency_key"],
+                         "loop:t_drv:phase0:iter0:exec")
+
+    def test_first_invocation_t2_stamps_exec_and_verifier_keys(self):
+        parsed, fake = _run_handler(
+            args={"goal": "converge the loop",
+                  "execution": _execution_t2(),
+                  "verifier": _verifier(), "max_iterations": 3},
+            create_ids=["t_root", "t_exec", "t_ver"], task_id="t_drv",
+        )
+        creates = _create_calls(fake)
+        self.assertEqual(len(creates), 3)
+        # T2 seeds iteration_counter=1, so the first iteration's cards are iter1.
+        self.assertEqual(creates[1]["idempotency_key"],
+                         "loop:t_drv:phase0:iter1:exec")
+        self.assertEqual(creates[2]["idempotency_key"],
+                         "loop:t_drv:phase0:iter1:verify")
+
+
+class TestReinvokeReconciliation(unittest.TestCase):
+    """T6: re-drive reconciliation against board state.
+
+    On re-invoke the engine checks the terminal's ACTUAL board status before
+    acting on a verdict:
+      * terminal NOT done (crash between create-cards and park) -> re-park on
+        the EXISTING terminal. No duplicate cards, no phantom verdict.
+      * terminal done but NO verdict (dropped/stale completion) -> re-evaluate
+        (dispatch a fresh verifier) rather than phantom-advance or replan.
+    """
+
+    def _seed_t2(self, root_id="t_root", exec_id="t_exec", ver_id="t_ver",
+                 iteration=1, reeval_counter=None):
+        value = {
+            "phase_index": 0,
+            "iteration_counter": iteration,
+            "terminal_ids": [ver_id],
+            "execution_card": exec_id,
+            "verifier_card": ver_id,
+            "max_iterations": 5,
+            "resolved_runner": "worker",
+            "exit_counters": {"hard_cap": 0, "no_progress_streak": 0},
+            "last_state_hash": None,
+        }
+        if reeval_counter is not None:
+            value["reeval_counter"] = reeval_counter
+        payload = json.dumps({"key": "loop_state", "value": value})
+        return _Comment("loop_engine", f"[swarm:blackboard] {payload}")
+
+    def test_terminal_not_done_reparks_without_new_cards(self):
+        seeded = self._seed_t2()
+        parsed, fake = _run_handler(
+            args={"goal": "g", "execution": _execution_t2(),
+                  "verifier": _verifier(), "max_iterations": 5},
+            create_ids=["t_root"],  # root resolved idempotently; NO new cards
+            preseed_comments={"t_root": [seeded]},
+            task_status={"t_ver": "ready"},  # verifier still in-flight
+            task_id="t_drv",
+        )
+        self.assertEqual(parsed["status"], "blocked")
+        self.assertEqual(parsed["decision"], "repark")
+        # No new exec/verifier cards on the re-drive (dedup by re-parking).
+        new_cards = [c for c in _create_calls(fake) if c.get("parents")]
+        self.assertEqual(new_cards, [])
+        # Driver dependency-parked on the EXISTING verifier terminal.
+        dep_blocks = _blocks_with_kind(fake, "dependency")
+        self.assertTrue(dep_blocks)
+        self.assertIn("t_ver", dep_blocks[-1]["reason"])
+
+    def test_terminal_done_but_no_verdict_reevaluates_not_phantom_advance(self):
+        seeded = self._seed_t2()
+        parsed, fake = _run_handler(
+            args={"goal": "g", "execution": _execution_t2(),
+                  "verifier": _verifier(), "max_iterations": 5},
+            create_ids=["t_root", "t_reeval1"],
+            preseed_comments={"t_root": [seeded]},
+            # Verifier done, but metadata carries NO dod_verdict (stale drop).
+            run_for_task={"t_ver": _FakeRun(
+                task_id="t_ver", summary="?", metadata=None,
+                outcome="completed")},
+            task_status={"t_ver": "done"},
+            task_id="t_drv",
+        )
+        self.assertEqual(parsed["status"], "blocked")
+        self.assertEqual(parsed["decision"], "reevaluate")
+        # A fresh verifier card was created, parented on the (done) exec card.
+        new_verifiers = [c for c in _create_calls(fake)
+                         if c.get("parents") == ["t_exec"]]
+        self.assertEqual(len(new_verifiers), 1)
+        # The fresh verifier carries an intent-stable reeval key (iter1:reeval1).
+        self.assertEqual(new_verifiers[0]["idempotency_key"],
+                         "loop:t_drv:phase0:iter1:reeval1")
+        # Driver parked on the fresh verifier, not the stale one.
+        dep_blocks = _blocks_with_kind(fake, "dependency")
+        self.assertIn(parsed["verifier_card"], dep_blocks[-1]["reason"])
+
+    def test_t1_terminal_not_done_reparks_without_stub_decide(self):
+        # T1 path: exec card still in-flight -> re-park, do NOT stub-decide on a
+        # phantom result (the old bug: read latest_run of an unfinished card).
+        value = {
+            "phase_index": 0, "iteration_counter": 0,
+            "terminal_ids": ["t_exec"], "execution_card": "t_exec",
+            "resolved_runner": "worker",
+        }
+        payload = json.dumps({"key": "loop_state", "value": value})
+        seeded = _Comment("loop_engine", f"[swarm:blackboard] {payload}")
+        parsed, fake = _run_handler(
+            args={"goal": "g", "execution": _execution()},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            task_status={"t_exec": "ready"},  # exec still in-flight
+            task_id="t_drv",
+        )
+        self.assertEqual(parsed["status"], "blocked")
+        self.assertEqual(parsed["decision"], "repark")
+        new_cards = [c for c in _create_calls(fake) if c.get("parents")]
+        self.assertEqual(new_cards, [])
+
+    def test_reevaluate_bound_exceeds_into_escalation(self):
+        # reeval_counter already at the cap -> next stale verdict escalates to
+        # HITL instead of looping forever on persistent stale drops (deterministic
+        # termination, SPEC §Termination is safety-critical).
+        seeded = self._seed_t2(reeval_counter=le_tools.MAX_REEVAL_ATTEMPTS)
+        parsed, fake = _run_handler(
+            args={"goal": "g", "execution": _execution_t2(),
+                  "verifier": _verifier(), "max_iterations": 5},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_ver": _FakeRun(
+                task_id="t_ver", summary="?", metadata=None,
+                outcome="completed")},
+            task_status={"t_ver": "done"},
+            task_id="t_drv",
+        )
+        self.assertEqual(parsed["status"], "escalated")
+        self.assertEqual(parsed["decision"], "stale_verdict")
+        # No fresh verifier created (escalation, not another reeval).
+        new_verifiers = [c for c in _create_calls(fake)
+                         if c.get("parents") == ["t_exec"]]
+        self.assertEqual(new_verifiers, [])
+
+
+# =============================================================================
 # Runner
 # =============================================================================
 
@@ -2154,6 +2367,9 @@ if __name__ == "__main__":
         TestRunnerResolver,
         TestRunnerCardAssignee,
         TestRunnerValidation,
+        TestCardIdempotencyKey,
+        TestIntentStableCardKeys,
+        TestReinvokeReconciliation,
     ]
 
     for cls in test_classes:

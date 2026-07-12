@@ -90,6 +90,14 @@ DEFAULT_BUDGET = None              # None = no budget guard (hard cap still boun
 DEFAULT_ITERATION_COST = 1         # cost units consumed per completed iteration.
 DEFAULT_NO_PROGRESS_THRESHOLD = 2  # N consecutive identical verdict hashes.
 
+# T6: durability — bound on consecutive stale/missing-verdict re-evaluations. A
+# persistent optimistic-lock drop (verifier runs keep completing without writing
+# a dod_verdict) would otherwise loop unbounded on re-evaluations, since each
+# reeval does NOT advance iteration_counter (so the hard cap does not bound it).
+# Reaching the cap escalates to HITL (deterministic termination, SPEC
+# §Termination is safety-critical, therefore deterministic).
+MAX_REEVAL_ATTEMPTS = 3
+
 # T5: runner profile resolution. A workflow may declare a `runner` profile
 # (e.g. "debugger") — the profile that should drive the loop and that
 # execution/verifier cards default to when they do not name their own assignee.
@@ -224,6 +232,28 @@ def _idempotency_key(my_card_id, run_id, goal):
     """
     salt = hashlib.sha1(goal.encode("utf-8")).hexdigest()[:10]
     return f"loop:{my_card_id}:{salt}"
+
+
+def _card_idempotency_key(my_card_id, phase_index, iteration, role):
+    """Intent-stable dedup key for a phase card (execution or verifier).
+
+    T6. Stable across re-drives of the SAME (driver, phase, iteration, role), so
+    a crash-replay that re-enters card creation dedups against cards already
+    created that iteration (SPEC §Constraints respected — idempotency is a
+    pre-check with NO unique index; we design for dedup-by-intent, not locking).
+    The key is distinct on every axis:
+
+      * driver  — two workflows on one board never collide
+      * phase   — a phase-0 exec card is never confused with a phase-1 one
+      * iter    — a replan (iter N+1) mints fresh cards, distinct from iter N
+      * role    — exec vs verify vs a reeval attempt are distinct
+
+    This extends the root's goal_hash stability (T4) to the phase cards, so the
+    whole topology is recoverable across a reclaimed/crashed driver. Different
+    iterations yield different keys (so replan still mints fresh cards); only a
+    RE-drive of the SAME intent dedups.
+    """
+    return f"loop:{my_card_id}:phase{phase_index}:iter{iteration}:{role}"
 
 
 # ── Blackboard helpers (last-write-wins per key — the kanban_chains pattern) ───
@@ -423,14 +453,23 @@ def _extract_verdict(run):
 
 
 def _create_execution_card(kb, conn, root_id, execution, author,
-                           resolved_runner):
+                           resolved_runner, my_card_id=None,
+                           phase_index=0, iteration=0):
     """Execution card parented on the root (ready immediately; the root is
     completed first). Shared by the first invocation and every replan.
 
     T5: the card's assignee is :func:`_resolve_assignee` — an explicit
     ``execution["assignee"]`` wins; otherwise the resolved runner is used.
+
+    T6: the card carries an intent-stable idempotency key
+    (:func:`_card_idempotency_key`) so a crash-replay that re-enters card
+    creation for the SAME (driver, phase, iteration) dedups against the card
+    already created that iteration (no duplicate phase cards on re-drive).
     """
     skills = [execution["skill"]] if execution.get("skill") else None
+    idem = None
+    if my_card_id is not None:
+        idem = _card_idempotency_key(my_card_id, phase_index, iteration, "exec")
     return kb.create_task(
         conn,
         title=execution["title"],
@@ -439,11 +478,13 @@ def _create_execution_card(kb, conn, root_id, execution, author,
         created_by=author,
         parents=[root_id],
         skills=skills,
+        idempotency_key=idem,
     )
 
 
 def _create_verifier_card(kb, conn, exec_id, verifier, author,
-                          resolved_runner):
+                          resolved_runner, my_card_id=None, phase_index=0,
+                          iteration=0, role="verify"):
     """Verifier card parented on the execution card.
 
     Parenting on the execution card (not the root) does two things:
@@ -457,8 +498,15 @@ def _create_verifier_card(kb, conn, exec_id, verifier, author,
 
     T5: the card's assignee is :func:`_resolve_assignee` — an explicit
     ``verifier["assignee"]`` wins; otherwise the resolved runner is used.
+
+    T6: the card carries an intent-stable idempotency key (role defaults to
+    ``"verify"``; re-evaluations pass ``"reeval{N}"`` so each reeval attempt is
+    distinct while a re-drive of the SAME attempt dedups).
     """
     skills = [verifier["skill"]] if verifier.get("skill") else None
+    idem = None
+    if my_card_id is not None:
+        idem = _card_idempotency_key(my_card_id, phase_index, iteration, role)
     return kb.create_task(
         conn,
         title=verifier["title"],
@@ -467,6 +515,7 @@ def _create_verifier_card(kb, conn, exec_id, verifier, author,
         created_by=author,
         parents=[exec_id],
         skills=skills,
+        idempotency_key=idem,
     )
 
 
@@ -482,6 +531,140 @@ def _park_failure(root_id, exec_id, verifier_id, terminal_id, run_id):
     if verifier_id is not None:
         body["verifier_card"] = verifier_id
     return json.dumps(body)
+
+
+# ── T6: durability — re-park + re-evaluate (crash-resume reconciliation) ──────
+
+
+def _repark_existing(kb, conn, root_id, loop_state, author, run_id,
+                     my_card_id, terminal_id, terminal_ids, phase_index,
+                     execution_card=None, verifier_card=None):
+    """Re-park the driver on an EXISTING in-flight terminal.
+
+    T6 partial-topology reconciliation. Reached when a re-drive finds the
+    terminal NOT yet ``done`` — the driver was reclaimed/crashed BETWEEN
+    creating the iteration's cards and parking (or re-promoted prematurely). The
+    in-flight iteration's topology already exists; the right move is to
+    RE-ESTABLISH the dependency barrier on the existing terminal, not read a
+    phantom verdict or create duplicate cards.
+
+    Records a ``loop_repark`` event so observers can see the recovery, then
+    dependency-parks the driver on the existing terminal and returns
+    status=blocked, decision=repark.
+    """
+    kb._append_event(
+        conn, my_card_id, "loop_repark",
+        {
+            "phase_index": phase_index,
+            "terminal_id": terminal_id,
+            "root_id": root_id,
+            "reason": "in_flight_terminal_not_done",
+        },
+        run_id=run_id,
+    )
+    state = _park_driver(kb, conn, my_card_id, terminal_id, run_id)
+    if state == "failed":
+        logger.error("Re-park block failed for %s (run_id=%s)",
+                     my_card_id, run_id)
+        return _park_failure(root_id, execution_card, verifier_card,
+                             terminal_id, run_id)
+    body = {
+        "status": "blocked",
+        "decision": "repark",
+        "root_id": root_id,
+        "terminal_ids": terminal_ids,
+        "phase_index": phase_index,
+        "message": (
+            "Re-drive found the in-flight terminal not yet complete (crash "
+            "between create-cards and park, or premature re-promotion). "
+            "Re-established the dependency barrier on the existing terminal; "
+            "no duplicate cards created. The driver auto-promotes when the "
+            "terminal completes."
+        ),
+    }
+    if execution_card is not None:
+        body["execution_card"] = execution_card
+    if verifier_card is not None:
+        body["verifier_card"] = verifier_card
+    return json.dumps(body, indent=2)
+
+
+def _reevaluate(kb, conn, root_id, loop_state, author, run_id, my_card_id,
+                exec_id, old_verifier_id, verifier_spec, phase_index,
+                iteration_counter):
+    """Dispatch a FRESH verifier for the same iteration and re-park.
+
+    T6 stale/missing-verdict detection. Reached when the terminal verifier IS
+    ``done`` but produced NO structured ``dod_verdict`` — the completion was
+    dropped/stale (optimistic-lock drop, run reclaimed mid-verdict). Acting on
+    that as a verdict would phantom-advance or replan on empty evidence; instead
+    the engine RE-EVALUATES: a fresh verifier card (parented on the done exec
+    card) re-checks the phase output.
+
+    Bounded by :data:`MAX_REEVAL_ATTEMPTS` — a persistent dropper escalates to
+    HITL (``stale_verdict``) rather than looping forever (deterministic
+    termination). The fresh verifier carries an intent-stable ``reeval{N}`` key
+    so a re-drive of the SAME reeval attempt dedups while a new attempt is
+    distinct.
+    """
+    reeval_counter = int(loop_state.get("reeval_counter") or 0)
+    if reeval_counter >= MAX_REEVAL_ATTEMPTS:
+        return _escalate(
+            kb, conn, root_id, loop_state, author, run_id, my_card_id,
+            "stale_verdict", phase_index, iteration_counter,
+            verdict=None,
+        )
+
+    resolved_runner = loop_state.get("resolved_runner")
+    reeval_counter += 1
+    new_verifier_id = _create_verifier_card(
+        kb, conn, exec_id, verifier_spec, author, resolved_runner,
+        my_card_id=my_card_id, phase_index=phase_index,
+        iteration=iteration_counter, role=f"reeval{reeval_counter}",
+    )
+
+    loop_state["verifier_card"] = new_verifier_id
+    loop_state["terminal_ids"] = [new_verifier_id]
+    loop_state["reeval_counter"] = reeval_counter
+    _write_blackboard(kb, conn, root_id, author, "loop_state", loop_state)
+
+    kb._append_event(
+        conn, my_card_id, "loop_reevaluate",
+        {
+            "phase_index": phase_index,
+            "iteration": iteration_counter,
+            "stale_verifier": old_verifier_id,
+            "fresh_verifier": new_verifier_id,
+            "reeval_counter": reeval_counter,
+            "root_id": root_id,
+            "reason": "terminal_done_no_verdict",
+        },
+        run_id=run_id,
+    )
+
+    state = _park_driver(kb, conn, my_card_id, new_verifier_id, run_id)
+    if state == "failed":
+        logger.error("Re-eval block failed for %s (run_id=%s)",
+                     my_card_id, run_id)
+        return _park_failure(root_id, exec_id, new_verifier_id,
+                             new_verifier_id, run_id)
+    return json.dumps({
+        "status": "blocked",
+        "decision": "reevaluate",
+        "root_id": root_id,
+        "execution_card": exec_id,
+        "verifier_card": new_verifier_id,
+        "stale_verifier": old_verifier_id,
+        "terminal_ids": [new_verifier_id],
+        "reeval_counter": reeval_counter,
+        "phase_index": phase_index,
+        "iteration": iteration_counter,
+        "message": (
+            f"Terminal verifier {old_verifier_id} was done but produced no "
+            f"dod_verdict (dropped/stale completion). Re-evaluating with a "
+            f"fresh verifier ({new_verifier_id}); driver re-parked on it."
+        ),
+    }, indent=2)
 
 
 # ── T4: layered exits + HITL escalation ───────────────────────────────────────
@@ -707,7 +890,10 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
     :func:`_resolve_assignee` unless the card names its own assignee.
     """
     # Complete the root FIRST so the execution card is `ready` immediately
-    # (mirrors kanban_chains: complete root, then create children).
+    # (mirrors kanban_chains: complete root, then create children). This is
+    # idempotent under crash-replay: complete_task is a no-op (returns False,
+    # no duplicate event) on an already-done root, and create_task deduped the
+    # root row itself via its goal-hash idempotency key (T4).
     kb.complete_task(
         conn, root_id,
         summary="Loop topology planned; root is the shared blackboard.",
@@ -725,8 +911,13 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
         verifier_spec = verifier
         phase_cap = max_iterations
 
+    # T6: the iteration value for the intent-stable idempotency key tracks
+    # loop_state.iteration_counter: T1 seeds 0, T2 seeds 1. Computing it here
+    # means the exec card is created exactly ONCE with the right recovery key.
+    first_iter = 1 if verifier_spec is not None else 0
     exec_id = _create_execution_card(kb, conn, root_id, exec_spec, author,
-                                     resolved_runner)
+                                     resolved_runner, my_card_id=my_card_id,
+                                     phase_index=0, iteration=first_iter)
 
     if verifier_spec is None:
         # T1 spine: one execution card, park on it.
@@ -761,9 +952,12 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
             ),
         }, indent=2)
 
-    # T2 verifier-gated converge loop.
-    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier_spec,
-                                        author, resolved_runner)
+    # T2 verifier-gated converge loop. T6: the verifier carries an intent-stable
+    # key at iter1 (loop_state seeds iteration_counter=1); the exec card was
+    # already created above with the same iteration.
+    verifier_id = _create_verifier_card(
+        kb, conn, exec_id, verifier_spec, author, resolved_runner,
+        my_card_id=my_card_id, phase_index=0, iteration=1)
     cap = phase_cap or DEFAULT_MAX_ITERATIONS
 
     resolved_budget = (int(budget) if budget is not None else None)
@@ -846,6 +1040,18 @@ def _reinvoke_t1(kb, conn, root_id, loop_state, author, run_id,
         terminal_ids = loop_state.get("terminal_ids") or []
         exec_id = terminal_ids[0] if terminal_ids else None
 
+    # T6: reconcile against board state. If the exec terminal is NOT done, the
+    # in-flight iteration hasn't finished (crash between create-cards and park,
+    # or a premature re-promotion). Re-park on the EXISTING terminal — do NOT
+    # stub-decide on a phantom result or create duplicate cards.
+    if exec_id and hasattr(kb, "get_task"):
+        term = kb.get_task(conn, exec_id)
+        if term is not None and getattr(term, "status", None) != "done":
+            return _repark_existing(
+                kb, conn, root_id, loop_state, author, run_id, my_card_id,
+                exec_id, [exec_id], int(loop_state.get("phase_index", 0)),
+                execution_card=exec_id)
+
     iteration_counter = int(loop_state.get("iteration_counter", 0)) + 1
 
     # Read the execution card's closing run for its structured handoff.
@@ -903,8 +1109,36 @@ def _reinvoke_verifier(kb, conn, root_id, loop_state, author, run_id,
     cap = int(loop_state.get("max_iterations") or DEFAULT_MAX_ITERATIONS)
     iteration_counter = int(loop_state.get("iteration_counter", 1))
 
+    # T6: reconcile against board state BEFORE reading any verdict. If the
+    # terminal verifier is NOT done, the in-flight iteration hasn't finished
+    # (crash between create-cards and park, or premature re-promotion). Re-park
+    # on the EXISTING terminal — no phantom verdict, no duplicate cards.
+    if verifier_id and hasattr(kb, "get_task"):
+        term = kb.get_task(conn, verifier_id)
+        term_status = getattr(term, "status", None) if term is not None else None
+        if term_status != "done":
+            return _repark_existing(
+                kb, conn, root_id, loop_state, author, run_id, my_card_id,
+                verifier_id, [verifier_id],
+                int(loop_state.get("phase_index", 0)),
+                execution_card=exec_id, verifier_card=verifier_id)
+
     run = kb.latest_run(conn, verifier_id) if verifier_id else None
     verdict = _extract_verdict(run)
+
+    # T6: stale/missing-verdict detection. The verifier IS done but produced NO
+    # structured dod_verdict — the completion was dropped/stale (optimistic-lock
+    # drop, run reclaimed mid-verdict). Acting on that as a verdict would
+    # phantom-advance or replan on empty evidence; instead RE-EVALUATE (a fresh
+    # verifier re-checks the phase output). Bounded by MAX_REEVAL_ATTEMPTS.
+    if verdict is None:
+        _re_exec, _re_verifier = _resolve_phase_specs(loop_state, execution,
+                                                      verifier)
+        if _re_verifier is not None:
+            return _reevaluate(
+                kb, conn, root_id, loop_state, author, run_id, my_card_id,
+                exec_id, verifier_id, _re_verifier,
+                int(loop_state.get("phase_index", 0)), iteration_counter)
 
     dod_met = bool(verdict and verdict.get("dod_met"))
     recommendation = verdict.get("recommendation") if verdict else None
@@ -1056,9 +1290,17 @@ def _advance_phase(kb, conn, root_id, loop_state, author, run_id,
     phase_cap = next_phase.get("max_iterations")
     # T5: reuse the workflow's resolved runner (durable across phase advances).
     resolved_runner = loop_state.get("resolved_runner")
+    # T6: a fresh phase starts a fresh evaluation — clear any stale reeval
+    # counter from the prior phase so it cannot cause a premature
+    # stale_verdict escalation here.
+    loop_state.pop("reeval_counter", None)
+    # T6: intent-stable keys — T1 phase seeds iter0, T2 phase seeds iter1.
+    next_iter = 1 if verifier_spec is not None else 0
 
-    exec_id = _create_execution_card(kb, conn, root_id, exec_spec, author,
-                                     resolved_runner)
+    exec_id = _create_execution_card(
+        kb, conn, root_id, exec_spec, author, resolved_runner,
+        my_card_id=my_card_id, phase_index=next_phase_index,
+        iteration=next_iter)
 
     if verifier_spec is None:
         # T1 phase within multi-phase: park on the execution card.
@@ -1087,9 +1329,11 @@ def _advance_phase(kb, conn, root_id, loop_state, author, run_id,
             ),
         }, indent=2)
 
-    # T2 phase within multi-phase: create verifier card, park on it.
-    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier_spec,
-                                        author, resolved_runner)
+    # T2 phase within multi-phase: create verifier card (intent-stable key at
+    # iter1), park on it.
+    verifier_id = _create_verifier_card(
+        kb, conn, exec_id, verifier_spec, author, resolved_runner,
+        my_card_id=my_card_id, phase_index=next_phase_index, iteration=1)
     cap = phase_cap or DEFAULT_MAX_ITERATIONS
 
     loop_state["phase_index"] = next_phase_index
@@ -1142,10 +1386,17 @@ def _replan(kb, conn, root_id, loop_state, author, run_id,
 
     # T5: reuse the workflow's resolved runner (durable across replans).
     resolved_runner = loop_state.get("resolved_runner")
-    exec_id = _create_execution_card(kb, conn, root_id, execution, author,
-                                     resolved_runner)
-    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier, author,
-                                        resolved_runner)
+    # T6: intent-stable keys at (phase, next_iter) so a re-drive of THIS replan
+    # dedups while a later replan (next_iter+1) mints distinct cards.
+    phase_index = int(loop_state.get("phase_index", 0))
+    # A replan starts a fresh evaluation: clear any stale reeval counter.
+    loop_state.pop("reeval_counter", None)
+    exec_id = _create_execution_card(
+        kb, conn, root_id, execution, author, resolved_runner,
+        my_card_id=my_card_id, phase_index=phase_index, iteration=next_iter)
+    verifier_id = _create_verifier_card(
+        kb, conn, exec_id, verifier, author, resolved_runner,
+        my_card_id=my_card_id, phase_index=phase_index, iteration=next_iter)
 
     loop_state["iteration_counter"] = next_iter
     loop_state["execution_card"] = exec_id
