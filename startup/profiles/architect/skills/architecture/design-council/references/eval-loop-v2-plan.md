@@ -1,6 +1,6 @@
 # Design-Council v2: Evaluate-Gated Architecture Loop (autoresearch-inspired)
 
-> **Status:** Planning — for implementation in a new session.
+> **Status:** Implemented 2026-07-12 (bead `intercom-qre`, ADR-003, commit below). Phase 1 (evaluator rubric) + Phase 2 (loop evolution) + Phase 3 (stakes-scaling) complete. Phase 4 (validation vs v1) deferred to next run.
 > **Builds on:** design-council v1 (stakes-led, kanban_chains-based, intercom interview),
 > validated across low/standard/high tiers on 2026-07-12. All code committed.
 > **Reference:** https://github.com/karpathy/autoresearch (the improve→measure→keep/discard pattern).
