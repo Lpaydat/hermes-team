@@ -52,6 +52,10 @@ A card you create (via `kanban_create` or as a worker in a `kanban_chains` call)
 kanban_create({
   "title": "[evaluate] Round <N> — <DECISION>",
   "assignee": "verifier",
+  # NO parents field! Setting parents: ["<your-task-id>"] creates a CIRCULAR
+  # DEADLOCK: the evaluator can't promote to ready until your task is done,
+  # but your task is blocked waiting for the evaluator. Create with no parents,
+  # then kanban_block(kind="dependency") on your own task to park yourself.
   "body": """You are the INDEPENDENT EVALUATOR for a design-council round.
 Score the design-doc version below across five rubric dimensions.
 
@@ -74,12 +78,14 @@ Return this output schema (and nothing else):
 }
 
 Grounded flags only — cite the passage. Unanchored flags will be discarded as noise.
-""",
-  "parents": ["<your-task-id>"]   # park yourself
+"""
 })
+# THEN park yourself (blocks your task until the evaluator completes):
+kanban_block(kind="dependency", reason="waiting_for_evaluator:<evaluator-task-id>")
 ```
 
-- **On the evaluator's return:** read the verdict. `improve` → targeted critique round (below). `converged` → interview + ADR. `regressed` → revert to best-so-far, re-evaluate or proceed to ceiling.
+- **PITFALL:** Do NOT pass `parents: ["<your-task-id>"]` on the evaluator card. This creates a circular deadlock — the evaluator cannot promote to `ready` until your task is `done`, but your task is blocked waiting for the evaluator. Create the evaluator with no parents, then `kanban_block` your own task.
+- **On the evaluator's return (re-dispatch):** read the verdict. `improve` → targeted critique round (below). `converged` → interview + ADR. `regressed` → revert to best-so-far, re-evaluate or proceed to ceiling.
 - **Store the best-so-far:** keep the design-doc version with the highest `overall`. This is the revert target and the eventual ADR basis.
 
 ### Critique round — round 2+ when verdict is `improve` (targeted by evaluator flags)
