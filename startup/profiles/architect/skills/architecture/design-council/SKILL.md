@@ -47,6 +47,23 @@ scores general quality, not exhaustive defect-coverage, so it may not flag a
 missed second defect; the thoroughness is yours to enforce. Keep tracing stated
 behaviors until each one's failure mode is either named or provably absent.
 
+**No subagents — every agent is a kanban card.** Every agent in the design-council loop is a kanban card dispatched by the gateway. NO agent spawns background subagents — they are fragile (concurrency-starvation under parallel load + solo budget-exhaustion, where one background subagent burns the whole iteration budget alone) and not how this team works. The architect decomposes the research into **parallel sub-topics, one researcher card each**; each researcher does ONE focused topic directly in its own session and is told explicitly not to spawn subagents (*"Do NOT spawn background subagents — research directly in your session; if too broad, narrow it and post what you find"*). This is the research analogue of defect-coverage: just as you trace every stated behavior, you cover every research dimension with its own focused card rather than overloading one researcher or farming the work to subagents.
+
+This is a **root-cause override**: the `researcher` profile's `research` skill describes background-subagent fan-out as its normal mode, but **inside the design council that is forbidden** — the architect does the decomposition into parallel cards, not the researcher into background subagents.
+
+**Multi-researcher fan-out — coverage by decomposition.** Decomposing the research into sub-topics is an explicit step you perform *before* each `kanban_chains` research fan-out, not something the researcher discovers at runtime. Your inputs: the decision statement, the brief's constraints, and the architectural dimensions that apply (data model, security/auth, infrastructure/deployment, API surface, cross-cutting). Pick one sub-topic per dimension the decision touches, **capped to the tier's research fan-out**:
+
+- **Low:** 1 researcher card. A throwaway doesn't earn a fan-out — cost-discipline over coverage.
+- **Standard:** 2 researcher cards (sub-topic-1, sub-topic-2) + 1 peer.
+- **High:** 3 researcher cards (sub-topic-1/2/3) + 2 peers (+ the synthesis + PO-review `after` steps).
+- **Critique (R2+):** 1 researcher card **per evaluator flag** + the red-team — each flag gets its own focused resolution, parallel. No severity filter — one card per flag, period; the noise floor already gates convergence (a minor-only state converges and never reaches critique).
+
+Name each sub-topic concretely in the card title — not "research X" but "research X: <the specific angle / dimension>". Each researcher card body: (a) names its specific sub-topic, (b) carries the verbatim no-subagents line, (c) posts findings + citations to the blackboard. The researcher cards run in parallel and are **independent** — a researcher card must NOT read its sibling researcher cards (only the blackboard), exactly as peer perspectives must not read each other; you synthesize across them.
+
+**Coverage is the architect's job.** The union of sub-topic cards must cover the decision's research dimensions. If a dimension the decision touches is left without a card, that is a decomposition defect — fix it before dispatching; do not hope a researcher roams into it on its own. (The evaluator scores the synthesis, not the decomposition's completeness.)
+
+This multi-researcher fan-out replaces the single `researcher` chain of v1. It changes only the **research phase** of a round (the diverge step's fan-out, and the improve step's targeted-research fan-out). The evaluate→keep/discard→converge loop, the evaluator/ensemble, the PO review/interview, the floor/ceiling, and stakes-scaling are all unchanged. Topology templates in [`references/call-templates.md`](references/call-templates.md).
+
 ## The loop — one decision
 
 1. **Assess.** Take **stakes** from the card (PO-declared). Rate complexity by
@@ -150,8 +167,8 @@ convergence or ceiling.
 | Stakes (PO-declared) | Council shape | Evaluator | Max rounds | PO interaction |
 |---|---|---|---|---|
 | **Low** (prototype / internal / throwaway) | 1 research + 1 peer, 1 round | **none** (1 round, converges immediately) | 1 | none |
-| **Standard** (default) | 1 research + 1 peer (+1 if high complexity), ≤3 rounds | **single judge** (`verifier`) | 3 | **interview** — one live intercom `ask` before the ADR |
-| **High** (revenue / safety / brand / hard-to-reverse) | 1 research + 2-3 peers + critic, ≤5 rounds; `after:[synthesis, PO review]` per round | **ensemble of 3** (`verifier` ×3, averaged) | 5 | **review** card after each synthesis (product fit) **+ interview** (live ask) before the ADR |
+| **Standard** (default) | 2 research + 1 peer (+1 if high complexity), ≤3 rounds | **single judge** (`verifier`) | 3 | **interview** — one live intercom `ask` before the ADR |
+| **High** (revenue / safety / brand / hard-to-reverse) | 3 research + 2-3 peers + critic, ≤5 rounds; `after:[synthesis, PO review]` per round | **ensemble of 3** (`verifier` ×3, averaged) | 5 | **review** card after each synthesis (product fit) **+ interview** (live ask) before the ADR |
 
 The evaluator's **plateau threshold** (standard): score delta < 0.3 over 2
 consecutive rounds → converged. High-stakes ensemble: convergence requires
