@@ -123,6 +123,29 @@ LOOP_ENGINE = {
                     "when `phases` is supplied (each phase carries its own cap)."
                 ),
             },
+            "budget": {
+                "type": "integer",
+                "description": (
+                    "T4 layered exit: workflow-wide cost-unit budget. Each "
+                    "completed iteration consumes one cost unit "
+                    "(DEFAULT_ITERATION_COST). When the budget is exhausted "
+                    "before the DoD is met, the loop escalates to a human "
+                    "(sticky block_task kind=needs_input + a loop_escalated "
+                    "event) rather than terminating. Omit / null for no budget "
+                    "guard (the hard cap still bounds the loop)."
+                ),
+            },
+            "no_progress_threshold": {
+                "type": "integer",
+                "description": (
+                    "T4 layered exit: escalate when the verifier verdict is "
+                    "byte-identical across this many consecutive iterations "
+                    "(the replan is not making progress). Defaults to "
+                    "DEFAULT_NO_PROGRESS_THRESHOLD. Set higher to tolerate more "
+                    "repetition; set to a large value to effectively disable the "
+                    "guard."
+                ),
+            },
             "phases": {
                 "type": "array",
                 "description": (

@@ -156,6 +156,13 @@ class FakeKanbanDB:
         self.calls.append(("latest_run", (conn, task_id), {}))
         return self.run_for_task.get(task_id)
 
+    def _append_event(self, conn, task_id, kind, payload=None, *, run_id=None):
+        # Records the event-emission seam (T4 HITL escalation). Mirrors the real
+        # kanban_db._append_event signature: (conn, task_id, kind, payload, *, run_id).
+        self.calls.append(("_append_event",
+                           (conn, task_id, kind, payload),
+                           {"run_id": run_id}))
+
 
 # =============================================================================
 # Test helpers
@@ -340,6 +347,47 @@ def _loop_state_comment_phases(root_id, phases, phase_index=0,
     return _Comment("loop_engine", f"[swarm:blackboard] {payload}")
 
 
+# -- T4 (layered exits + HITL escalation) helpers ------------------------------
+
+def _blocks_with_kind(fake, kind):
+    """Return kwargs dicts for every block_task call matching `kind`."""
+    return [kw for (_a, kw) in _calls(fake, "block_task") if kw.get("kind") == kind]
+
+
+def _events(fake, kind):
+    """Return (args, kwargs) for every _append_event call whose event kind matches."""
+    return [(args, kw) for (m, args, kw) in fake.calls
+            if m == "_append_event" and args[2] == kind]
+
+
+def _loop_state_comment_budget(root_id, execution_card="t_exec",
+                               verifier_card="t_verifier",
+                               iteration_counter=1, max_iterations=10,
+                               budget=2, no_progress_threshold=2):
+    """T4 loop_state pre-seeded with budget + no-progress tracking fields."""
+    payload = json.dumps({
+        "key": "loop_state",
+        "value": {
+            "phase_index": 0,
+            "iteration_counter": iteration_counter,
+            "terminal_ids": [verifier_card],
+            "execution_card": execution_card,
+            "verifier_card": verifier_card,
+            "max_iterations": max_iterations,
+            "budget": budget,
+            "iteration_cost": 1,
+            "no_progress_threshold": no_progress_threshold,
+            "exit_counters": {
+                "hard_cap": 0,
+                "budget_remaining": budget,
+                "no_progress_streak": 0,
+            },
+            "last_state_hash": None,
+        },
+    })
+    return _Comment("loop_engine", f"[swarm:blackboard] {payload}")
+
+
 # =============================================================================
 # 1. Schema
 # =============================================================================
@@ -360,6 +408,13 @@ class TestSchema(unittest.TestCase):
     def test_execution_step_required_fields(self):
         step = le_schemas.LOOP_ENGINE["parameters"]["properties"]["execution"]
         self.assertEqual(set(step["required"]), {"assignee", "title", "body"})
+
+    def test_schema_has_t4_layered_exit_properties(self):
+        props = le_schemas.LOOP_ENGINE["parameters"]["properties"]
+        self.assertIn("budget", props)
+        self.assertEqual(props["budget"]["type"], "integer")
+        self.assertIn("no_progress_threshold", props)
+        self.assertEqual(props["no_progress_threshold"]["type"], "integer")
 
 
 # =============================================================================
@@ -618,6 +673,26 @@ class TestValidation(unittest.TestCase):
         self.assertIn("error", parsed)
         self.assertEqual(fake.calls, [],
                          "validation must not call kanban_db at all")
+
+    def test_invalid_budget_rejected(self):
+        fake = FakeKanbanDB(create_ids=[])
+        with patch.object(le_tools, "_kb", return_value=fake):
+            result = le_tools.loop_engine(
+                args={"goal": "x", "execution": _execution(),
+                      "budget": 0}, task_id="t_driver")
+        parsed = json.loads(result)
+        self.assertIn("error", parsed)
+        self.assertIn("budget", parsed["error"])
+
+    def test_invalid_no_progress_threshold_rejected(self):
+        fake = FakeKanbanDB(create_ids=[])
+        with patch.object(le_tools, "_kb", return_value=fake):
+            result = le_tools.loop_engine(
+                args={"goal": "x", "execution": _execution(),
+                      "no_progress_threshold": 0}, task_id="t_driver")
+        parsed = json.loads(result)
+        self.assertIn("error", parsed)
+        self.assertIn("no_progress_threshold", parsed["error"])
 
 
 class TestCompileCheck(unittest.TestCase):
@@ -907,12 +982,14 @@ class TestConvergeLoop(unittest.TestCase):
             "t_exec2", "t_verifier2",
             "t_exec3", "t_verifier3",
         ], run_for_task={
-            "t_verifier1": _verifier_run(_dod_verdict(dod_met=False,
-                                                     recommendation="replan")),
-            "t_verifier2": _verifier_run(_dod_verdict(dod_met=False,
-                                                     recommendation="replan")),
-            "t_verifier3": _verifier_run(_dod_verdict(dod_met=True,
-                                                     recommendation="advance")),
+            "t_verifier1": _verifier_run(_dod_verdict(
+                dod_met=False, recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                dod_met=False, recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
+            "t_verifier3": _verifier_run(_dod_verdict(
+                dod_met=True, recommendation="advance")),
         })
 
         # Invocation 1 — first: dispatch root + exec1 + verifier1, park.
@@ -949,8 +1026,12 @@ class TestConvergeLoop(unittest.TestCase):
             "t_exec2", "t_verifier2",
             "t_exec3", "t_verifier3",
         ], run_for_task={
-            "t_verifier1": _verifier_run(_dod_verdict(recommendation="replan")),
-            "t_verifier2": _verifier_run(_dod_verdict(recommendation="replan")),
+            "t_verifier1": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
             "t_verifier3": _verifier_run(_dod_verdict(dod_met=True)),
         })
         for _ in range(4):  # first + 3 re-invocations
@@ -966,14 +1047,16 @@ class TestConvergeLoop(unittest.TestCase):
 
 
 # =============================================================================
-# 12. T2 — hard-cap termination when DoD never met
+# 12. T2 — hard-cap escalation when DoD never met (T4: was complete/hard_cap,
+#     now a sticky HITL block + named event)
 # =============================================================================
 
 class TestHardCap(unittest.TestCase):
 
-    def test_hard_cap_terminates_when_dod_never_met(self):
-        """max_iterations=2; verifier always returns replan. After 2 attempts the
-        loop terminates with decision=hard_cap_reached."""
+    def test_hard_cap_escalates_when_dod_never_met(self):
+        """max_iterations=2; verifier always returns replan (distinct gaps each
+        iteration so the no-progress guard does not fire first). After 2
+        attempts the loop ESCALATES to a sticky HITL block (decision=hard_cap)."""
         args = {"goal": "impossible goal",
                 "execution": _execution_t2(),
                 "verifier": _verifier(),
@@ -982,8 +1065,12 @@ class TestHardCap(unittest.TestCase):
             "t_root", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
         ], run_for_task={
-            "t_verifier1": _verifier_run(_dod_verdict(recommendation="replan")),
-            "t_verifier2": _verifier_run(_dod_verdict(recommendation="replan")),
+            "t_verifier1": _verifier_run(_dod_verdict(
+                dod_met=False, recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                dod_met=False, recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
         })
 
         # Invocation 1 — first: dispatch attempt 1.
@@ -997,11 +1084,73 @@ class TestHardCap(unittest.TestCase):
         self.assertEqual(p2["decision"], "replan")
         self.assertEqual(p2["iteration"], 2)
 
-        # Invocation 3 — cap reached (2 < 2 is false): TERMINATE.
-        p3, _ = _run_with_fake(fake, args)
-        self.assertEqual(p3["status"], "complete")
-        self.assertEqual(p3["decision"], "hard_cap_reached")
+        # Invocation 3 — cap reached (2 < 2 is false): ESCALATE (sticky block).
+        p3, _ = _run_with_fake(fake, args, task_id="t_driver")
+        self.assertEqual(p3["status"], "escalated")
+        self.assertEqual(p3["decision"], "hard_cap")
         self.assertEqual(p3["iteration"], 2)
+
+    def test_hard_cap_emits_sticky_needs_input_block(self):
+        """The hard-cap escalation blocks the driver kind=needs_input (sticky —
+        recompute_ready will NOT auto-promote it; unblock_task is the resume)."""
+        args = {"goal": "impossible goal",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 2}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
+        })
+        for _ in range(3):  # first + replan + hard-cap escalation
+            _run_with_fake(fake, args, task_id="t_driver")
+        needs = _blocks_with_kind(fake, "needs_input")
+        self.assertEqual(len(needs), 1,
+                         "hard cap must emit exactly one sticky needs_input block")
+        self.assertEqual(needs[0]["kind"], "needs_input")
+        # The dependency parks are a DIFFERENT kind and must not be confused.
+        dep = _blocks_with_kind(fake, "dependency")
+        self.assertGreaterEqual(len(dep), 1)
+
+    def test_hard_cap_emits_named_loop_escalated_event(self):
+        """The escalation emits a named event describing what the human owes."""
+        args = {"goal": "impossible goal",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 2}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
+        })
+        for _ in range(3):
+            _run_with_fake(fake, args, task_id="t_driver")
+        events = _events(fake, "loop_escalated")
+        self.assertEqual(len(events), 1)
+        _args, _kw = events[0]
+        _conn, task_id, kind, payload = _args
+        self.assertEqual(task_id, "t_driver",
+                         "event lands on the blocked driver card")
+        self.assertEqual(kind, "loop_escalated")
+        self.assertEqual(payload["exit"], "hard_cap")
+        self.assertEqual(payload["phase_index"], 0)
+        self.assertEqual(payload["iteration"], 2)
+        self.assertIn("human_owes", payload)
+        self.assertIsInstance(payload["human_owes"], str)
+        self.assertTrue(payload["human_owes"],
+                         "human_owes must name what the human owes")
 
     def test_hard_cap_does_not_dispatch_new_cards(self):
         args = {"goal": "impossible goal",
@@ -1012,12 +1161,16 @@ class TestHardCap(unittest.TestCase):
             "t_root", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
         ], run_for_task={
-            "t_verifier1": _verifier_run(_dod_verdict(recommendation="replan")),
-            "t_verifier2": _verifier_run(_dod_verdict(recommendation="replan")),
+            "t_verifier1": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
         })
-        for _ in range(3):  # first + 2 re-invocations -> hard cap
+        for _ in range(3):  # first + 2 re-invocations -> hard cap escalation
             parsed, _ = _run_with_fake(fake, args)
-        self.assertEqual(parsed["decision"], "hard_cap_reached")
+        self.assertEqual(parsed["decision"], "hard_cap")
         # Only 2 execution cards dispatched (attempts 1 and 2); no 3rd.
         exec_cards = [c for c in _create_calls_new(fake)
                       if c["parents"] == ["t_root"]]
@@ -1290,6 +1443,414 @@ class TestMultiPhaseWorkflow(unittest.TestCase):
 
 
 # =============================================================================
+# 18. T4 — budget exhaustion escalates (layered exit)
+# =============================================================================
+
+class TestBudgetExhaustion(unittest.TestCase):
+
+    def test_budget_exhaustion_escalates_before_hard_cap(self):
+        """max_iterations=10 (effectively non-stop), budget=2. The budget guard
+        fires after 2 iterations, well before the hard cap. Distinct verdicts
+        each iteration so no-progress does not fire first."""
+        args = {"goal": "spendy goal",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 10,
+                "budget": 2}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(_dod_verdict(
+                dod_met=False, recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                dod_met=False, recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
+        })
+
+        p1, _ = _run_with_fake(fake, args)
+        self.assertEqual(p1["status"], "blocked")
+        p2, _ = _run_with_fake(fake, args)
+        self.assertEqual(p2["decision"], "replan")  # budget_remaining 1 > 0
+        p3, _ = _run_with_fake(fake, args, task_id="t_driver")
+        # budget_remaining hit 0 -> escalate, NOT replan and NOT hard cap.
+        self.assertEqual(p3["status"], "escalated")
+        self.assertEqual(p3["decision"], "budget_exhausted")
+
+    def test_budget_escalation_emits_sticky_block_and_event(self):
+        args = {"goal": "spendy goal",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 10,
+                "budget": 2}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
+        })
+        for _ in range(3):
+            _run_with_fake(fake, args, task_id="t_driver")
+        self.assertGreaterEqual(
+            len(_blocks_with_kind(fake, "needs_input")), 1)
+        events = _events(fake, "loop_escalated")
+        self.assertEqual(len(events), 1)
+        _args, _kw = events[0]
+        _conn, _tid, _kind, payload = _args
+        self.assertEqual(payload["exit"], "budget_exhausted")
+        self.assertEqual(payload["budget"], 2)
+        self.assertIn("human_owes", payload)
+
+    def test_no_budget_means_unbounded_by_budget(self):
+        """Without `budget`, the budget guard never fires (the hard cap still
+        bounds). Two replans under a high cap proceed normally, then advance."""
+        args = {"goal": "x",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 10}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+            "t_exec3", "t_verifier3",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
+            "t_verifier3": _verifier_run(
+                _dod_verdict(dod_met=True, recommendation="advance")),
+        })
+        # first + 3 re-invocations (replan, replan, advance).
+        for _ in range(4):
+            parsed, _ = _run_with_fake(fake, args, task_id="t_driver")
+        # No budget guard -> replans proceed; converges on iteration 3.
+        self.assertEqual(parsed["decision"], "advance")
+        # No escalation primitives touched.
+        self.assertEqual(_blocks_with_kind(fake, "needs_input"), [])
+        self.assertEqual(_events(fake, "loop_escalated"), [])
+
+
+# =============================================================================
+# 19. T4 — no-progress streak escalates (layered exit)
+# =============================================================================
+
+class TestNoProgress(unittest.TestCase):
+
+    def test_no_progress_streak_escalates(self):
+        """Identical verifier verdicts across consecutive iterations signal a
+        dead end. With threshold=2, the third identical verdict trips the
+        no-progress guard (distinct from the hard cap, which is set high)."""
+        identical = _dod_verdict(dod_met=False, recommendation="replan",
+                                 gaps=[{"dimension": "tests",
+                                        "issue": "same gap every time"}])
+        args = {"goal": "stuck goal",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 10,
+                "no_progress_threshold": 2}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+            "t_exec3", "t_verifier3",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(dict(identical)),
+            "t_verifier2": _verifier_run(dict(identical)),
+            "t_verifier3": _verifier_run(dict(identical)),
+        })
+        # iter 1 -> replan (streak 0); iter 2 -> replan (streak 1);
+        # iter 3 -> escalate (streak 2 == threshold).
+        p1, _ = _run_with_fake(fake, args)
+        self.assertEqual(p1["status"], "blocked")
+        p2, _ = _run_with_fake(fake, args)
+        self.assertEqual(p2["decision"], "replan")
+        p3, _ = _run_with_fake(fake, args, task_id="t_driver")
+        self.assertEqual(p3["status"], "escalated")
+        self.assertEqual(p3["decision"], "no_progress")
+
+    def test_no_progress_escalation_emits_sticky_block_and_event(self):
+        identical = _dod_verdict(dod_met=False, recommendation="replan",
+                                 gaps=[{"dimension": "x", "issue": "stuck"}])
+        args = {"goal": "stuck goal",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 10,
+                "no_progress_threshold": 2}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+            "t_exec3", "t_verifier3",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(dict(identical)),
+            "t_verifier2": _verifier_run(dict(identical)),
+            "t_verifier3": _verifier_run(dict(identical)),
+        })
+        for _ in range(3):
+            _run_with_fake(fake, args, task_id="t_driver")
+        self.assertGreaterEqual(
+            len(_blocks_with_kind(fake, "needs_input")), 1)
+        events = _events(fake, "loop_escalated")
+        self.assertEqual(len(events), 1)
+        _args, _kw = events[0]
+        _conn, _tid, _kind, payload = _args
+        self.assertEqual(payload["exit"], "no_progress")
+
+    def test_progress_resets_streak(self):
+        """A changing verdict resets the no-progress streak to 0, so a loop that
+        is genuinely iterating never trips the guard."""
+        args = {"goal": "iterating goal",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 10,
+                "no_progress_threshold": 2}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+            "t_exec3", "t_verifier3",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
+            "t_verifier3": _verifier_run(
+                _dod_verdict(dod_met=True, recommendation="advance")),
+        })
+        # first + 3 re-invocations (replan, replan, advance).
+        for _ in range(4):
+            parsed, _ = _run_with_fake(fake, args, task_id="t_driver")
+        # Distinct verdicts -> streak never reaches threshold -> advance.
+        self.assertEqual(parsed["decision"], "advance")
+        self.assertEqual(_events(fake, "loop_escalated"), [])
+
+
+# =============================================================================
+# 20. T4 — verifier recommendation="escalate" routes to HITL escalation
+# =============================================================================
+
+class TestVerifierEscalate(unittest.TestCase):
+
+    def test_verifier_escalate_routes_to_sticky_block(self):
+        """When the verifier's verdict recommends escalation, the driver
+        escalates immediately (sticky block + named event) — no replan."""
+        seeded = _loop_state_comment_verifier(
+            "t_root", execution_card="t_exec", verifier_card="t_verifier",
+            iteration_counter=1, max_iterations=5)
+        verdict = _dod_verdict(dod_met=False, recommendation="escalate",
+                               gaps=[{"dimension": "auth",
+                                      "issue": "needs human decision"}])
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+            task_id="t_driver",
+        )
+        self.assertEqual(parsed["status"], "escalated")
+        self.assertEqual(parsed["decision"], "verifier_escalate")
+        self.assertGreaterEqual(
+            len(_blocks_with_kind(fake, "needs_input")), 1)
+        events = _events(fake, "loop_escalated")
+        self.assertEqual(len(events), 1)
+        _args, _kw = events[0]
+        _conn, _tid, _kind, payload = _args
+        self.assertEqual(payload["exit"], "verifier_escalate")
+        self.assertEqual(payload["phase_index"], 0)
+
+    def test_verifier_escalate_does_not_replan(self):
+        """Escalation must NOT dispatch a fresh execution/verifier pair."""
+        seeded = _loop_state_comment_verifier(
+            "t_root", execution_card="t_exec", verifier_card="t_verifier",
+            iteration_counter=1, max_iterations=5)
+        verdict = _dod_verdict(dod_met=False, recommendation="escalate")
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+            task_id="t_driver",
+        )
+        # No new execution or verifier cards dispatched.
+        self.assertEqual(len(_create_calls_new(fake)), 0)
+
+
+# =============================================================================
+# 21. T4 — DoD-met still completes normally (no escalation regression)
+# =============================================================================
+
+class TestDoDMetNoEscalation(unittest.TestCase):
+
+    def test_dod_met_completes_without_escalation_primitives(self):
+        """A DoD-met advance must NOT touch the escalation primitives (no sticky
+        block, no loop_escalated event). Confirms the happy path is unchanged."""
+        seeded = _loop_state_comment_verifier(
+            "t_root", execution_card="t_exec", verifier_card="t_verifier",
+            iteration_counter=1)
+        verdict = _dod_verdict(dod_met=True, score=1.0,
+                               recommendation="advance")
+        parsed, fake = _run_handler(
+            args={"goal": "fix the bug",
+                  "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+            task_id="t_driver",
+        )
+        self.assertEqual(parsed["status"], "complete")
+        self.assertEqual(parsed["decision"], "advance")
+        self.assertEqual(_blocks_with_kind(fake, "needs_input"), [],
+                         "DoD-met must not sticky-block the driver")
+        self.assertEqual(_events(fake, "loop_escalated"), [],
+                         "DoD-met must not emit a loop_escalated event")
+
+    def test_converge_loop_advances_without_escalation(self):
+        """A 2-replan-then-advance converge loop never escalates (streak stays
+        under the default threshold of 2)."""
+        args = {"goal": "fix the flake",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 5}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+            "t_exec3", "t_verifier3",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(_dod_verdict(
+                dod_met=False, recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                dod_met=False, recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
+            "t_verifier3": _verifier_run(
+                _dod_verdict(dod_met=True, recommendation="advance")),
+        })
+        for _ in range(4):
+            parsed, _ = _run_with_fake(fake, args, task_id="t_driver")
+        self.assertEqual(parsed["decision"], "advance")
+        self.assertEqual(_events(fake, "loop_escalated"), [])
+
+
+# =============================================================================
+# 22. T4 — stop-condition-optional (non-stop) mode is still bounded by the caps
+# =============================================================================
+
+class TestNonStopBounded(unittest.TestCase):
+
+    def test_non_stop_mode_bounded_by_budget(self):
+        """max_iterations=100 (non-stop intent) is still bounded: budget=2 trips
+        first. No loop runs unbounded (loop-engineering tenet)."""
+        args = {"goal": "force converge",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 100,
+                "budget": 2}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
+        })
+        for _ in range(3):
+            parsed, _ = _run_with_fake(fake, args, task_id="t_driver")
+        self.assertEqual(parsed["status"], "escalated")
+        self.assertEqual(parsed["decision"], "budget_exhausted")
+        # Never reached anywhere near the 100-iteration cap.
+        self.assertLess(parsed["iteration"], 100)
+
+    def test_non_stop_mode_bounded_by_no_progress(self):
+        """max_iterations=100 (non-stop) bounded by no-progress instead."""
+        identical = _dod_verdict(dod_met=False, recommendation="replan",
+                                 gaps=[{"dimension": "x", "issue": "stuck"}])
+        args = {"goal": "force converge",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 100,
+                "no_progress_threshold": 2}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+            "t_exec3", "t_verifier3",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(dict(identical)),
+            "t_verifier2": _verifier_run(dict(identical)),
+            "t_verifier3": _verifier_run(dict(identical)),
+        })
+        for _ in range(3):
+            parsed, _ = _run_with_fake(fake, args, task_id="t_driver")
+        self.assertEqual(parsed["status"], "escalated")
+        self.assertEqual(parsed["decision"], "no_progress")
+        self.assertLess(parsed["iteration"], 100)
+
+    def test_non_stop_mode_bounded_by_hard_cap(self):
+        """With no budget and changing verdicts, the hard cap is the final
+        deterministic backstop — non-stop mode still terminates."""
+        args = {"goal": "force converge",
+                "execution": _execution_t2(),
+                "verifier": _verifier(),
+                "max_iterations": 2}
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_exec1", "t_verifier1",
+            "t_exec2", "t_verifier2",
+        ], run_for_task={
+            "t_verifier1": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "a", "issue": "1"}])),
+            "t_verifier2": _verifier_run(_dod_verdict(
+                recommendation="replan",
+                gaps=[{"dimension": "b", "issue": "2"}])),
+        })
+        for _ in range(3):
+            parsed, _ = _run_with_fake(fake, args, task_id="t_driver")
+        self.assertEqual(parsed["status"], "escalated")
+        self.assertEqual(parsed["decision"], "hard_cap")
+
+
+# =============================================================================
+# 23. T4 — resume path: sticky block confirmed (unblock_task is the only exit)
+# =============================================================================
+
+class TestResumePath(unittest.TestCase):
+
+    def test_escalation_reason_names_needs_input_for_resume(self):
+        """The sticky block uses kind=needs_input, which _has_sticky_block
+        treats as human-gated: recompute_ready will NOT auto-promote it.
+        unblock_task is the documented resume path."""
+        seeded = _loop_state_comment_verifier(
+            "t_root", execution_card="t_exec", verifier_card="t_verifier",
+            iteration_counter=1, max_iterations=2)
+        verdict = _dod_verdict(dod_met=False, recommendation="escalate")
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+            task_id="t_driver",
+        )
+        needs = _blocks_with_kind(fake, "needs_input")
+        self.assertEqual(len(needs), 1)
+        # The response names the resume mechanism so the caller/human knows.
+        self.assertEqual(parsed["resume_via"], "unblock_task")
+        self.assertTrue(parsed["sticky_block"])
+
+
+# =============================================================================
 # Runner
 # =============================================================================
 
@@ -1317,6 +1878,12 @@ if __name__ == "__main__":
         TestPhaseAdvance,
         TestPhaseWorkflowComplete,
         TestMultiPhaseWorkflow,
+        TestBudgetExhaustion,
+        TestNoProgress,
+        TestVerifierEscalate,
+        TestDoDMetNoEscalation,
+        TestNonStopBounded,
+        TestResumePath,
     ]
 
     for cls in test_classes:

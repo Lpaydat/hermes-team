@@ -64,6 +64,16 @@ MAX_PHASE_STEPS = 1
 # deterministic backstop that bounds the loop even when the DoD is never met.
 DEFAULT_MAX_ITERATIONS = 5
 
+# T4: layered-exit guards. The hard cap (max_iterations) is the deterministic
+# backstop; budget + no-progress are additional early-break exits. ALL THREE
+# route to a sticky HITL block (block_task kind=needs_input) — termination must
+# not depend on the model (loop-engineering core tenet; SPEC §Termination is
+# safety-critical, therefore deterministic). No loop runs unbounded, even in
+# stop-condition-optional / non-stop mode.
+DEFAULT_BUDGET = None              # None = no budget guard (hard cap still bounds).
+DEFAULT_ITERATION_COST = 1         # cost units consumed per completed iteration.
+DEFAULT_NO_PROGRESS_THRESHOLD = 2  # N consecutive identical verdict hashes.
+
 
 # ── kanban_db bridge ──────────────────────────────────────────────────────────
 
@@ -102,16 +112,20 @@ def _author(**kwargs):
 
 
 def _idempotency_key(my_card_id, run_id, goal):
-    """Stable dedup key for the root card (mirrors kanban_chains).
+    """Stable dedup key for the root card.
 
-    Keyed on the driver card + this dispatch's run, so a retry WITHIN a
-    dispatch recovers the same root, while a fresh dispatch starts fresh.
-    Falls back to a goal hash when no run id is available.
+    Keyed on the driver card + the goal so the root (and its loop_state
+    blackboard) is RECOVERED across re-dispatches of the same workflow. The
+    converge loop's durability model requires the root to be stable across
+    runs: ``block_task(kind="dependency")`` closes the current run, so a
+    re-promoted driver is re-claimed into a NEW run with a different run_id.
+    A run-based key would orphan loop_state on every re-invoke; the goal hash
+    keeps the root stable (the driver is stateless between promotions; SPEC
+    §State). Different goals yield different hashes, and a driver runs one
+    workflow at a time, so there is no collision risk. ``run_id`` is accepted
+    for signature compatibility but does not participate in the key.
     """
-    if run_id is not None:
-        salt = str(run_id)
-    else:
-        salt = hashlib.sha1(goal.encode("utf-8")).hexdigest()[:10]
+    salt = hashlib.sha1(goal.encode("utf-8")).hexdigest()[:10]
     return f"loop:{my_card_id}:{salt}"
 
 
@@ -217,6 +231,16 @@ def _validate(args):
         if isinstance(max_iter, bool) or not isinstance(max_iter, int) \
                 or max_iter < 1:
             return "max_iterations must be a positive integer"
+    budget = args.get("budget")
+    if budget is not None:
+        if isinstance(budget, bool) or not isinstance(budget, int) \
+                or budget < 1:
+            return "budget must be a positive integer"
+    threshold = args.get("no_progress_threshold")
+    if threshold is not None:
+        if isinstance(threshold, bool) or not isinstance(threshold, int) \
+                or threshold < 1:
+            return "no_progress_threshold must be a positive integer"
     return None
 
 
@@ -316,6 +340,136 @@ def _park_failure(root_id, exec_id, verifier_id, terminal_id, run_id):
     return json.dumps(body)
 
 
+# ── T4: layered exits + HITL escalation ───────────────────────────────────────
+
+
+def _state_hash(verdict):
+    """Stable hash of the verifier verdict — the phase-state signal for
+    no-progress detection.
+
+    Identical verdicts across consecutive iterations mean the replan did not
+    change the phase state (the loop is circling). Returns a stable string so
+    it serializes cleanly into loop_state. The hash is NOT security-sensitive
+    — sha1 is used only as a canonical digest."""
+    if verdict is None:
+        return "none"
+    try:
+        canonical = json.dumps(verdict, sort_keys=True, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return "unhashable"
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
+
+
+def _human_owes(exit_reason, phase_index, iteration_counter, cap=None,
+                budget=None, threshold=None, verdict=None):
+    """Human-readable description of exactly what the human owes for each exit.
+
+    Carried in the named event payload so a human unblocks precisely (SPEC user
+    story 21: "name exactly what input or decision I owe")."""
+    if exit_reason == "hard_cap":
+        return (f"Phase {phase_index} exhausted its hard cap of {cap} "
+                f"iterations (iteration {iteration_counter}) without meeting "
+                f"the DoD. Review the phase DoD, revise the approach, or raise "
+                f"the cap, then unblock.")
+    if exit_reason == "budget_exhausted":
+        return (f"Phase {phase_index} exhausted its budget of {budget} cost "
+                f"units at iteration {iteration_counter}. Review spend, raise "
+                f"the budget, or descope, then unblock.")
+    if exit_reason == "no_progress":
+        return (f"Phase {phase_index} produced identical verifier verdicts "
+                f"across {threshold} consecutive iterations at iteration "
+                f"{iteration_counter} (no convergence). Revise the approach "
+                f"or the DoD, then unblock.")
+    if exit_reason == "verifier_escalate":
+        gaps = (verdict or {}).get("gaps")
+        return (f"Phase {phase_index} verifier recommended escalation at "
+                f"iteration {iteration_counter}. Address the gaps ({gaps}), "
+                f"then unblock.")
+    return (f"Phase {phase_index} loop escalated ({exit_reason}) at iteration "
+            f"{iteration_counter}. Review and unblock.")
+
+
+def _escalate(kb, conn, root_id, loop_state, author, run_id, my_card_id,
+              exit_reason, phase_index, iteration_counter, cap=None,
+              budget=None, threshold=None, verdict=None):
+    """Route a layered-exit trip to the HITL escalation.
+
+    Two board actions, both required:
+      1. ``block_task(kind="needs_input")`` — sticky. ``_has_sticky_block``
+         prevents ``recompute_ready`` from auto-promoting it, so the block
+         spans multi-hour waits natively. ``unblock_task`` is the ONLY resume.
+      2. ``_append_event(kind="loop_escalated", payload={...})`` — a named
+         event describing exactly what the human owes (which exit, which phase,
+         which iteration, the gaps/budget/cap as relevant).
+
+    Records the fired exit in ``loop_state.exit_counters`` and persists the
+    state. Returns the JSON escalation response. Termination is deterministic:
+    this is plugin code, not model-enforced (SPEC §Termination is
+    safety-critical, therefore deterministic).
+    """
+    exit_counters = loop_state.get("exit_counters") or {}
+    exit_counters[exit_reason] = exit_counters.get(exit_reason, 0) + 1
+    loop_state["exit_counters"] = exit_counters
+    loop_state["status"] = "escalated"
+    loop_state["exit_reason"] = exit_reason
+    _write_blackboard(kb, conn, root_id, author, "loop_state", loop_state)
+
+    owes = _human_owes(exit_reason, phase_index, iteration_counter,
+                       cap=cap, budget=budget, threshold=threshold,
+                       verdict=verdict)
+
+    # 1. Sticky block: kind=needs_input routes to `blocked` and is sticky —
+    #    recompute_ready will NOT auto-promote (the human must unblock_task).
+    reason = f"loop_escalation:{exit_reason}:phase_{phase_index}"
+    kb.block_task(conn, my_card_id, reason=reason, kind="needs_input",
+                  expected_run_id=run_id)
+
+    # 2. Named event: exactly what the human owes (which exit, which phase...).
+    payload = {
+        "exit": exit_reason,
+        "phase_index": phase_index,
+        "iteration": iteration_counter,
+        "root_id": root_id,
+        "human_owes": owes,
+    }
+    if cap is not None:
+        payload["cap"] = cap
+    if budget is not None:
+        payload["budget"] = budget
+    if threshold is not None:
+        payload["no_progress_threshold"] = threshold
+    if verdict is not None:
+        payload["verdict"] = verdict
+    kb._append_event(conn, my_card_id, "loop_escalated", payload,
+                     run_id=run_id)
+
+    body = {
+        "status": "escalated",
+        "decision": exit_reason,
+        "root_id": root_id,
+        "phase_index": phase_index,
+        "iteration": iteration_counter,
+        "exit_counters": exit_counters,
+        "human_owes": owes,
+        "sticky_block": True,
+        "resume_via": "unblock_task",
+        "message": (
+            f"Layered exit '{exit_reason}' fired at phase {phase_index}, "
+            f"iteration {iteration_counter}. Driver sticky-blocked "
+            f"(kind=needs_input); a human must unblock_task to resume."
+        ),
+    }
+    if cap is not None:
+        body["cap"] = cap
+    if budget is not None:
+        body["budget"] = budget
+    if threshold is not None:
+        body["no_progress_threshold"] = threshold
+    if verdict is not None:
+        body["verdict"] = verdict
+    return json.dumps(body, indent=2)
+
+
 # ── Handler ───────────────────────────────────────────────────────────────────
 
 
@@ -344,6 +498,8 @@ def loop_engine(args: dict, **kwargs) -> str:
     execution = args.get("execution")
     verifier = args.get("verifier")
     max_iterations = args.get("max_iterations")
+    budget = args.get("budget")
+    no_progress_threshold = args.get("no_progress_threshold")
     author = _author(**kwargs)
 
     kb = _kb()
@@ -371,6 +527,7 @@ def loop_engine(args: dict, **kwargs) -> str:
             return _first_invocation(
                 kb, conn, root_id, goal, execution, author,
                 my_card_id, run_id, verifier, max_iterations, phases,
+                budget, no_progress_threshold,
             )
 
         return _reinvoke(
@@ -380,13 +537,18 @@ def loop_engine(args: dict, **kwargs) -> str:
 
 
 def _first_invocation(kb, conn, root_id, goal, execution, author,
-                      my_card_id, run_id, verifier, max_iterations, phases):
+                      my_card_id, run_id, verifier, max_iterations, phases,
+                      budget=None, no_progress_threshold=None):
     """Build root + execution (+ optional verifier), write loop_state, park.
 
     When ``phases`` is supplied (T3 multi-phase), the first phase's specs are
     resolved from ``phases[0]`` and the full phase plan is stored in
     loop_state. Otherwise the top-level execution/verifier/max_iterations
     drive a single phase (backward compat with T1/T2).
+
+    T4: the verifier-gated branch seeds ``exit_counters`` (budget_remaining +
+    no-progress tracking) so the layered-exit guards are active from the first
+    iteration. The T1 spine is unchanged (no verifier, no converge loop).
     """
     # Complete the root FIRST so the execution card is `ready` immediately
     # (mirrors kanban_chains: complete root, then create children).
@@ -444,6 +606,11 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
     verifier_id = _create_verifier_card(kb, conn, exec_id, verifier_spec, author)
     cap = phase_cap or DEFAULT_MAX_ITERATIONS
 
+    resolved_budget = (int(budget) if budget is not None else None)
+    resolved_threshold = (int(no_progress_threshold)
+                          if no_progress_threshold is not None
+                          else DEFAULT_NO_PROGRESS_THRESHOLD)
+
     loop_state = {
         "phase_index": 0,
         "iteration_counter": 1,
@@ -451,6 +618,15 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
         "execution_card": exec_id,
         "verifier_card": verifier_id,
         "max_iterations": cap,
+        "budget": resolved_budget,
+        "iteration_cost": DEFAULT_ITERATION_COST,
+        "no_progress_threshold": resolved_threshold,
+        "exit_counters": {
+            "hard_cap": 0,
+            "budget_remaining": resolved_budget,
+            "no_progress_streak": 0,
+        },
+        "last_state_hash": None,
     }
     if phases is not None:
         loop_state["phases"] = phases
@@ -614,49 +790,80 @@ def _reinvoke_verifier(kb, conn, root_id, loop_state, author, run_id,
             ),
         }, indent=2)
 
-    # Escalate: the verifier explicitly asked for a human (deferred as a later
-    # SPEC refinement — for now we surface it so the caller can act).
+    # ── T4: layered-exit counter tracking ────────────────────────────────────
+    # Update no-progress streak + budget_remaining from this iteration's verdict
+    # BEFORE deciding. These are deterministic, plugin-code guards — termination
+    # must not depend on the model (SPEC §Termination is safety-critical).
+    phase_index = int(loop_state.get("phase_index", 0))
+    budget = loop_state.get("budget")  # None = no budget guard
+    iteration_cost = int(loop_state.get("iteration_cost")
+                         or DEFAULT_ITERATION_COST)
+    threshold = int(loop_state.get("no_progress_threshold")
+                    or DEFAULT_NO_PROGRESS_THRESHOLD)
+    exit_counters = loop_state.get("exit_counters") or {}
+    budget_remaining = exit_counters.get("budget_remaining")  # None or int
+    last_state_hash = loop_state.get("last_state_hash")
+
+    cur_hash = _state_hash(verdict)
+    if cur_hash == last_state_hash:
+        no_progress_streak = int(
+            exit_counters.get("no_progress_streak", 0)) + 1
+    else:
+        # Current verdict is the first of a potential new run. A streak of N
+        # means N consecutive iterations (including this one) produced the same
+        # verdict — threshold=2 fires on the 2nd identical verdict in a row.
+        no_progress_streak = 1
+    exit_counters["no_progress_streak"] = no_progress_streak
+
+    # Account for the iteration that just completed.
+    if budget_remaining is not None:
+        budget_remaining = budget_remaining - iteration_cost
+        exit_counters["budget_remaining"] = budget_remaining
+
+    loop_state["exit_counters"] = exit_counters
+    loop_state["last_state_hash"] = cur_hash
+    _write_blackboard(kb, conn, root_id, author, "loop_state", loop_state)
+
+    # ── T4: layered exits (all route to the sticky HITL escalation) ──────────
+    # Order: explicit verifier-escalate → budget → no-progress → hard cap.
+    # A DoD-met advance already returned above (the success path is unchanged).
+
+    # Escalate: the verifier explicitly asked for a human.
     if recommendation == "escalate":
-        return json.dumps({
-            "status": "escalate",
-            "decision": "escalate",
-            "root_id": root_id,
-            "execution_card": exec_id,
-            "verifier_card": verifier_id,
-            "iteration": iteration_counter,
-            "verdict": verdict,
-            "message": (
-                "Verifier recommends escalation to a human; pausing the "
-                "verifier-gated loop."
-            ),
-        }, indent=2)
+        return _escalate(kb, conn, root_id, loop_state, author, run_id,
+                         my_card_id, "verifier_escalate", phase_index,
+                         iteration_counter, cap=cap, budget=budget,
+                         threshold=threshold, verdict=verdict)
 
-    # Replan while the iteration count is under the hard cap; otherwise the
-    # deterministic cap terminates the loop (termination must not depend on the
-    # model — loop engineering core tenet).
-    if iteration_counter < cap:
-        # Resolve the current phase's specs for replan (multi-phase uses the
-        # phase plan stored in loop_state; single-phase uses the top-level
-        # execution/verifier).
-        replan_exec, replan_verifier = _resolve_phase_specs(
-            loop_state, execution, verifier)
-        return _replan(kb, conn, root_id, loop_state, author, run_id,
-                       my_card_id, replan_exec, replan_verifier,
-                       iteration_counter, cap, verdict)
+    # Budget exhausted: cannot afford another iteration.
+    if budget_remaining is not None and budget_remaining <= 0:
+        return _escalate(kb, conn, root_id, loop_state, author, run_id,
+                         my_card_id, "budget_exhausted", phase_index,
+                         iteration_counter, cap=cap, budget=budget,
+                         threshold=threshold, verdict=verdict)
 
-    return json.dumps({
-        "status": "complete",
-        "decision": "hard_cap_reached",
-        "root_id": root_id,
-        "execution_card": exec_id,
-        "verifier_card": verifier_id,
-        "iteration": iteration_counter,
-        "verdict": verdict,
-        "message": (
-            f"Hard cap {cap} reached without DoD met; terminating the "
-            f"verifier-gated loop."
-        ),
-    }, indent=2)
+    # No-progress: identical verdicts across the threshold streak.
+    if no_progress_streak >= threshold:
+        return _escalate(kb, conn, root_id, loop_state, author, run_id,
+                         my_card_id, "no_progress", phase_index,
+                         iteration_counter, cap=cap, budget=budget,
+                         threshold=threshold, verdict=verdict)
+
+    # Hard cap: the deterministic backstop (replaces the old
+    # status=complete/decision=hard_cap_reached with a sticky HITL block).
+    if iteration_counter >= cap:
+        return _escalate(kb, conn, root_id, loop_state, author, run_id,
+                         my_card_id, "hard_cap", phase_index,
+                         iteration_counter, cap=cap, budget=budget,
+                         threshold=threshold, verdict=verdict)
+
+    # Replan while the iteration count is under the hard cap; the deterministic
+    # caps above bound the loop even in stop-condition-optional / non-stop mode.
+    replan_exec, replan_verifier = _resolve_phase_specs(
+        loop_state, execution, verifier)
+    return _replan(kb, conn, root_id, loop_state, author, run_id,
+                   my_card_id, replan_exec, replan_verifier,
+                   iteration_counter, cap, verdict)
 
 
 def _resolve_phase_specs(loop_state, execution, verifier):
@@ -726,6 +933,12 @@ def _advance_phase(kb, conn, root_id, loop_state, author, run_id,
     loop_state["verifier_card"] = verifier_id
     loop_state["terminal_ids"] = [verifier_id]
     loop_state["max_iterations"] = cap
+    # T4: reset per-phase no-progress tracking for the new phase (budget is
+    # workflow-wide and carries over via exit_counters.budget_remaining).
+    ec = loop_state.get("exit_counters") or {}
+    ec["no_progress_streak"] = 0
+    loop_state["exit_counters"] = ec
+    loop_state["last_state_hash"] = None
     _write_blackboard(kb, conn, root_id, author, "loop_state", loop_state)
 
     state = _park_driver(kb, conn, my_card_id, verifier_id, run_id)
