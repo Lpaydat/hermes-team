@@ -37,6 +37,16 @@ the architectural dimensions as a **coverage checklist**, not as fan-out
 cards: data model, security/auth, infrastructure/deployment, API surface,
 cross-cutting. Ensure your decision set covers each dimension that applies.
 
+**Defect coverage — trace every stated behavior, not just the first gap.** When
+you validate or challenge an existing design (or your own synthesis), enumerate
+**every behavior the brief or ADR states** and derive **each one's failure
+implication**, then synthesize the **combined** failure. Do not stop at the
+first contradiction or defect — a single design can carry **multiple distinct
+latent defects**, and finding one does not exhaust the search. The evaluator
+scores general quality, not exhaustive defect-coverage, so it may not flag a
+missed second defect; the thoroughness is yours to enforce. Keep tracing stated
+behaviors until each one's failure mode is either named or provably absent.
+
 ## The loop — one decision
 
 1. **Assess.** Take **stakes** from the card (PO-declared). Rate complexity by
