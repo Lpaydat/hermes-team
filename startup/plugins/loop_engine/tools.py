@@ -40,6 +40,22 @@ The engine is TOOL-driven, not hook-driven: it reads board state on its own
 promotion, so the verified recompute_ready ordering hazard (dependents promote
 BEFORE the kanban_task_completed hook fires) is irrelevant here. The observer
 hook registered in __init__.py is telemetry-only.
+
+T5 — runner profile config + fallback. A workflow may declare a ``runner``
+profile (e.g. ``debugger``) — the profile that should drive the loop and that
+execution/verifier cards default to when they do not name their own assignee.
+A single resolver (:func:`_resolve_runner`) implements the resolution order
+**configured runner -> worker -> default** and is the ONLY assignee-resolution
+path. The resolved runner is stored in ``loop_state`` (durable across replans /
+phase advances) and applied to every card via :func:`_resolve_assignee`; a card
+that sets its own ``assignee`` overrides the runner default.
+
+Driver-card bootstrap: this tool runs *inside* the driver's worker, so the
+driver card is created by the bootstrap CALLER (not by this tool). The caller
+sets the driver card's assignee using the SAME resolver
+(``_resolve_runner(runner, known_profiles=_known_profiles())``) so the driver
+matches the workflow's runner — the engine does not (cannot) set it after the
+fact.
 """
 
 import hashlib
@@ -73,6 +89,15 @@ DEFAULT_MAX_ITERATIONS = 5
 DEFAULT_BUDGET = None              # None = no budget guard (hard cap still bounds).
 DEFAULT_ITERATION_COST = 1         # cost units consumed per completed iteration.
 DEFAULT_NO_PROGRESS_THRESHOLD = 2  # N consecutive identical verdict hashes.
+
+# T5: runner profile resolution. A workflow may declare a `runner` profile
+# (e.g. "debugger") — the profile that should drive the loop and that
+# execution/verifier cards default to when they do not name their own assignee.
+# Resolution order: configured runner -> worker -> default. ``worker`` and
+# ``default`` are LOGICAL fallback names (not necessarily real profile dirs);
+# a deployment steers the fallback by declaring its known-profile set.
+DEFAULT_RUNNER = "worker"   # the first fallback when no runner is configured.
+RUNNER_FALLBACK = "default"  # the unconditional last resort.
 
 
 # ── kanban_db bridge ──────────────────────────────────────────────────────────
@@ -109,6 +134,78 @@ def _my_card_id(**kwargs):
 
 def _author(**kwargs):
     return kwargs.get("_profile") or "loop_engine"
+
+
+# ── T5: runner profile resolution ─────────────────────────────────────────────
+
+
+def _known_profiles():
+    """Return the set of profile names this deployment recognizes, or None.
+
+    When None, :func:`_resolve_runner` accepts any non-empty candidate, so the
+    effective chain is ``runner -> worker`` (``default`` is the unconditional
+    last resort). Set the ``HERMES_KNOWN_PROFILES`` env var (comma-separated
+    profile names) to restrict the set so an unknown configured runner falls
+    back to ``worker``, and an unknown ``worker`` falls back to ``default``.
+    Returns None when unset / blank / unparseable.
+
+    This is the deployment-configurable seam for the fallback chain; tests and
+    deployments may also call :func:`_resolve_runner` with ``known_profiles``
+    directly.
+    """
+    raw = os.environ.get("HERMES_KNOWN_PROFILES")
+    if not raw or not raw.strip():
+        return None
+    names = {p.strip() for p in raw.split(",") if p.strip()}
+    return names or None
+
+
+def _resolve_runner(runner=None, known_profiles=None):
+    """Resolve the workflow's runner profile — the default card assignee.
+
+    T5. This is the SINGLE resolver used for every card the engine creates.
+    Resolution order (first AVAILABLE candidate wins):
+
+        configured runner  ->  worker  ->  default
+
+    A candidate is *available* when it is a non-empty string AND
+    (``known_profiles is None`` OR ``known_profiles`` contains it). When
+    ``known_profiles`` is None every non-empty candidate is accepted, so the
+    effective chain is ``runner -> worker``. Supply a known-profile set (the
+    deployment's real profile names) so an unknown configured runner falls back
+    to ``worker``, and an unknown ``worker`` falls back to ``default``.
+
+    ``default`` is the unconditional last resort: if no candidate is available
+    it is returned regardless, so a card is never created without an assignee.
+
+    Driver-card bootstrap: the engine tool runs *inside* the driver's worker,
+    so the driver card is created by the bootstrap CALLER (not by this tool).
+    The caller should use this same resolver to set the driver card's assignee
+    so the driver matches the workflow's runner (SPEC §Implementation
+    Decisions, "Runner assignment").
+    """
+    chain = []
+    if runner and isinstance(runner, str) and runner.strip():
+        chain.append(runner.strip())
+    chain.append(DEFAULT_RUNNER)
+    for candidate in chain:
+        if candidate and (known_profiles is None or candidate in known_profiles):
+            return candidate
+    return RUNNER_FALLBACK
+
+
+def _resolve_assignee(spec, resolved_runner):
+    """Per-card assignee: an explicit card assignee wins; else the resolved runner.
+
+    A card (execution or verifier spec) may omit ``assignee`` to inherit the
+    workflow's resolved runner (T5). An explicit, non-empty assignee always
+    overrides the runner default — so a phase that needs a different profile
+    (e.g. verifier on the ``verifier`` profile) just names it.
+    """
+    explicit = spec.get("assignee") if isinstance(spec, dict) else None
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit
+    return resolved_runner
 
 
 def _idempotency_key(my_card_id, run_id, goal):
@@ -168,7 +265,12 @@ def _write_blackboard(kb, conn, root_id, author, key, value):
 
 
 def _validate_phases(phases):
-    """Validate the T3 multi-phase `phases` list."""
+    """Validate the T3 multi-phase `phases` list.
+
+    T5: ``assignee`` is OPTIONAL on each execution/verifier spec — the resolved
+    runner (configured -> worker -> default) fills it in at card-creation time.
+    When ``assignee`` IS supplied it must be a non-empty string.
+    """
     if not isinstance(phases, list) or len(phases) < 1:
         return "phases must be a non-empty array"
     for i, phase in enumerate(phases):
@@ -178,20 +280,28 @@ def _validate_phases(phases):
         if not isinstance(pexec, dict):
             return (f"phases[{i}].execution is required and must be "
                     f"an object")
-        for field in ("assignee", "title", "body"):
+        for field in ("title", "body"):
             val = pexec.get(field)
             if not isinstance(val, str) or not val.strip():
                 return (f"phases[{i}].execution.{field} is required and "
                         f"must be a non-empty string")
+        err = _validate_optional_assignee(
+            pexec.get("assignee"), f"phases[{i}].execution.assignee")
+        if err:
+            return err
         pver = phase.get("verifier")
         if pver is not None:
             if not isinstance(pver, dict):
                 return f"phases[{i}].verifier must be an object"
-            for field in ("assignee", "title", "body"):
+            for field in ("title", "body"):
                 val = pver.get(field)
                 if not isinstance(val, str) or not val.strip():
                     return (f"phases[{i}].verifier.{field} is required "
                             f"and must be a non-empty string")
+            err = _validate_optional_assignee(
+                pver.get("assignee"), f"phases[{i}].verifier.assignee")
+            if err:
+                return err
         pmax = phase.get("max_iterations")
         if pmax is not None:
             if isinstance(pmax, bool) or not isinstance(pmax, int) \
@@ -201,30 +311,55 @@ def _validate_phases(phases):
     return None
 
 
+def _validate_optional_assignee(value, label):
+    """assignee is optional (T5: defaults to the resolved runner). When present
+    it must be a non-empty string."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        return f"{label} must be a non-empty string"
+    return None
+
+
 def _validate(args):
     goal = args.get("goal")
     if not isinstance(goal, str) or not goal.strip():
         return "goal is required and must be a non-empty string"
+    # T5: optional workflow runner profile (defaults to worker -> default).
+    runner = args.get("runner")
+    if runner is not None:
+        if not isinstance(runner, str) or not runner.strip():
+            return ("runner must be a non-empty string (the profile that "
+                    "drives the loop)")
     phases = args.get("phases")
     if phases is not None:
         return _validate_phases(phases)
     execution = args.get("execution")
     if not isinstance(execution, dict):
         return "execution is required and must be an object"
-    for field in ("assignee", "title", "body"):
+    for field in ("title", "body"):
         val = execution.get(field)
         if not isinstance(val, str) or not val.strip():
             return (f"execution.{field} is required and must be a "
                     f"non-empty string")
+    # T5: assignee is optional — defaults to the resolved runner.
+    err = _validate_optional_assignee(
+        execution.get("assignee"), "execution.assignee")
+    if err:
+        return err
     verifier = args.get("verifier")
     if verifier is not None:
         if not isinstance(verifier, dict):
             return "verifier must be an object"
-        for field in ("assignee", "title", "body"):
+        for field in ("title", "body"):
             val = verifier.get(field)
             if not isinstance(val, str) or not val.strip():
                 return (f"verifier.{field} is required and must be a "
                         f"non-empty string")
+        err = _validate_optional_assignee(
+            verifier.get("assignee"), "verifier.assignee")
+        if err:
+            return err
     max_iter = args.get("max_iterations")
     if max_iter is not None:
         # bool is a subclass of int — reject it explicitly.
@@ -287,22 +422,28 @@ def _extract_verdict(run):
     return verdict if isinstance(verdict, dict) else None
 
 
-def _create_execution_card(kb, conn, root_id, execution, author):
+def _create_execution_card(kb, conn, root_id, execution, author,
+                           resolved_runner):
     """Execution card parented on the root (ready immediately; the root is
-    completed first). Shared by the first invocation and every replan."""
+    completed first). Shared by the first invocation and every replan.
+
+    T5: the card's assignee is :func:`_resolve_assignee` — an explicit
+    ``execution["assignee"]`` wins; otherwise the resolved runner is used.
+    """
     skills = [execution["skill"]] if execution.get("skill") else None
     return kb.create_task(
         conn,
         title=execution["title"],
         body=execution["body"],
-        assignee=execution["assignee"],
+        assignee=_resolve_assignee(execution, resolved_runner),
         created_by=author,
         parents=[root_id],
         skills=skills,
     )
 
 
-def _create_verifier_card(kb, conn, exec_id, verifier, author):
+def _create_verifier_card(kb, conn, exec_id, verifier, author,
+                          resolved_runner):
     """Verifier card parented on the execution card.
 
     Parenting on the execution card (not the root) does two things:
@@ -313,13 +454,16 @@ def _create_verifier_card(kb, conn, exec_id, verifier, author):
 
     The driver in turn dependency-parks on the verifier, so the verifier's
     completion promotes the driver (the verifier is the terminal parent).
+
+    T5: the card's assignee is :func:`_resolve_assignee` — an explicit
+    ``verifier["assignee"]`` wins; otherwise the resolved runner is used.
     """
     skills = [verifier["skill"]] if verifier.get("skill") else None
     return kb.create_task(
         conn,
         title=verifier["title"],
         body=verifier["body"],
-        assignee=verifier["assignee"],
+        assignee=_resolve_assignee(verifier, resolved_runner),
         created_by=author,
         parents=[exec_id],
         skills=skills,
@@ -500,7 +644,13 @@ def loop_engine(args: dict, **kwargs) -> str:
     max_iterations = args.get("max_iterations")
     budget = args.get("budget")
     no_progress_threshold = args.get("no_progress_threshold")
+    runner = args.get("runner")
+    runner = runner.strip() if isinstance(runner, str) else None
     author = _author(**kwargs)
+
+    # T5: resolve the workflow runner once (configured -> worker -> default).
+    # Stored in loop_state so replans / phase advances reuse the same runner.
+    resolved_runner = _resolve_runner(runner, known_profiles=_known_profiles())
 
     kb = _kb()
     run_id = _run_id()
@@ -527,7 +677,7 @@ def loop_engine(args: dict, **kwargs) -> str:
             return _first_invocation(
                 kb, conn, root_id, goal, execution, author,
                 my_card_id, run_id, verifier, max_iterations, phases,
-                budget, no_progress_threshold,
+                budget, no_progress_threshold, resolved_runner,
             )
 
         return _reinvoke(
@@ -538,7 +688,8 @@ def loop_engine(args: dict, **kwargs) -> str:
 
 def _first_invocation(kb, conn, root_id, goal, execution, author,
                       my_card_id, run_id, verifier, max_iterations, phases,
-                      budget=None, no_progress_threshold=None):
+                      budget=None, no_progress_threshold=None,
+                      resolved_runner=None):
     """Build root + execution (+ optional verifier), write loop_state, park.
 
     When ``phases`` is supplied (T3 multi-phase), the first phase's specs are
@@ -549,6 +700,11 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
     T4: the verifier-gated branch seeds ``exit_counters`` (budget_remaining +
     no-progress tracking) so the layered-exit guards are active from the first
     iteration. The T1 spine is unchanged (no verifier, no converge loop).
+
+    T5: ``resolved_runner`` is the workflow's default card assignee
+    (configured -> worker -> default). It is stored in loop_state (durable
+    across replans / phase advances) and applied to every card via
+    :func:`_resolve_assignee` unless the card names its own assignee.
     """
     # Complete the root FIRST so the execution card is `ready` immediately
     # (mirrors kanban_chains: complete root, then create children).
@@ -569,7 +725,8 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
         verifier_spec = verifier
         phase_cap = max_iterations
 
-    exec_id = _create_execution_card(kb, conn, root_id, exec_spec, author)
+    exec_id = _create_execution_card(kb, conn, root_id, exec_spec, author,
+                                     resolved_runner)
 
     if verifier_spec is None:
         # T1 spine: one execution card, park on it.
@@ -578,6 +735,7 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
             "iteration_counter": 0,
             "terminal_ids": [exec_id],
             "execution_card": exec_id,
+            "resolved_runner": resolved_runner,
         }
         if phases is not None:
             loop_state["phases"] = phases
@@ -595,6 +753,7 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
             "execution_card": exec_id,
             "terminal_ids": [exec_id],
             "iteration": 0,
+            "runner": resolved_runner,
             "message": (
                 "Loop spine built: root + one execution card. Driver "
                 "dependency-parked on the execution card; auto-promotes when it "
@@ -603,7 +762,8 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
         }, indent=2)
 
     # T2 verifier-gated converge loop.
-    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier_spec, author)
+    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier_spec,
+                                        author, resolved_runner)
     cap = phase_cap or DEFAULT_MAX_ITERATIONS
 
     resolved_budget = (int(budget) if budget is not None else None)
@@ -621,6 +781,7 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
         "budget": resolved_budget,
         "iteration_cost": DEFAULT_ITERATION_COST,
         "no_progress_threshold": resolved_threshold,
+        "resolved_runner": resolved_runner,
         "exit_counters": {
             "hard_cap": 0,
             "budget_remaining": resolved_budget,
@@ -893,8 +1054,11 @@ def _advance_phase(kb, conn, root_id, loop_state, author, run_id,
     exec_spec = next_phase["execution"]
     verifier_spec = next_phase.get("verifier")
     phase_cap = next_phase.get("max_iterations")
+    # T5: reuse the workflow's resolved runner (durable across phase advances).
+    resolved_runner = loop_state.get("resolved_runner")
 
-    exec_id = _create_execution_card(kb, conn, root_id, exec_spec, author)
+    exec_id = _create_execution_card(kb, conn, root_id, exec_spec, author,
+                                     resolved_runner)
 
     if verifier_spec is None:
         # T1 phase within multi-phase: park on the execution card.
@@ -924,7 +1088,8 @@ def _advance_phase(kb, conn, root_id, loop_state, author, run_id,
         }, indent=2)
 
     # T2 phase within multi-phase: create verifier card, park on it.
-    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier_spec, author)
+    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier_spec,
+                                        author, resolved_runner)
     cap = phase_cap or DEFAULT_MAX_ITERATIONS
 
     loop_state["phase_index"] = next_phase_index
@@ -975,8 +1140,12 @@ def _replan(kb, conn, root_id, loop_state, author, run_id,
     """
     next_iter = iteration_counter + 1
 
-    exec_id = _create_execution_card(kb, conn, root_id, execution, author)
-    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier, author)
+    # T5: reuse the workflow's resolved runner (durable across replans).
+    resolved_runner = loop_state.get("resolved_runner")
+    exec_id = _create_execution_card(kb, conn, root_id, execution, author,
+                                     resolved_runner)
+    verifier_id = _create_verifier_card(kb, conn, exec_id, verifier, author,
+                                        resolved_runner)
 
     loop_state["iteration_counter"] = next_iter
     loop_state["execution_card"] = exec_id

@@ -331,3 +331,97 @@ def test_verifier_escalate_is_sticky_hitl_block(kernel, monkeypatch):
         payload = json.loads(events[0].payload) if isinstance(
             events[0].payload, str) else events[0].payload
         assert payload["exit"] == "verifier_escalate"
+
+
+# -- T5: runner profile config + fallback ---------------------------------------
+
+
+def test_runner_set_cards_spawn_under_runner(kernel, monkeypatch):
+    """A workflow that declares runner=qa spawns its execution + verifier cards
+    under that profile (assignee omitted -> resolved runner fills it in)."""
+    driver = _running_driver(monkeypatch)
+    args = {
+        "goal": "runner-set workflow",
+        "runner": "qa",
+        "execution": {"title": "exec", "body": "do work"},   # no assignee
+        "verifier": {"title": "verify", "body": "DoD: pass"},  # no assignee
+        "max_iterations": 3,
+    }
+    out = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert out["status"] == "blocked"
+
+    with kb.connect(board=BOARD) as conn:
+        assert kb.get_task(conn, out["execution_card"]).assignee == "qa"
+        assert kb.get_task(conn, out["verifier_card"]).assignee == "qa"
+
+
+def test_runner_unset_cards_spawn_under_worker(kernel, monkeypatch):
+    """A workflow with NO runner resolves to 'worker' for cards that omit
+    assignee."""
+    driver = _running_driver(monkeypatch)
+    args = {
+        "goal": "runner-unset workflow",
+        "execution": {"title": "exec", "body": "do work"},   # no assignee
+        "verifier": {"title": "verify", "body": "DoD: pass"},  # no assignee
+        "max_iterations": 3,
+    }
+    out = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert out["status"] == "blocked"
+
+    with kb.connect(board=BOARD) as conn:
+        assert kb.get_task(conn, out["execution_card"]).assignee == "worker"
+        assert kb.get_task(conn, out["verifier_card"]).assignee == "worker"
+
+
+def test_two_workflows_resolve_correct_assignees(kernel, monkeypatch):
+    """AC (f) temp-board: two workflows on ONE board — one with a runner, one
+    without — each resolve the correct card assignees independently."""
+    # Workflow 1: runner set -> cards under the runner profile.
+    driver1 = _running_driver(monkeypatch, title="loop driver 1")
+    args1 = {
+        "goal": "assigned workflow",
+        "runner": "qa",
+        "execution": {"title": "exec1", "body": "do work"},
+        "verifier": {"title": "verify1", "body": "DoD: pass"},
+        "max_iterations": 3,
+    }
+    out1 = json.loads(le.loop_engine(args1, task_id=driver1, _profile="qa"))
+    assert out1["status"] == "blocked"
+
+    # Workflow 2: no runner -> cards under 'worker'.
+    driver2 = _running_driver(monkeypatch, title="loop driver 2")
+    args2 = {
+        "goal": "unassigned workflow",
+        "execution": {"title": "exec2", "body": "do work"},
+        "verifier": {"title": "verify2", "body": "DoD: pass"},
+        "max_iterations": 3,
+    }
+    out2 = json.loads(le.loop_engine(args2, task_id=driver2, _profile="qa"))
+    assert out2["status"] == "blocked"
+
+    with kb.connect(board=BOARD) as conn:
+        # Each workflow's cards carry their own resolved runner.
+        assert kb.get_task(conn, out1["execution_card"]).assignee == "qa"
+        assert kb.get_task(conn, out1["verifier_card"]).assignee == "qa"
+        assert kb.get_task(conn, out2["execution_card"]).assignee == "worker"
+        assert kb.get_task(conn, out2["verifier_card"]).assignee == "worker"
+
+
+def test_runner_per_card_override_wins(kernel, monkeypatch):
+    """A card that names its own assignee overrides the workflow runner."""
+    driver = _running_driver(monkeypatch)
+    args = {
+        "goal": "override workflow",
+        "runner": "qa",
+        "execution": {"assignee": "developer",
+                      "title": "exec", "body": "do work"},
+        "verifier": {"assignee": "verifier",
+                     "title": "verify", "body": "DoD: pass"},
+        "max_iterations": 3,
+    }
+    out = json.loads(le.loop_engine(args, task_id=driver, _profile="qa"))
+    assert out["status"] == "blocked"
+
+    with kb.connect(board=BOARD) as conn:
+        assert kb.get_task(conn, out["execution_card"]).assignee == "developer"
+        assert kb.get_task(conn, out["verifier_card"]).assignee == "verifier"

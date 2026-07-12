@@ -38,6 +38,16 @@ LOOP_ENGINE = {
                     "blackboard and used to derive the root idempotency key."
                 ),
             },
+            "runner": {
+                "type": "string",
+                "description": (
+                    "T5 runner profile — the profile that should drive the loop "
+                    "and that execution/verifier cards default to when they do "
+                    "not name their own assignee. Resolution order: configured "
+                    "runner -> worker -> default. Omit to use 'worker'. A card "
+                    "that sets its own assignee overrides the runner default."
+                ),
+            },
             "execution": {
                 "type": "object",
                 "description": (
@@ -47,7 +57,13 @@ LOOP_ENGINE = {
                 "properties": {
                     "assignee": {
                         "type": "string",
-                        "description": "Profile name to assign the execution card to.",
+                        "description": (
+                            "Profile name to assign the execution card to. "
+                            "OPTIONAL (T5): when omitted the card inherits the "
+                            "workflow's resolved runner (configured runner -> "
+                            "worker -> default). An explicit assignee overrides "
+                            "the runner default."
+                        ),
                     },
                     "title": {
                         "type": "string",
@@ -66,7 +82,7 @@ LOOP_ENGINE = {
                         "description": "Skill to force-load into the execution worker.",
                     },
                 },
-                "required": ["assignee", "title", "body"],
+                "required": ["title", "body"],
             },
             "verifier": {
                 "type": "object",
@@ -86,7 +102,8 @@ LOOP_ENGINE = {
                         "type": "string",
                         "description": (
                             "Profile name to assign the verifier card to (e.g. "
-                            "'verifier')."
+                            "'verifier'). OPTIONAL (T5): when omitted the card "
+                            "inherits the workflow's resolved runner."
                         ),
                     },
                     "title": {
@@ -110,7 +127,7 @@ LOOP_ENGINE = {
                         "description": "Skill to force-load into the verifier worker.",
                     },
                 },
-                "required": ["assignee", "title", "body"],
+                "required": ["title", "body"],
             },
             "max_iterations": {
                 "type": "integer",
@@ -176,7 +193,7 @@ LOOP_ENGINE = {
                                 "body": {"type": "string"},
                                 "skill": {"type": "string"},
                             },
-                            "required": ["assignee", "title", "body"],
+                            "required": ["title", "body"],
                         },
                         "verifier": {
                             "type": "object",
@@ -192,7 +209,7 @@ LOOP_ENGINE = {
                                 "body": {"type": "string"},
                                 "skill": {"type": "string"},
                             },
-                            "required": ["assignee", "title", "body"],
+                            "required": ["title", "body"],
                         },
                         "max_iterations": {
                             "type": "integer",

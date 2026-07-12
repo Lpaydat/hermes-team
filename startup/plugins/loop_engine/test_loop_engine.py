@@ -407,7 +407,14 @@ class TestSchema(unittest.TestCase):
 
     def test_execution_step_required_fields(self):
         step = le_schemas.LOOP_ENGINE["parameters"]["properties"]["execution"]
-        self.assertEqual(set(step["required"]), {"assignee", "title", "body"})
+        # T5: assignee is now OPTIONAL — the resolved runner (configured -> worker
+        # -> default) is the default assignee when a card omits it.
+        self.assertEqual(set(step["required"]), {"title", "body"})
+
+    def test_schema_has_runner_property(self):
+        props = le_schemas.LOOP_ENGINE["parameters"]["properties"]
+        self.assertIn("runner", props)
+        self.assertEqual(props["runner"]["type"], "string")
 
     def test_schema_has_t4_layered_exit_properties(self):
         props = le_schemas.LOOP_ENGINE["parameters"]["properties"]
@@ -1851,6 +1858,266 @@ class TestResumePath(unittest.TestCase):
 
 
 # =============================================================================
+# 24. T5 — runner profile config + fallback (single resolver, per-card override)
+# =============================================================================
+
+class TestRunnerResolver(unittest.TestCase):
+    """The resolver is the SINGLE documented function implementing the
+    resolution order: configured runner -> worker -> default.
+
+    A candidate is 'available' when known_profiles is None (accept any) or
+    contains it. This lets a deployment's known-profile set steer the fallback:
+    an unknown configured runner -> worker, an unknown worker -> default.
+    """
+
+    def test_configured_runner_wins(self):
+        self.assertEqual(le_tools._resolve_runner("debugger"), "debugger")
+
+    def test_runner_unset_falls_back_to_worker(self):
+        self.assertEqual(le_tools._resolve_runner(None), "worker")
+
+    def test_worker_available_returns_worker_when_known(self):
+        self.assertEqual(
+            le_tools._resolve_runner(None, known_profiles={"worker", "qa"}),
+            "worker")
+
+    def test_worker_unavailable_falls_back_to_default(self):
+        # worker absent from the known set -> default is the last resort.
+        self.assertEqual(
+            le_tools._resolve_runner(None, known_profiles={"default"}),
+            "default")
+
+    def test_unknown_configured_runner_falls_back_to_worker(self):
+        # debugger not known -> worker (which IS known) is the next candidate.
+        self.assertEqual(
+            le_tools._resolve_runner("debugger", known_profiles={"worker"}),
+            "worker")
+
+    def test_default_is_unconditional_last_resort(self):
+        # nothing in the known set matches -> default regardless.
+        self.assertEqual(
+            le_tools._resolve_runner(None, known_profiles=set()),
+            "default")
+
+    def test_empty_string_runner_treated_as_unset(self):
+        self.assertEqual(le_tools._resolve_runner(""), "worker")
+
+    def test_resolver_is_single_documented_function(self):
+        # The resolver exists, is callable, and is the documented entry point.
+        self.assertTrue(callable(le_tools._resolve_runner))
+        self.assertIn("configured runner", le_tools._resolve_runner.__doc__)
+        self.assertIn("worker", le_tools._resolve_runner.__doc__)
+        self.assertIn("default", le_tools._resolve_runner.__doc__)
+
+
+class TestRunnerCardAssignee(unittest.TestCase):
+    """T5: the resolved runner is the DEFAULT assignee for execution/verifier
+    cards. An explicit per-card assignee overrides it."""
+
+    def test_runner_set_execution_card_gets_runner(self):
+        parsed, fake = _run_handler(
+            args={"goal": "debug it", "runner": "debugger",
+                  "execution": {"title": "repro", "body": "reproduce the bug"}},
+            create_ids=["t_root", "t_exec"],
+        )
+        creates = _create_calls(fake)
+        self.assertEqual(creates[1]["assignee"], "debugger")
+
+    def test_runner_set_verifier_card_gets_runner(self):
+        parsed, fake = _run_handler(
+            args={"goal": "debug it", "runner": "debugger",
+                  "execution": {"title": "repro", "body": "..."},
+                  "verifier": {"title": "verify", "body": "DoD: ..."}},
+            create_ids=["t_root", "t_exec", "t_verifier"],
+        )
+        creates = _create_calls(fake)
+        self.assertEqual(creates[1]["assignee"], "debugger")  # exec
+        self.assertEqual(creates[2]["assignee"], "debugger")  # verifier
+
+    def test_runner_unset_execution_card_gets_worker(self):
+        parsed, fake = _run_handler(
+            args={"goal": "x",
+                  "execution": {"title": "work", "body": "do it"}},
+            create_ids=["t_root", "t_exec"],
+        )
+        creates = _create_calls(fake)
+        self.assertEqual(creates[1]["assignee"], "worker")
+
+    def test_runner_unset_verifier_card_gets_worker(self):
+        parsed, fake = _run_handler(
+            args={"goal": "x",
+                  "execution": {"title": "work", "body": "do it"},
+                  "verifier": {"title": "verify", "body": "DoD: ..."}},
+            create_ids=["t_root", "t_exec", "t_verifier"],
+        )
+        creates = _create_calls(fake)
+        self.assertEqual(creates[2]["assignee"], "worker")
+
+    def test_per_card_override_wins_over_runner(self):
+        parsed, fake = _run_handler(
+            args={"goal": "x", "runner": "debugger",
+                  "execution": {"assignee": "developer",
+                                "title": "w", "body": "b"},
+                  "verifier": {"assignee": "verifier",
+                               "title": "v", "body": "vb"}},
+            create_ids=["t_root", "t_exec", "t_verifier"],
+        )
+        creates = _create_calls(fake)
+        self.assertEqual(creates[1]["assignee"], "developer")
+        self.assertEqual(creates[2]["assignee"], "verifier")
+
+    def test_resolved_runner_stored_in_loop_state(self):
+        parsed, fake = _run_handler(
+            args={"goal": "x", "runner": "debugger",
+                  "execution": {"title": "w", "body": "b"},
+                  "verifier": {"title": "v", "body": "vb"}},
+            create_ids=["t_root", "t_exec", "t_verifier"],
+        )
+        state = _last_loop_state(fake, "t_root")
+        self.assertEqual(state["resolved_runner"], "debugger")
+
+    def test_runner_applied_on_replan(self):
+        """A replan (fresh exec + verifier) must apply the resolved runner
+        stored in loop_state to the new cards."""
+        phases = _phases(1)  # single-phase, but via phases path is fine; use T2
+        seeded = _loop_state_comment_verifier(
+            "t_root", execution_card="t_exec", verifier_card="t_verifier",
+            iteration_counter=1, max_iterations=3)
+        # Inject resolved_runner into the seeded loop_state.
+        seeded = _loop_state_comment_with_runner(
+            "t_root", resolved_runner="debugger",
+            execution_card="t_exec", verifier_card="t_verifier",
+            iteration_counter=1, max_iterations=3)
+        verdict = _dod_verdict(dod_met=False, recommendation="replan")
+        parsed, fake = _run_handler(
+            args={"goal": "fix it", "runner": "debugger",
+                  "execution": {"title": "w", "body": "b"},
+                  "verifier": {"title": "v", "body": "vb"}},
+            create_ids=["t_root", "t_exec2", "t_verifier2"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        new_cards = _create_calls_new(fake)
+        self.assertEqual(len(new_cards), 2)
+        self.assertEqual(new_cards[0]["assignee"], "debugger")  # exec
+        self.assertEqual(new_cards[1]["assignee"], "debugger")  # verifier
+
+    def test_runner_applied_on_phase_advance(self):
+        """A multi-phase advance must apply the resolved runner to the next
+        phase's execution + verifier cards (phases omit assignee so the runner
+        default applies)."""
+        phases = [
+            {"execution": {"title": "p0", "body": "b0"},
+             "verifier": {"title": "v0", "body": "vb0"}},
+            {"execution": {"title": "p1", "body": "b1"},
+             "verifier": {"title": "v1", "body": "vb1"}},
+        ]
+        seeded = _loop_state_comment_phases_runner(
+            "t_root", phases, resolved_runner="debugger", phase_index=0,
+            execution_card="t_exec0", verifier_card="t_verifier0",
+            iteration_counter=1)
+        parsed, fake = _run_handler(
+            args={"goal": "ship it", "runner": "debugger", "phases": phases},
+            create_ids=["t_root", "t_exec1", "t_verifier1"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier0":
+                          _verifier_run(_dod_verdict(dod_met=True))},
+        )
+        new_cards = _create_calls_new(fake)
+        self.assertEqual(len(new_cards), 2)
+        self.assertEqual(new_cards[0]["assignee"], "debugger")  # exec
+        self.assertEqual(new_cards[1]["assignee"], "debugger")  # verifier
+
+    def test_phase_override_wins_over_runner(self):
+        """A phase that explicitly sets assignee overrides the runner."""
+        phases = [
+            {"execution": {"assignee": "developer",
+                           "title": "p0", "body": "b0"},
+             "verifier": {"assignee": "verifier",
+                          "title": "v0", "body": "vb0"}},
+        ]
+        parsed, fake = _run_handler(
+            args={"goal": "ship it", "runner": "debugger", "phases": phases},
+            create_ids=["t_root", "t_exec0", "t_verifier0"],
+        )
+        new_cards = _create_calls_new(fake)
+        self.assertEqual(new_cards[0]["assignee"], "developer")
+        self.assertEqual(new_cards[1]["assignee"], "verifier")
+
+
+class TestRunnerValidation(unittest.TestCase):
+
+    def test_runner_must_be_nonempty_string(self):
+        fake = FakeKanbanDB(create_ids=[])
+        with patch.object(le_tools, "_kb", return_value=fake):
+            result = le_tools.loop_engine(
+                args={"goal": "x", "runner": "   ",
+                      "execution": _execution()}, task_id="t_driver")
+        parsed = json.loads(result)
+        self.assertIn("error", parsed)
+        self.assertIn("runner", parsed["error"])
+
+    def test_runner_missing_assignee_accepted_when_runner_set(self):
+        parsed, fake = _run_handler(
+            args={"goal": "x", "runner": "debugger",
+                  "execution": {"title": "w", "body": "b"}},
+            create_ids=["t_root", "t_exec"],
+        )
+        self.assertNotIn("error", parsed)
+
+    def test_runner_missing_assignee_accepted_when_runner_unset(self):
+        # No runner, no assignee -> resolver fills in 'worker'.
+        parsed, fake = _run_handler(
+            args={"goal": "x",
+                  "execution": {"title": "w", "body": "b"}},
+            create_ids=["t_root", "t_exec"],
+        )
+        self.assertNotIn("error", parsed)
+
+
+# -- T5 (runner) helpers --------------------------------------------------------
+
+def _loop_state_comment_with_runner(root_id, resolved_runner="worker",
+                                    execution_card="t_exec",
+                                    verifier_card="t_verifier",
+                                    iteration_counter=1, max_iterations=5):
+    """T2 loop_state pre-seeded with resolved_runner (the T5 durability field)."""
+    payload = json.dumps({
+        "key": "loop_state",
+        "value": {
+            "phase_index": 0,
+            "iteration_counter": iteration_counter,
+            "terminal_ids": [verifier_card],
+            "execution_card": execution_card,
+            "verifier_card": verifier_card,
+            "max_iterations": max_iterations,
+            "resolved_runner": resolved_runner,
+        },
+    })
+    return _Comment("loop_engine", f"[swarm:blackboard] {payload}")
+
+
+def _loop_state_comment_phases_runner(root_id, phases, resolved_runner="worker",
+                                      phase_index=0,
+                                      execution_card="t_exec",
+                                      verifier_card="t_verifier",
+                                      iteration_counter=1, max_iterations=5):
+    """T3 multi-phase loop_state pre-seeded with resolved_runner."""
+    value = {
+        "phase_index": phase_index,
+        "phases": phases,
+        "iteration_counter": iteration_counter,
+        "terminal_ids": [verifier_card],
+        "execution_card": execution_card,
+        "verifier_card": verifier_card,
+        "max_iterations": max_iterations,
+        "resolved_runner": resolved_runner,
+    }
+    payload = json.dumps({"key": "loop_state", "value": value})
+    return _Comment("loop_engine", f"[swarm:blackboard] {payload}")
+
+
+# =============================================================================
 # Runner
 # =============================================================================
 
@@ -1884,6 +2151,9 @@ if __name__ == "__main__":
         TestDoDMetNoEscalation,
         TestNonStopBounded,
         TestResumePath,
+        TestRunnerResolver,
+        TestRunnerCardAssignee,
+        TestRunnerValidation,
     ]
 
     for cls in test_classes:
