@@ -1,0 +1,11 @@
+name: loop_engine
+version: 1.0.0
+description: >-
+  Loop-engineering control tool — drives an iterative converge-loop on the kanban
+  board with durable state. One phase / one iteration per invocation (T1 spine).
+  The first plugin to register BOTH a control tool and an observer hook
+  (kanban_task_completed, telemetry-only).
+provides_tools:
+  - loop_engine
+provides_hooks:
+  - kanban_task_completed
