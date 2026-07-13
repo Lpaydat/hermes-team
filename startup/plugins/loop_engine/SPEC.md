@@ -1,6 +1,6 @@
 # loop_engine — dynamic-workflow / loop-engineering plugin (spec)
 
-> **Status:** DRAFT spec (v1 = engine only). Composes with `kanban_chains` + `verifier`; does not modify either. Foundational layer for the debugging workflow (and future UX/UI, design-council hardening).
+> **Status:** DRAFT spec (v1 = engine only). A **generic loop-engineering engine** — drives any iterative converge-loop workflow on the durable kanban board. Composes with `kanban_chains` (execute) + `verifier` (evaluate); modifies neither. **Consumer-agnostic:** example consumers include debugging (the debugger profile), design (`design-council`), research, and UX/UI — each supplies its own phases/DoD; the engine has no domain-specific concepts.
 > **Branch:** `design/debugging-workflow` (worktree). Implementation gets its own branch (shared plugin infra).
 > **Date:** 2026-07-13.
 
