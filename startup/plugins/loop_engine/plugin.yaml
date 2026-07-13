@@ -1,0 +1,14 @@
+name: loop_engine
+version: 1.0.0
+description: >-
+  Loop-engineering control tool — drives an iterative converge-loop on the kanban
+  board with durable state. T1 spine: one phase / one iteration execute-and-read
+  (no verifier). T2 verifier-gated converge loop: an independent verifier card
+  evaluates the phase output against the DoD and returns a dod_verdict; the
+  driver reads it on promotion and decides advance / replan (under a hard cap) /
+  hard-cap termination. The first plugin to register BOTH a control tool and an
+  observer hook (kanban_task_completed, telemetry-only).
+provides_tools:
+  - loop_engine
+provides_hooks:
+  - kanban_task_completed
