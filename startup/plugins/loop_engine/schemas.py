@@ -12,11 +12,14 @@ LOOP_ENGINE = {
         "  * T2 verifier-gated converge loop (verifier supplied) — after the "
         "execution card completes, an independent verifier card evaluates the "
         "phase output against the DoD and completes with a dod_verdict in "
-        "run.metadata ({dod_met, score, gaps, recommendation}). On promotion the "
-        "driver reads the verdict (latest_run direct read) and decides: DoD met / "
-        "recommendation=advance -> phase complete; dod_met=false / replan (under "
-        "the hard cap) -> replan (fresh execution + verifier, dependency-park "
-        "again); hard cap hit without DoD -> terminate.\n\n"
+        "run.metadata ({dod_met, score, gaps, recommendation, and optionally "
+        "behaviors[] + defect_traces[] for artifact-gated phases}). On promotion "
+        "the driver reads the verdict (latest_run direct read), mechanically "
+        "validates the artifact when the phase opts in (verifier.artifact_required) "
+        "— a latent_defect trace hard-blocks advance — and decides: dod_met AND "
+        "artifact-complete -> phase complete; otherwise replan (under the hard "
+        "cap) -> replan (fresh execution + verifier, dependency-park again); hard "
+        "cap hit without DoD -> escalate (sticky needs_input).\n\n"
         "FIRST invocation (no loop_state on the root blackboard yet): creates a "
         "root card (shared blackboard), creates the execution card parented on the "
         "root (and, in T2, a verifier card parented on the execution card), "
@@ -224,6 +227,10 @@ LOOP_ENGINE = {
                 },
             },
         },
-        "required": ["goal", "execution"],
+        "required": ["goal"],
+        "anyOf": [
+            {"required": ["execution"]},
+            {"required": ["phases"]},
+        ],
     },
 }

@@ -452,6 +452,107 @@ def _extract_verdict(run):
     return verdict if isinstance(verdict, dict) else None
 
 
+def _validate_dod_artifact(verdict, artifact_required=False):
+    """Mechanically validate the DoD artifact shape before trusting ``dod_met``.
+
+    The verifier's ``dod_met`` is a self-report. When a phase opts in
+    (``artifact_required=True`` on its verifier spec — e.g. design-council's
+    converge phase), the engine independently asserts the defect-coverage
+    artifact is complete and carries no unfixed latent defect, so a lenient or
+    buggy verifier cannot advance a design with an open failure-implication.
+
+    ``artifact_required`` is **opt-in** so the generic engine stays usable by
+    consumers that return a simple ``{dod_met, gaps}`` verdict (debugging,
+    research). When False (default), the gate validates the artifact ONLY if the
+    verifier produced one; a verdict with no ``behaviors``/``defect_traces`` is
+    artifact-neutral (defers to ``dod_met``).
+
+    When ``artifact_required`` is True (or an artifact is present), returns True
+    only when:
+
+      - ``behaviors[]`` and ``defect_traces[]`` are both non-empty lists;
+      - there is at least one trace per behavior (``len(traces) >= len(behaviors)``);
+      - every trace has a non-empty ``citation``;
+      - no trace is flagged ``fabricated`` (fabrication guard failed);
+      - no trace is left at ``status == "latent_defect"``.
+    """
+    if not isinstance(verdict, dict):
+        return False
+    behaviors = verdict.get("behaviors")
+    traces = verdict.get("defect_traces")
+    # No artifact produced:
+    #   - artifact_required=True -> FAIL (the converge verifier was lazy; it
+    #     must produce behaviors+defect_traces, not advance on dod_met alone).
+    #   - artifact_required=False -> neutral (generic/ADR-convention; defer to
+    #     dod_met). This keeps the engine generic.
+    if not behaviors and not traces:
+        return not artifact_required
+    if not isinstance(behaviors, list) or not isinstance(traces, list):
+        return False
+    if not behaviors or not traces:
+        return False
+    if len(traces) < len(behaviors):
+        return False
+    for tr in traces:
+        if not isinstance(tr, dict):
+            return False
+        if not (tr.get("citation") or "").strip():
+            return False
+        if tr.get("fabricated"):
+            return False
+        if tr.get("status") == "latent_defect":
+            return False
+    return True
+
+
+def _persist_council_state(kb, conn, root_id, author, verdict):
+    """Persist the latest council iteration to the root blackboard.
+
+    The verifier is a grandchild (root -> exec -> verifier) and cannot reach the
+    root blackboard, so the DRIVER (which holds ``root_id``) writes the verdict
+    downstream where converge-execution + replan workers can read it:
+
+      ``council:last_iteration`` = {dod_verdict, design_version_ref, gaps, score}
+      ``council:best_so_far``    = the highest-scoring iteration's snapshot
+
+    This is what makes keep/discard (replan from best-so-far on regression) and
+    replan-learning (read the last gaps) reachable by the next execution worker.
+    No-op when ``verdict`` is not a dict (missing/stale verdict path).
+    """
+    if not isinstance(verdict, dict):
+        return
+    snapshot = {
+        "dod_verdict": verdict,
+        "dod_met": verdict.get("dod_met"),
+        "recommendation": verdict.get("recommendation"),
+        "design_version_ref": verdict.get("design_version_ref"),
+        "gaps": verdict.get("gaps"),
+        "score": verdict.get("score"),
+    }
+    _write_blackboard(kb, conn, root_id, author,
+                      "council:last_iteration", snapshot)
+    score = verdict.get("score")
+    if isinstance(score, (int, float)):
+        prev = _read_blackboard(kb, conn, root_id, "council:best_so_far")
+        prev_score = prev.get("score") if isinstance(prev, dict) else None
+        if not isinstance(prev_score, (int, float)) or score > prev_score:
+            _write_blackboard(kb, conn, root_id, author,
+                              "council:best_so_far", snapshot)
+
+
+def _loop_protocol_footer(root_id):
+    """Body footer injected into execution + verifier cards so any worker can
+    read the shared root blackboard (the verifier is a grandchild and otherwise
+    has no root pointer)."""
+    return (
+        f"\n\n## Loop protocol\n"
+        f"- Shared blackboard / root card: `{root_id}`\n"
+        f"- Read `council:last_iteration` + `council:best_so_far` + "
+        f"`council:po_interview` (when present) via kanban_show on the root "
+        f"card (last-write-wins blackboard comments).\n"
+    )
+
+
 def _create_execution_card(kb, conn, root_id, execution, author,
                            resolved_runner, my_card_id=None,
                            phase_index=0, iteration=0):
@@ -473,7 +574,7 @@ def _create_execution_card(kb, conn, root_id, execution, author,
     return kb.create_task(
         conn,
         title=execution["title"],
-        body=execution["body"],
+        body=execution["body"] + _loop_protocol_footer(root_id),
         assignee=_resolve_assignee(execution, resolved_runner),
         created_by=author,
         parents=[root_id],
@@ -484,7 +585,7 @@ def _create_execution_card(kb, conn, root_id, execution, author,
 
 def _create_verifier_card(kb, conn, exec_id, verifier, author,
                           resolved_runner, my_card_id=None, phase_index=0,
-                          iteration=0, role="verify"):
+                          iteration=0, role="verify", root_id=None):
     """Verifier card parented on the execution card.
 
     Parenting on the execution card (not the root) does two things:
@@ -507,10 +608,13 @@ def _create_verifier_card(kb, conn, exec_id, verifier, author,
     idem = None
     if my_card_id is not None:
         idem = _card_idempotency_key(my_card_id, phase_index, iteration, role)
+    body = verifier["body"]
+    if root_id:
+        body = body + _loop_protocol_footer(root_id)
     return kb.create_task(
         conn,
         title=verifier["title"],
-        body=verifier["body"],
+        body=body,
         assignee=_resolve_assignee(verifier, resolved_runner),
         created_by=author,
         parents=[exec_id],
@@ -621,6 +725,7 @@ def _reevaluate(kb, conn, root_id, loop_state, author, run_id, my_card_id,
         kb, conn, exec_id, verifier_spec, author, resolved_runner,
         my_card_id=my_card_id, phase_index=phase_index,
         iteration=iteration_counter, role=f"reeval{reeval_counter}",
+        root_id=root_id,
     )
 
     loop_state["verifier_card"] = new_verifier_id
@@ -957,7 +1062,7 @@ def _first_invocation(kb, conn, root_id, goal, execution, author,
     # already created above with the same iteration.
     verifier_id = _create_verifier_card(
         kb, conn, exec_id, verifier_spec, author, resolved_runner,
-        my_card_id=my_card_id, phase_index=0, iteration=1)
+        my_card_id=my_card_id, phase_index=0, iteration=1, root_id=root_id)
     cap = phase_cap or DEFAULT_MAX_ITERATIONS
 
     resolved_budget = (int(budget) if budget is not None else None)
@@ -1062,6 +1167,15 @@ def _reinvoke_t1(kb, conn, root_id, loop_state, author, run_id,
         "outcome": getattr(run, "outcome", None),
     }
 
+    # Persist a PO-interview reply (T1 interview phase) to the root blackboard
+    # so the downstream ADR phase can cite it. The interview worker writes
+    # {po_interview: ...} to its run.metadata via kanban_complete; only present
+    # for the interview phase, so this is a no-op for other T1 phases.
+    _meta = result.get("metadata")
+    if isinstance(_meta, dict) and _meta.get("po_interview") is not None:
+        _write_blackboard(kb, conn, root_id, author,
+                          "council:po_interview", _meta.get("po_interview"))
+
     # Persist the advanced counter (durable across a session boundary).
     loop_state["iteration_counter"] = iteration_counter
     _write_blackboard(kb, conn, root_id, author, "loop_state", loop_state)
@@ -1077,16 +1191,20 @@ def _reinvoke_t1(kb, conn, root_id, loop_state, author, run_id,
 
     # T1 stub-decide: hard cap = 1 -> report the result, terminate. Later beads
     # add the real verifier / DoD + advance/replan/escalate layered exits.
+    # The terminal signal is workflow_complete (matching T2 semantics) so the
+    # driver's "on workflow_complete: confirm ADR on disk" step fires for BOTH
+    # tiers. (Do NOT use hard_cap_reached here — that label means ESCALATE in
+    # T2 and would conflate normal T1 completion with a HITL escalation.)
     return json.dumps({
         "status": "complete",
         "root_id": root_id,
         "execution_card": exec_id,
         "iteration": iteration_counter,
-        "decision": "hard_cap_reached",
+        "decision": "workflow_complete",
         "result": result,
         "message": (
-            f"Stub-decided at hard cap {MAX_PHASE_STEPS}: reporting the "
-            f"execution result (no verifier/DoD in T1). Loop complete."
+            f"T1 phase complete at hard cap {MAX_PHASE_STEPS}: reporting the "
+            f"execution result (no verifier/DoD in T1). Workflow complete."
         ),
     }, indent=2)
 
@@ -1140,11 +1258,25 @@ def _reinvoke_verifier(kb, conn, root_id, loop_state, author, run_id,
                 exec_id, verifier_id, _re_verifier,
                 int(loop_state.get("phase_index", 0)), iteration_counter)
 
+    # Persist the council iteration to the root blackboard so converge/replan
+    # workers (grandchildren that cannot reach root themselves) can read the
+    # last verdict + best-so-far for keep/discard and gap-targeted replan.
+    _persist_council_state(kb, conn, root_id, author, verdict)
+
     dod_met = bool(verdict and verdict.get("dod_met"))
     recommendation = verdict.get("recommendation") if verdict else None
+    _cur_exec, _cur_verifier = _resolve_phase_specs(loop_state, execution,
+                                                    verifier)
+    _artifact_required = bool((_cur_verifier or {}).get("artifact_required",
+                                                        False))
+    artifact_complete = _validate_dod_artifact(verdict, _artifact_required)
 
-    # Advance: DoD met (or the verifier explicitly recommends advancing).
-    if dod_met or recommendation == "advance":
+    # Advance: DoD met AND the artifact is complete. The engine no longer
+    # trusts recommendation='advance' to override a failed/partial DoD — a
+    # latent_defect trace (or a missing/incomplete defect_traces table) hard-
+    # blocks advance even if the verifier mistakenly wrote dod_met=true.
+    # (recommendation=='escalate' is still honored below.)
+    if dod_met and artifact_complete:
         stored_phases = loop_state.get("phases")
         phase_index = int(loop_state.get("phase_index", 0))
         if stored_phases and len(stored_phases) > 1:
@@ -1333,7 +1465,8 @@ def _advance_phase(kb, conn, root_id, loop_state, author, run_id,
     # iter1), park on it.
     verifier_id = _create_verifier_card(
         kb, conn, exec_id, verifier_spec, author, resolved_runner,
-        my_card_id=my_card_id, phase_index=next_phase_index, iteration=1)
+        my_card_id=my_card_id, phase_index=next_phase_index, iteration=1,
+        root_id=root_id)
     cap = phase_cap or DEFAULT_MAX_ITERATIONS
 
     loop_state["phase_index"] = next_phase_index
@@ -1396,7 +1529,8 @@ def _replan(kb, conn, root_id, loop_state, author, run_id,
         my_card_id=my_card_id, phase_index=phase_index, iteration=next_iter)
     verifier_id = _create_verifier_card(
         kb, conn, exec_id, verifier, author, resolved_runner,
-        my_card_id=my_card_id, phase_index=phase_index, iteration=next_iter)
+        my_card_id=my_card_id, phase_index=phase_index, iteration=next_iter,
+        root_id=root_id)
 
     loop_state["iteration_counter"] = next_iter
     loop_state["execution_card"] = exec_id

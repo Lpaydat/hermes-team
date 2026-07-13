@@ -7,6 +7,7 @@ model:
 toolsets:
 - hermes-cli
 - kanban
+- kanban_chains
 agent:
   api_max_retries: 10
 kanban:

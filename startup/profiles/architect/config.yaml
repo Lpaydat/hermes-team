@@ -6,6 +6,9 @@ model:
 toolsets:
   - hermes-cli
   - kanban
+  - kanban_chains
+  - loop_engine
+  - intercom
 agent:
   api_max_retries: 10
   reasoning_effort: xhigh
@@ -87,11 +90,14 @@ plugins:
   enabled:
     - intercom
     - kanban_chains
+    - loop_engine
   disabled: []
   entries:
     intercom:
       allow_tool_override: true
     kanban_chains:
+      allow_tool_override: false
+    loop_engine:
       allow_tool_override: false
 onboarding:
   seen:

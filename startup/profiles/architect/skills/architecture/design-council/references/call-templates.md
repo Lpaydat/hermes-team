@@ -1,220 +1,217 @@
-# `kanban_chains` + evaluator + intercom call templates for design-council v2
+# design-council — loop_engine call templates
 
-`kanban_chains` creates the topology atomically and parks the caller (you) in dependency-wait until the terminal step completes; idempotent. Plugin: `startup/plugins/kanban_chains/`. Step fields: `assignee`, `title`, `body` (required), optional `skills`. With no `after`, you block on each chain terminal and synthesize yourself on resume.
+The council is driven by ONE `loop_engine({goal, runner:"architect", phases:[...]})`
+call per decision. The engine creates the root blackboard, drives each phase's
+execute→evaluate→decide cycle, persists `council:*` state, and advances /
+replans / escalates on the DoD verdict. See
+[`dod-contract.md`](dod-contract.md) for the DoD items + `dod_verdict` schema +
+engine validation.
 
-**v2 change:** after each synthesis, you create an **evaluator card** (the independent judge). The evaluator scores across the five rubric dimensions ([`evaluator-rubric.md`](evaluator-rubric.md)) and returns an output schema with a verdict (`improve | converged | regressed`). You act on the verdict: improve → targeted critique; converged → interview + ADR; regressed → revert to best-so-far.
+**Load-bearing (every tier):**
+- explicit `assignee` on every card spec (`runner`→worker→default would stall;
+  no worker/default profile dirs exist);
+- the engine injects a `## Loop protocol` footer naming the root blackboard
+  card into every execution + verifier body — read `council:last_iteration` /
+  `council:best_so_far` / `council:po_interview` from it via `kanban_show`;
+- the converge verifier body embeds the DoD artifact (`behaviors[]` +
+  `defect_traces[]` + fabrication guard) + the literal
+  `kanban_complete(metadata={"dod_verdict":{...}})` + the contract line;
+- researcher skill: `["docs-verification"]` for auth/security (ground-truth
+  refs), `["research-scout"]`/`["deep-research"]` general. **No skill `"research"`.**
 
-## Low stakes — floor (no evaluator, no PO interaction)
+---
+
+## Low stakes — T1 floor (2 phases, no verifier, no interview)
 
 ```python
-kanban_chains({
-  "goal": "Council: <DECISION>",
-  "chains": [
-    [{ "assignee": "researcher", "skills": ["research"],
-       "title": "Research <DECISION>: options, prior art, evidence",
-       "body": "Decision: <one-line>. Constraints: <from brief>. Post findings + citations to the blackboard." }],
-    [{ "assignee": "architect",
-       "title": "Perspective — <DECISION>",
-       "body": "Independent take. Read the blackboard; do not read sibling perspectives. State your recommendation and the one risk you'd flag." }],
-  ],
-  "blackboard": { "spec_path": "<brief>", "env_facts": "<constraints>", "extra": { "decision": "<slug>", "round": 1, "stakes": "low" } }
+loop_engine({
+  "goal": "ADR for <DECISION> (low stakes)",
+  "runner": "architect",
+  "phases": [
+    {  # phase 0 — converge (T1: one research + one peer, synthesize, no DoD gate)
+      "execution": {
+        "assignee": "architect",
+        "title": "Council floor — <DECISION>",
+        "body": ("Read the brief. Fan out via kanban_chains: "
+                 "chains=[[{assignee:'researcher', skills:['deep-research'], "
+                 "title:'Research <DECISION>', body:'<focused sub-topic; post findings+citations to the blackboard>'}],"
+                 "[{assignee:'architect', title:'Peer — <DECISION>', "
+                 "body:'Read the blackboard; do NOT read sibling perspectives. Independent peer review.'}]]. "
+                 "On promotion, synthesize ONE design-doc version. "
+                 "kanban_complete(metadata={'design_doc':'<version slug + summary>'}).")
+      }
+      # no verifier — T1
+    },
+    {  # phase 1 — ADR record (T1)
+      "execution": {
+        "assignee": "architect",
+        "title": "Record ADR — <DECISION>",
+        "body": ("Write docs/adr/<n>-<slug>.md: Context / Alternatives-Considered / "
+                 "Decision / Consequences / Citations. Cite research + the peer perspective. "
+                 "kanban_complete(metadata={'adr':'<path>'}).")
+      }
+    }
+  ]
 })
-# You are parked. On promotion: read both, synthesize, write the ADR. No evaluator, no PO step.
-# Low stakes = 1 round; the floor IS the ceiling.
+# engine: T1 hard cap (MAX_PHASE_STEPS=1) runs each phase once, then workflow_complete.
+# AUTH-GUARDRAIL: NEVER use low for auth/security/data-loss/irreversible-state.
 ```
 
-## Standard — diverge → synthesize → evaluate → (improve loop) → interview → ADR
-
-### Round 1 — diverge (no `after`)
+## Standard stakes — T2 (3 phases: converge cap3 → interview → ADR cap2)
 
 ```python
-kanban_chains({
-  "goal": "Council: <DECISION>",
-  "chains": [
-    [{ "assignee": "researcher", "skills": ["research"],
-       "title": "Research <DECISION>",
-       "body": "Decision: <one-line>. Constraints: <from brief>. Post findings + citations to the blackboard." }],
-    [{ "assignee": "architect",
-       "title": "Perspective — <DECISION>",
-       "body": "Independent. Read blackboard; do not read siblings." }],
-    # +1 peer when complexity is high
-  ],
-  "blackboard": { "spec_path": "<brief>", "env_facts": "<constraints>", "extra": { "decision": "<slug>", "round": 1, "stakes": "standard" } }
+loop_engine({
+  "goal": "Converged ADR for <DECISION> (standard stakes)",
+  "runner": "architect",
+  "no_progress_threshold": 3,
+  "phases": [
+    {  # phase 0 — council-converge (T2, cap 3)
+      "max_iterations": 3,
+      "execution": {
+        "assignee": "architect",
+        "title": "Council converge — <DECISION>",
+        "body": ("ROOT BLACKBOARD: read council:last_iteration + council:best_so_far "
+                 "(the engine footer names the root card id). "
+                 "FAN OUT via kanban_chains{goal, chains:[[{assignee:'researcher', "
+                 "skills:['deep-research'], title:'Research <DECISION>: <sub-topic>', "
+                 "body:'Research ONLY <sub-topic> from primary sources; post findings+citations.'}],"
+                 "[{assignee:'architect', title:'Peer — <DECISION>', "
+                 "body:'Read the blackboard; do NOT read sibling perspectives.'}]], "
+                 "blackboard:{extra:{decision,round,stakes}}}. "
+                 "ON PROMOTION: synthesize a design-doc version. KEEP/DISCARD: if "
+                 "last_iteration.recommendation=='replan' AND last_iteration.score < "
+                 "best_so_far.score, REVISE FROM best_so_far (discard the regressed version); "
+                 "else revise from last_iteration.design_version_ref. Address EVERY gap in "
+                 "last_iteration.gaps. kanban_complete(metadata={'design_version_ref':'<slug>', "
+                 "'design_doc':'<summary>'}).")
+      },
+      "verifier": {
+        "assignee": "verifier",
+        "skill": "dod-verdict",
+        "artifact_required": true,
+        "title": "[DoD] Converge — <DECISION>",
+        "body": ("<the CONCRETE DoD from dod-contract.md as the behaviors[]+defect_traces[] "
+                 "ARTIFACT with the fabrication guard (re-open the brief, confirm each cite "
+                 "exists; non-matching => fabricated => latent_defect). Score the 6 items "
+                 "pass/fail. Complete via kanban_complete(metadata={'dod_verdict':{behaviors, "
+                 "defect_traces, dod_met, score, design_version_ref, items, gaps, recommendation}}). "
+                 "CONTRACT: recommendation MUST NOT be 'advance' unless dod_met is true. "
+                 "The engine validates the artifact and will not advance on a latent_defect.>")
+      }
+    },
+    {  # phase 1 — PO-HITL interview (T1, RE-ENTRANT)
+      "execution": {
+        "assignee": "architect",
+        "title": "PO interview — <DECISION>",
+        "body": ("RE-ENTRANT (resume is a fresh session): FIRST check the root blackboard "
+                 "council:po_interview — if present, kanban_complete immediately. Else intercom "
+                 "action:ask to startup/product-owner with the open trade-off questions + the "
+                 "converged verdict. On reply: kanban_complete(metadata={'po_interview':<reply>}). "
+                 "On timeout or [target_not_connected]: kanban_block(kind='needs_input') on THIS "
+                 "card (sticky self-escalation) — never proceed without PO input.")
+      }
+    },
+    {  # phase 2 — ADR record (T2, cap 2)
+      "max_iterations": 2,
+      "execution": {
+        "assignee": "architect",
+        "title": "Record ADR — <DECISION>",
+        "body": ("Read root blackboard council:last_iteration (verdict + defect_traces) + "
+                 "council:po_interview. Write docs/adr/<n>-<slug>.md: Context / "
+                 "Alternatives-Considered / Decision / Consequences / Citations. Cite research + "
+                 "perspectives + synthesis + the converge verifier verdict (with the defect_traces "
+                 "that caught any gap) + council:po_interview. kanban_complete(metadata={'adr':'<path>'}).")
+      },
+      "verifier": {
+        "assignee": "verifier",
+        "skill": "dod-verdict",
+        "title": "[DoD] ADR convention — <DECISION>",
+        "body": ("ADR-convention DoD ONLY (do NOT re-litigate design quality — the converge "
+                 "phase owns that). Check: adr_on_disk, sections_present (Context/Alternatives/"
+                 "Decision/Consequences/Citations), cites_inputs, cites_verdict (with "
+                 "defect_traces), cites_po_interview. kanban_complete(metadata={'dod_verdict':"
+                 "{dod_met, items:{adr_on_disk,sections_present,cites_inputs,cites_verdict,"
+                 "cites_po_interview}, gaps, recommendation}}).")
+      }
+    }
+  ]
 })
-# On promotion: read research + perspective, SYNTHESIZE a design-doc version, then create the EVALUATOR card below.
+# phase 0 dod_met-advance -> phase 1 (interview) -> phase 2 dod_met-advance -> workflow_complete.
 ```
 
-### Evaluator card — after each synthesis (standard: single judge)
+## High stakes — T2 + 3-judge ensemble (cap 5)
 
-A card you create (via `kanban_create` or as a worker in a `kanban_chains` call) after synthesizing. The judge is the `verifier` profile — an independent context, never your reasoning trace.
+Same 3-phase shape as standard, but:
+- `phases[0].max_iterations = 5`;
+- `phases[0].verifier.body` embeds the **3-judge ensemble** instead of a single
+  judge:
 
 ```python
-kanban_create({
-  "title": "[evaluate] Round <N> — <DECISION>",
+"verifier": {
   "assignee": "verifier",
-  # NO parents field! Setting parents: ["<your-task-id>"] creates a CIRCULAR
-  # DEADLOCK: the evaluator can't promote to ready until your task is done,
-  # but your task is blocked waiting for the evaluator. Create with no parents,
-  # then kanban_block(kind="dependency") on your own task to park yourself.
-  "body": """You are the INDEPENDENT EVALUATOR for a design-council round.
-Score the design-doc version below across five rubric dimensions.
-
-DESIGN DOC (round <N>):
-<your synthesized design-doc version — the full text>
-
-RUBRIC: load startup/profiles/architect/skills/architecture/design-council/references/evaluator-rubric.md
-Score each dimension 1-5 against the concrete anchors. Every score ≤ 4 needs a flagged_weakness citing the exact passage.
-
-Return this output schema (and nothing else):
-{
-  "round": <N>,
-  "design_version": "<slug>",
-  "dimension_scores": {"correctness":..., "depth":..., "alternatives":..., "edge_cases":..., "consequences":...},
-  "overall": <mean>,
-  "delta_vs_last": <null on round 1, else overall_N - overall_{N-1}>,
-  "flagged_weaknesses": [{"dimension":"...", "issue":"...", "severity":"critical|important|minor", "citation":"..."}],
-  "verdict": "improve | converged | regressed",
-  "notes": "..."
+  "skill": "dod-verdict",
+  "artifact_required": true,
+  "title": "[DoD] Converge ensemble — <DECISION>",
+  "body": ("Spawn 3 INDEPENDENT verifier sub-cards via kanban_chains (each "
+           "assignee:'verifier', skills:['dod-verdict'], body:'derive behaviors[]+"
+           "defect_traces[] with the fabrication guard; do NOT read siblings; do NOT fan "
+           "out'). Each independently extracts the behaviors checklist + one trace per "
+           "behavior (CITE+GAP+FAILURE). AGGREGATE: defect_traces = UNION (a behavior "
+           "flagged latent_defect by ANY judge is latent); dod_met = AND of all three; "
+           "items pass only if all judges pass; recommendation = advance only if all "
+           "advance, replan if any replan, escalate if any escalate. Then "
+           "kanban_complete(metadata={'dod_verdict':{...aggregated...}}) with the "
+           "contract: recommendation MUST NOT be advance unless dod_met is true.")
 }
-
-Grounded flags only — cite the passage. Unanchored flags will be discarded as noise.
-"""
-})
-# THEN park yourself (blocks your task until the evaluator completes):
-kanban_block(kind="dependency", reason="waiting_for_evaluator:<evaluator-task-id>")
 ```
 
-- **PITFALL:** Do NOT pass `parents: ["<your-task-id>"]` on the evaluator card. This creates a circular deadlock — the evaluator cannot promote to `ready` until your task is `done`, but your task is blocked waiting for the evaluator. Create the evaluator with no parents, then `kanban_block` your own task.
-- **On the evaluator's return (re-dispatch):** read the verdict. `improve` → targeted critique round (below). `converged` → interview + ADR. `regressed` → revert to best-so-far, re-evaluate or proceed to ceiling.
-- **Store the best-so-far:** keep the design-doc version with the highest `overall`. This is the revert target and the eventual ADR basis.
+The ensemble is the one bias-reduction lever (3 independent enumerations, union)
+— it raises the chance the right behavior is enumerated. It does **not**
+guarantee derivation; the battery remains the terminal gate.
 
-### Critique round — round 2+ when verdict is `improve` (targeted by evaluator flags)
+---
 
-```python
-kanban_chains({
-  "goal": "Council critique round <N>: <DECISION>",
-  "chains": [
-    [{ "assignee": "researcher", "skills": ["research"],
-       "title": "Research the gap: <SPECIFIC FLAG FROM EVALUATOR>",
-       "body": "Resolve this specific gap with evidence; post to blackboard. Evaluator flag: '<issue + citation>'. The current design is weak here: <detail>." }],
-    [{ "assignee": "architect",
-       "title": "Red-team round-<N-1> for <DECISION> — keyed to evaluator flags",
-       "body": "Attack the prior design specifically on: <list the evaluator's flagged_weaknesses>. Name failure modes, missing alternatives, thinnest evidence. Read blackboard; do not read siblings." }],
-  ],
-  "blackboard": { "spec_path": "<brief>", "env_facts": "<constraints>", "extra": { "decision": "<slug>", "round": <N>, "stakes": "standard" } }
-})
-# On promotion: synthesize the improved version, create ANOTHER evaluator card (same template, round <N>).
-# Compare the new overall to the best-so-far. If higher → new best-so-far. If lower → DISCARD, revert.
-```
+## Worked example — auth refresh-token rotation (the hard case)
 
-## High stakes — full fan-out + PO review + ensemble evaluator
+**Decision:** design the API auth token lifecycle + refresh-token rotation for
+dc-val-auth (HIGH stakes — security/data-loss/irreversible).
 
-### Round 1 — diverge + synthesis + PO review (fan-out with `after`)
+**The latent defect (ground truth, secrets §1.2):** rotation issues a new
+refresh token and stores it, but **does not invalidate the prior refresh token**
+→ the prior token survives → keeps minting access JWTs. Plus an access-JWT
+revocation gap (no blocklist on the access path). Four load-bearing brief
+behaviors: #1 rotation-issues-new+stores; #2 admin-revoke-deletes-CURRENT-only;
+#3 no-blocklist/revocation-list-on-access-path; #4 stateless-signature+exp-only.
 
-```python
-kanban_chains({
-  "goal": "Council (high-stakes): <DECISION>",
-  "chains": [
-    [{ "assignee": "researcher", "skills": ["research"],
-       "title": "Research <DECISION>",
-       "body": "..." }],
-    [{ "assignee": "architect",
-       "title": "Perspective A — <DECISION>", "body": "Independent. Read blackboard; do not read siblings." }],
-    [{ "assignee": "architect",
-       "title": "Perspective B — <DECISION>", "body": "Independent. Read blackboard; do not read siblings." }],
-    # + a 3rd peer for safety/brand-critical decisions
-  ],
-  "after": [
-    { "assignee": "architect",
-      "title": "Synthesize <DECISION> -> proposal + gaps",
-      "body": "Weigh >=2 alternatives against research + perspectives. Output: chosen decision, residual gaps. This becomes the design-doc version for the evaluator." },
-    { "assignee": "product-owner",
-      "title": "PO review (product fit) — <DECISION>",
-      "body": "Read the synthesis. Judge PRODUCT FIT only: does it serve the user/business and honor the stakes? Confirm, or request changes with reasons. Do not assess technical correctness — that's the evaluator's job. Post your verdict + any constraints to the blackboard." },
-  ],
-  "blackboard": { "spec_path": "<brief>", "env_facts": "<constraints>", "extra": { "decision": "<slug>", "round": 1, "stakes": "high" } }
-})
-# On promotion: read research + perspectives + synthesis + PO review. Then create the ENSEMBLE EVALUATOR (3 cards).
-```
+**Auth-guardrail:** stakes=HIGH (auth → never low). Phases = high shape (cap 5,
+3-judge ensemble).
 
-### Ensemble evaluator — 3 independent judges (high stakes)
+**Converge arc (what the loop must do):**
+1. Iteration 1: execution fans out research (`skills:["docs-verification"]` —
+   holds `oauth-refresh-token-rotation.md`, the ground truth) + peers;
+   synthesizes design-doc v1 (rotation, but no invalidation of the prior
+   token).
+2. The 3-judge verifier extracts `behaviors[]` (incl. the rotation behavior +
+   the admin-revoke-CURRENT-only behavior). Each judge traces: rotation's
+   failure-implication = "prior token survives → keeps minting JWTs" →
+   `latent_defect`; admin-revoke's = "prior token not covered by CURRENT-only
+   delete" → `latent_defect`. Union → both latent. `dod_met=false`. Engine
+   artifact gate blocks advance → **replan**.
+3. Iteration 2: execution reads `council:last_iteration` (gaps) +
+   `council:best_so_far`; revises to name the invalidation mechanism (token-version
+   column / rotated-token denylist) + an access-JWT revocation path (short TTL +
+   jti denylist).
+4. Verifier re-traces: rotation → `traced` (prior token invalidated); access
+   path → `traced` (jti denylist). All items pass, no `latent_defect`. `dod_met=true`,
+   artifact complete → **advance** to interview.
+5. Interview (phase 1): PO confirms the trade-off; reply persisted to
+   `council:po_interview`.
+6. ADR (phase 2): written citing the verdict + the defect_traces that caught
+   the gap + the PO reply. ADR-convention DoD met → `workflow_complete`.
 
-Create **three** evaluator cards (same body template as the standard evaluator card, but each is a separate `verifier` session with an independent context). On return:
-
-1. **Average** the three `overall` scores → ensemble overall.
-2. **Union** the `flagged_weaknesses` (dedupe by citation).
-3. **Critical-flag agreement:** if any judge scored correctness ≤ 2 (a critical flag), ALL THREE must agree it's a real critical for it to block convergence. A single-judge critical that the other two don't see → treated as important (the noise-floor protection at scale).
-4. **Convergence:** ensemble overall ≥ 4.0 AND no agreed-critical → converged. Otherwise → `improve` (targeted critique, re-evaluate with a fresh ensemble).
-
-### High-stakes critique round
-
-Same as the standard critique round, but `after: [re-synthesis, PO review]`, and the evaluator is a fresh ensemble of 3.
-
-## Intercom INTERVIEW — standard + high, before the ADR (step 5)
-
-A tool call you make on resume, *not* part of `kanban_chains`. The PO is idle (no live session); the broker spawns a PO session to receive the ask and reply.
-
-```
-intercom:
-  action: ask                     # blocks for the reply — the broker spawns the offline PO
-  to:     startup/product-owner   # qualified form — bare names route wrong
-  topic:  <the card's intercom topic>
-  text:   "Before I write the ADR for <DECISION>: the evaluator converged at round <N>
-           (overall <score>). My lean is <proposal>, grounded in <research + perspective>.
-           Open trade-off: <the genuine product call>. What is the product priority here?
-           Any constraint I'm missing?"
-```
-
-- **`ask` blocks** until the PO replies (the broker spawns the PO, which answers via `action: reply`). Returns within ~30s.
-- **Timeout → re-ask or block the card `needs_input`.** Never write the ADR without the PO's input. Cite the interview in the ADR's Citations.
-- **Known limitation:** if the offline-spawn path is broken (bead `hermes-teams-4hf`), the ask may return `[target_not_connected]`. Per the skill: block `needs_input`, do not shortcut.
-
-## Worked example — standard-stakes rate-limiting with the evaluate loop
-
-Stakes **standard**. Round 1:
-
-```python
-# Diverge
-kanban_chains({
-  "goal": "Council: rate-limiting strategy",
-  "chains": [
-    [{ "assignee": "researcher", "skills": ["research"],
-       "title": "Research rate-limiting: nginx limit_req vs app-level vs Redis token bucket",
-       "body": "PII-aware, 1000 tenants, <budget>. Post to blackboard." }],
-    [{ "assignee": "architect",
-       "title": "Perspective — rate-limiting", "body": "Independent. Read blackboard; do not read siblings." }],
-  ],
-  "blackboard": { "extra": { "decision": "rate-limiting", "round": 1, "stakes": "standard" } }
-})
-# On promotion: synthesize design-doc v1. Create evaluator card.
-```
-
-Evaluator returns: `overall: 3.2, flagged_weaknesses: [{dimension: correctness, issue: "conflates limit_req (leaky) with token bucket", severity: critical, citation: "§ Decision: 'token-bucket via limit_req'"}], verdict: improve`
-
-Critique round (targeted at the conflation flag):
-
-```python
-kanban_chains({
-  "goal": "Council critique round 2: rate-limiting",
-  "chains": [
-    [{ "assignee": "researcher", "skills": ["research"],
-       "title": "Research the gap: limit_req semantics (leaky vs token bucket)",
-       "body": "Evaluator flagged a correctness conflation. Resolve: what algorithm does nginx limit_req actually implement? What are the implications for burst handling? Post to blackboard." }],
-    [{ "assignee": "architect",
-       "title": "Red-team round-1 rate-limiting — keyed to correctness flag",
-       "body": "The evaluator flagged: 'conflates limit_req (leaky) with token bucket'. Attack the prior design on this point. Read blackboard; do not read siblings." }],
-  ],
-  "blackboard": { "extra": { "decision": "rate-limiting", "round": 2, "stakes": "standard" } }
-})
-# On promotion: synthesize design-doc v2 (corrected algorithm). Create evaluator card (round 2).
-```
-
-Evaluator returns: `overall: 4.1, delta_vs_last: +0.9, flagged_weaknesses: [{dimension: consequences, issue: "cost number vague", severity: minor}], verdict: converged` → proceed to interview + ADR. (The minor flag is below the noise floor; it doesn't block convergence.)
-
-## Notes
-
-- **Idempotent recovery.** Interrupted after the call? Re-dispatch resumes your session; calling `kanban_chains` again with the same goal recovers the topology rather than duplicating cards.
-- **Peer independence.** Each `assignee: "architect"` chain is a separate spawned session (no live architect gateway), so perspectives are genuinely independent — they share only the blackboard.
-- **Evaluator independence.** The evaluator is the `verifier` profile — a separate spawned session. It sees only the design-doc version + the rubric, never your synthesis reasoning. This is the maker/checker separation applied to design.
-- **Best-so-far tracking.** Keep the design-doc version with the highest evaluator `overall`. On regression (delta < 0), discard the regressed version and revert. The best-so-far is the ADR basis.
-- **Do not call `kanban_complete` while parked.** You auto-promote when the terminal step completes; only then evaluate → decide → interview → write the ADR.
+**The battery is the terminal gate:** the final ADR is independently re-graded
+by `verifier/secrets/dc-val-battery-secrets.md` §2 (CITE+GAP+FAILURE +
+fabrication guard §2.3 on all 4 load-bearing facts). If the converge verifier
+omitted a behavior but the design somehow advanced, the battery fails it → §6
+trust-the-battery. The converge loop raises the catch rate; the battery closes
+the gap.

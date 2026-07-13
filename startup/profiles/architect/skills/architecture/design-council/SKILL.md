@@ -1,188 +1,174 @@
 ---
 name: design-council
-description: Run an irreversible design decision through a research-backed council with an independent evaluator before recording the ADR. Use when you owe an architecture decision or ADR, or when a design-it-twice comparison is called for — any design output that must not come from one agent's memory alone.
+description: Run an irreversible design decision through a research-backed council with an independent DoD verifier before recording the ADR. Use when you owe an architecture decision or ADR, or when a design-it-twice comparison is called for — any design output that must not come from one agent's memory alone. Driven by the loop_engine plugin.
 ---
 
 A design decision owed by the architect is **council** work, not memory
-retrieval. The council **fans out** research and peer-architect perspectives
-via `kanban_chains`, which **parks** the architect until they complete — so the
-ADR is built from research, critique, and a live PO discussion, never from one
-agent's training memory.
+retrieval. The council is driven by **`loop_engine`** — a generic converge-loop
+engine that executes a phase, has an independent **verifier** check a concrete
+**definition-of-done**, and replans / advances / escalates on the structured
+verdict. The ADR is built from research, critique, a defect-coverage artifact,
+and a live PO discussion — never from one agent's training memory.
 
-The iteration signal is an **independent evaluator** (the `verifier` profile)
-scoring the design across five rubric dimensions — not the architect's
-self-confidence. The loop **improves → evaluates → keeps or discards →
-converges**, monotonically: a round that regresses is reverted, not
-accumulated. (autoresearch's improve→measure→keep/discard, applied to design
-quality.)
+The iteration signal is the **DoD verdict**, not the architect's
+self-confidence and not a 1–5 quality score (a leaky proxy: the v2 council
+converged at 4.47/5 yet missed a latent defect). The DoD is a concrete,
+checkable contract; for design phases it includes a **defect-coverage
+artifact** (`behaviors[]` + `defect_traces[]`) the engine mechanically
+validates — see [`references/dod-contract.md`](references/dod-contract.md).
+The loop **executes → evaluates the DoD → keeps/discards → converges**,
+monotonically; a `latent_defect` trace hard-blocks advance.
 
-**Leading words.** *council* — the multi-perspective deliberation. *parked* —
-your card blocked in dependency-wait by `kanban_chains`, auto-promoted when the
-terminal step completes. *stakes* — the project's value/risk tier, **declared
-by the PO on the design card** (low / standard / high); sets the council tier,
-the evaluator model, the max rounds, *and* the PO's role. *floor* / *ceiling*
-— the minimum and maximum council effort. *diverge* (round 1, independent
-perspectives) → *critique* (round 2+, adversarial, targeted by evaluator
-flags) → *synthesize* → *evaluate*. *review* — a PO card checking a synthesis
-for **product fit** (high stakes, each round). *interview* — a live intercom
-`ask` with the PO before the ADR (standard + high). *blackboard* — the shared
-root card `kanban_chains` creates. *best-so-far* — the highest-scoring
-design-doc version; the revert target when a round regresses. *plateau* — the
-score delta below which two consecutive rounds signal convergence.
+**Leading words.** *council* — the multi-perspective deliberation. *stakes* —
+the project's value/risk tier, **declared by the PO on the design card**
+(low / standard / high); sets the loop_engine phases, the cap, the
+no-progress threshold, *and* the verifier shape. *floor* / *ceiling* — the
+minimum and maximum council effort. *DoD* — the definition-of-done the verifier
+checks (concrete items, pass/fail). *defect-coverage artifact* —
+`behaviors[]` (every stated brief behavior) + `defect_traces[]` (one CITE+GAP+
+FAILURE chain per behavior); the engine validates it before trusting `dod_met`.
+*best-so-far* — the highest-scoring design version, persisted by the driver to
+`council:best_so_far`; the revert target when a round regresses. *interview* —
+a distinct post-convergence phase: a live intercom `ask` with the PO before the
+ADR. *blackboard* — the shared root card `loop_engine` creates; the driver
+persists `council:last_iteration` + `council:best_so_far` + `council:po_interview`
+there. *workflow_complete* — the engine's terminal signal (last phase DoD met).
 
 ## Decompose into decisions — and check coverage
 
 Break the design into decisions (one ADR each), one **phase** at a time. Use
-the architectural dimensions as a **coverage checklist**, not as fan-out
-cards: data model, security/auth, infrastructure/deployment, API surface,
-cross-cutting. Ensure your decision set covers each dimension that applies.
+the architectural dimensions as a **coverage checklist**: data model,
+security/auth, infrastructure/deployment, API surface, cross-cutting. Ensure
+your decision set covers each dimension that applies.
 
-**Defect coverage — trace every stated behavior, not just the first gap.** When
-you validate or challenge an existing design (or your own synthesis), enumerate
-**every behavior the brief or ADR states** and derive **each one's failure
-implication**, then synthesize the **combined** failure. Do not stop at the
-first contradiction or defect — a single design can carry **multiple distinct
-latent defects**, and finding one does not exhaust the search. The evaluator
-scores general quality, not exhaustive defect-coverage, so it may not flag a
-missed second defect; the thoroughness is yours to enforce. Keep tracing stated
-behaviors until each one's failure mode is either named or provably absent.
+**Defect coverage — trace every stated behavior, not just the first gap.** This
+is now a **required artifact** the verifier produces and the engine validates
+(see [`dod-contract.md`](references/dod-contract.md) § DEFECT-COVERAGE):
+enumerate **every behavior the brief or ADR states**, derive **each one's
+failure implication** as a CITE+GAP+FAILURE chain, and do not stop at the first
+defect — a single design can carry **multiple distinct latent defects**. The
+verifier's `dod_met` is not trusted alone: the engine asserts every behavior
+has a trace, no trace is fabricated, and no trace is left `latent_defect`
+before it advances.
 
-## The loop — one decision
+## The loop — one decision (driven by loop_engine)
 
 1. **Assess.** Take **stakes** from the card (PO-declared). Rate complexity by
-   the blast-radius instinct. Stakes fixes the council tier, the evaluator
-   model, the max rounds, *and* the PO-interaction model (rubric below). You
-   may escalate a decision above the project tier with reason.
+   the blast-radius instinct. Apply the **auth-guardrail** (load-bearing — the
+   engine cannot enforce domain): a decision touching **security / auth /
+   data-loss / irreversible-state is NEVER low** — force standard or high; a
+   throwaway auth decision would ship with no gate (low = T1, no verifier).
+   Stakes fixes the loop_engine phases, the cap, the no-progress threshold, and
+   the verifier shape (rubric below).
 
-   *Done when:* stakes, complexity, council shape, evaluator model, max rounds,
-   and PO-interaction model are all recorded.
+   *Done when:* stakes, tier, and the loop_engine phases config are chosen.
 
-2. **Diverge.** Call `kanban_chains` with the round-1 shape for your tier —
-   **standard**: research + peer chains, **no `after`** (you synthesize).
-   **High**: research + peer chains + `after: [synthesis, PO review]` (a peer
-   synthesizes, the PO reviews it for product fit). Park.
+2. **Call `loop_engine` once.** Author ONE `loop_engine({goal, runner:"architect",
+   phases:[...], no_progress_threshold})` call with the tier's phases config
+   from [`references/call-templates.md`](references/call-templates.md). The
+   engine owns the rest: it creates the root blackboard, drives each phase's
+   execute→evaluate→decide cycle, persists `council:*` state, and
+   advances/escalates on the DoD verdict. You write nothing during the loop and
+   do not hand-call `kanban_chains` / `kanban_block` / evaluator cards at the
+   top level — the engine is the topology author on its root subtree.
 
-   *Done when:* `kanban_chains` returned and your card is in dependency-wait.
-   You wrote nothing, and you did not call `kanban_complete` — you auto-promote
-   when the terminal step completes.
+   The phases (standard + high): **(0) council-converge** — the T2
+   verifier-gated converge loop (each iteration's execution card nests a
+   `kanban_chains` researcher+peer fan-out, then synthesizes a design-doc
+   version; the verifier evaluates the DoD artifact; the driver persists
+   `council:last_iteration` + `council:best_so_far`); **(1) PO-HITL interview**
+   — a distinct T1 phase reached only after phase 0 `dod_met`-advance; the
+   worker calls intercom `ask`, self-blocks `needs_input` on timeout, and is
+   re-entrant; **(2) ADR-record** — a T2 phase whose verifier checks ADR
+   convention only. Low = 2 T1 phases (converge + ADR, no interview, no
+   verifier).
 
-3. **Read inputs → synthesize → evaluate.** On re-dispatch, read research +
-   perspectives (+ the synthesis and PO *review* at high stakes). Synthesize
-   your design-doc version, then **create the evaluator card** (the judge
-   scores it across the five rubric dimensions — see
-   [`references/evaluator-rubric.md`](references/evaluator-rubric.md)). Park
-   again until the evaluator returns its verdict.
+   *Done when:* `loop_engine` returned and your card is dependency-parked.
 
-   *Done when:* the evaluator's output schema is in hand — `overall`,
-   `delta_vs_last`, `flagged_weaknesses`, `verdict`.
+3. **On `workflow_complete`.** The engine returns `decision=workflow_complete`
+   when the last phase (ADR-record) DoD is met. Confirm the ADR is on disk at
+   `docs/adr/<n>-<slug>.md` with Context / Alternatives-Considered / Decision /
+   Consequences / Citations, citing research + perspectives + the converge
+   verdict (with the `defect_traces` that caught any gap) + `council:po_interview`.
 
-4. **Decide — keep / discard / converge.** Act on the evaluator verdict:
-
-   - **`improve`** (score rose, or a critical/important flag remains, and a
-     round remains within the max) → run a **targeted critique round** on the
-     evaluator's flagged weaknesses (`kanban_chains`: targeted research +
-     red-team keyed to the specific flags). Store this version as the new
-     *best-so-far* if it scored higher. Return to step 3.
-   - **`converged`** (overall ≥ 4.0, zero critical/important flags, *or*
-     plateau over 2 rounds) → proceed to step 5. The best-so-far version is
-     the ADR basis.
-   - **`regressed`** (delta < 0) → **discard** this round's changes: revert to
-     the best-so-far design-doc version. Do not accumulate a bad round. Return
-     to step 3 with the reverted design, OR if max rounds is hit, proceed to
-     step 5 with the best-so-far and a *Residual risks* section.
-   - **Ceiling (max rounds) hit without convergence** → proceed to step 5 with
-     the best-so-far; record a *Residual risks* section listing the
-     evaluator's remaining flags.
-
-   *Done when:* you have either converged (proceeding to step 5) or hit the
-   ceiling (proceeding to step 5 with residual risks).
-
-5. **Interview the PO** (standard + high; **skip at low stakes**). Use the
-   intercom tool with **`action: ask`** to `startup/product-owner` on the
-   card's topic with your open trade-off questions. The PO has no live session,
-   so the broker spawns one to receive the ask and reply — **`ask` blocks for
-   the reply** (returns within ~30s). Fold the reply into the decision. **If
-   the ask times out, re-ask or block the card `needs_input` — never write the
-   ADR without the PO's input.**
-
-   *Done when:* the PO has replied (or the card is blocked awaiting them).
-
-6. **Record the ADR.** Write to `docs/adr/` per `docs/agents/adr-convention.md`
-   (Context / Alternatives Considered / Decision / Consequences / Citations).
-   Cite research, perspectives, synthesis, the **evaluator verdict** (overall
-   score, flags resolved, convergence round), PO *review*(s) (high), and the PO
-   *interview*. Ceiling hit → add a *Residual risks* section (the evaluator's
-   remaining flags) and block `needs_input`.
-
-   *Done when:* ADR on disk, all council inputs + evaluator verdict cited,
-   convention sections present, and — if the ceiling was hit — the card is
-   blocked for review.
+   *Done when:* ADR on disk, all council inputs + the DoD verdict cited.
 
 ## The floor
 
 Every ADR is the output of at least one council round — **≥1 research card +
-≥1 peer-architect perspective**, with you parked throughout, never
-memory-only. Low stakes meets this with the minimum (research + 1 peer, 1
-round, no evaluator, no PO interaction). The evaluator is the *iteration
-signal* — the floor is a single round, so at low stakes the floor IS the
-ceiling; the evaluator is not spawned.
+≥1 peer-architect perspective**, with you parked throughout, never memory-only.
+Low stakes meets this with the minimum (T1: 1 converge phase = 1 research + 1
+peer, 1 iteration, no verifier, no PO interview). At low stakes the floor IS
+the ceiling; the verifier is not spawned (loop_engine T1 spine).
 
 ## The ceiling
 
-Max rounds are **stakes-scaled** (rubric below). Convergence is the evaluator's
-call: plateau (score delta < threshold over 2 rounds) or overall ≥ 4.0 with
-zero critical/important flags. Ceiling hit without convergence → record the ADR
-with a *Residual risks* section (the evaluator's remaining flags) and block
-`needs_input`.
+Caps are **stakes-scaled** (rubric below). Convergence is the verifier's
+`dod_met` (every item pass + every behavior traced + no critical/important
+gap), validated by the engine's artifact gate. **Ceiling hit without convergence
+no longer auto-ships a residual-risks ADR** — the engine escalates to a sticky
+`needs_input` card (`hard_cap`) naming exactly what the human owes. That is a
+strengthening: a design that cannot meet the DoD within the cap is escalated,
+not rubber-stamped.
 
 ## Keep/discard — the best-so-far version
 
-Each round produces a design-doc version. The architect maintains a
-**best-so-far** (the version with the highest evaluator `overall`). When a
-round **regresses** (delta < 0), the architect discards that round's changes
-and reverts to the best-so-far — the design monotonically improves; bad rounds
-are undone, not accumulated. v1's critique rounds only stacked; v2 can say
-"that round made it worse, revert." The best-so-far is the ADR's basis at
-convergence or ceiling.
+Each converge iteration produces a design-doc version. The driver persists
+**`council:best_so_far`** (the highest-scoring version's snapshot) to the root
+blackboard. A **regressing** iteration (lower score) does NOT overwrite
+best-so-far; the next replan execution worker reads `council:last_iteration` +
+`council:best_so_far` and **revises from best-so-far**, discarding the regressed
+version. The design monotonically improves. (Backstop: even if best-so-far
+tracking fails, the artifact gate re-traces every behavior each iteration, so a
+reintroduced `latent_defect` forces `dod_met=false` → replan regardless.)
 
-## Rubric — stakes sets the tier, evaluator, max rounds, and PO's role
+## Rubric — stakes sets the phases, cap, no-progress threshold, and verifier
 
-| Stakes (PO-declared) | Council shape | Evaluator | Max rounds | PO interaction |
+| Stakes (PO-declared) | loop_engine phases | Cap (max_iterations) | no_progress_threshold | Verifier |
 |---|---|---|---|---|
-| **Low** (prototype / internal / throwaway) | 1 research + 1 peer, 1 round | **none** (1 round, converges immediately) | 1 | none |
-| **Standard** (default) | 1 research + 1 peer (+1 if high complexity), ≤3 rounds | **single judge** (`verifier`) | 3 | **interview** — one live intercom `ask` before the ADR |
-| **High** (revenue / safety / brand / hard-to-reverse) | 1 research + 2-3 peers + critic, ≤5 rounds; `after:[synthesis, PO review]` per round | **ensemble of 3** (`verifier` ×3, averaged) | 5 | **review** card after each synthesis (product fit) **+ interview** (live ask) before the ADR |
+| **Low** (prototype / internal / throwaway) | `[converge T1, ADR T1]` | MAX_PHASE_STEPS=1 (each phase runs once) | n/a | **none** (T1 spine). Auth-guardrail refuses low for auth/security/data-loss. |
+| **Standard** (default) | `[converge cap3, interview T1, ADR cap2]` | 3 | 3 | **single judge** (`verifier`, `dod-verdict` skill) |
+| **High** (revenue / safety / brand / hard-to-reverse) | `[converge cap5, interview T1, ADR cap2]` | 5 | 3 | **ensemble of 3** (verifier-side `kanban_chains` fan-out; union `latent_defect`s, `dod_met`=AND) |
 
-The evaluator's **plateau threshold** (standard): score delta < 0.3 over 2
-consecutive rounds → converged. High-stakes ensemble: convergence requires
-*agreement* — no judge disagrees on a critical flag, and the averaged overall
-≥ 4.0.
+The verifier's **noise floor**: minor-severity gaps alone do not block
+convergence. High-stakes ensemble convergence requires `dod_met` = AND of the
+three judges (a `latent_defect` flagged by ANY judge blocks).
 
-The PO *review* judges **product fit only** — does the synthesis serve the
-user/business and honor the stakes? Technical correctness is the evaluator's
-job, not the PO's.
+The PO **interview** is a distinct **post-convergence** phase (phase 1),
+reached only after the converge phase `dod_met`-advances — never a per-iteration
+escalation. (At high stakes, the per-round PO *review* is different — that is
+an `after`-step in the execute fan-in judging product fit, not a HITL
+escalation.)
 
-## Building the `kanban_chains` call + the evaluator card + the intercom `ask`
+## Calling loop_engine
 
-Templates (floor / standard / high-stakes / critique / evaluator / ensemble /
-PO-review / intercom-ask) with a worked example are in
-[`references/call-templates.md`](references/call-templates.md). Inline
-essentials:
+The three `loop_engine({goal, runner:"architect", phases:[...]})` call shapes
+(low / standard / high), with the exact execution + verifier + interview + ADR
+card bodies (defect-coverage DoD, fabrication guard, re-entrant interview,
+3-judge ensemble), are in
+[`references/call-templates.md`](references/call-templates.md). The DoD
+contract (items + `dod_verdict` schema + engine validation) is in
+[`references/dod-contract.md`](references/dod-contract.md).
 
-- **chains** run in parallel — one chain per perspective. The researcher chain
-  carries `skills: ["research"]`. Each peer-architect body says *"read the
-  blackboard; do not read sibling perspectives."*
-- **Evaluator card** (standard + high, after each synthesis): a card assigned
-  to `verifier` with the design-doc version + a pointer to
-  `references/evaluator-rubric.md`. The evaluator returns the output schema;
-  you act on the verdict (step 4). **At high stakes, fan out 3 evaluator
-  cards** (the ensemble); average the scores, union the flags, require
-  agreement on criticals.
-- **Standard:** no `after` → you synthesize after the intercom *interview*,
-  then the evaluator scores the synthesis.
-- **High:** `after: [synthesis, PO review]` per round → a peer proposes, the PO
-  reviews it for product fit, then the evaluator scores.
-- **Interview:** intercom `ask` to `startup/product-owner` on the card's topic;
-  block; timeout → re-ask or block (never proceed without PO input).
-- Use `kanban_chains` exclusively — never `delegate_task`. Board cards survive
-  session boundaries and are observable; subagents do not and are not.
+Inline essentials:
+
+- **Explicit `assignee` on every card spec** is load-bearing — `runner` falls
+  back to `worker`/`default` (no such profile dirs), so omitting `assignee`
+  stalls. Set `assignee:"architect"` on execution cards, `assignee:"verifier"`
+  on verifier cards.
+- **Researcher skill names**: use `skills:["docs-verification"]` for
+  auth/security decisions (it holds the ground-truth references) and
+  `skills:["research-scout"]` or `["deep-research"]` for general research.
+  There is **no skill named `"research"`**.
+- **Converge execution body** must read `council:last_iteration` +
+  `council:best_so_far` from the root blackboard (the engine injects the root
+  card id into the body footer) for keep/discard + gap-targeted replan.
+- **Converge verifier body** embeds the DoD as the `behaviors[]` +
+  `defect_traces[]` artifact with the fabrication guard, completes via
+  `kanban_complete(metadata={"dod_verdict":{...}})`, and honors the contract
+  (`recommendation` must not be `advance` unless `dod_met` is true). The
+  standing `dod-verdict` skill on the verifier profile backs this up.
+- **Interview body** is re-entrant: on resume, if `council:po_interview` is
+  already on the root blackboard, complete immediately; else intercom `ask`,
+  and on timeout / `[target_not_connected]` `kanban_block(kind="needs_input")`
+  on yourself — never proceed without PO input.

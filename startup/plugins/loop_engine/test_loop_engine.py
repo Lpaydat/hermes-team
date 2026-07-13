@@ -425,9 +425,28 @@ class TestSchema(unittest.TestCase):
         self.assertEqual(le_schemas.LOOP_ENGINE["name"], "loop_engine")
 
     def test_required_goal_and_execution(self):
-        required = le_schemas.LOOP_ENGINE["parameters"]["required"]
-        self.assertIn("goal", required)
-        self.assertIn("execution", required)
+        # goal is the only hard requirement; execution OR phases satisfies anyOf
+        # (a phases-only call is valid — _validate enforces the real invariant).
+        params = le_schemas.LOOP_ENGINE["parameters"]
+        self.assertEqual(params["required"], ["goal"])
+        any_of = params["anyOf"]
+        req_sets = [set(x["required"]) for x in any_of]
+        self.assertIn({"execution"}, req_sets)
+        self.assertIn({"phases"}, req_sets)
+
+    def test_phases_only_call_accepted_by_validate(self):
+        # A phases-only call (no top-level execution) passes _validate — the
+        # primary std/high call shape is buildable by a schema-strict driver.
+        err = le_tools._validate({"goal": "ship the ADR", "phases": [
+            {"execution": _execution_t2(), "verifier": _verifier(),
+             "max_iterations": 3}]})
+        self.assertIsNone(err)
+
+    def test_execution_only_call_still_accepted(self):
+        err = le_tools._validate({"goal": "ship it",
+                                  "execution": _execution_t2(),
+                                  "verifier": _verifier()})
+        self.assertIsNone(err)
 
     def test_execution_step_required_fields(self):
         step = le_schemas.LOOP_ENGINE["parameters"]["properties"]["execution"]
@@ -639,10 +658,12 @@ class TestReinvokeStubDecide(unittest.TestCase):
             preseed_comments={"t_root": [seeded]},
             run_for_task={"t_exec": run},
         )
-        # T1 hard cap = 1: one execution -> report result, terminate.
+        # T1 hard cap = 1: one execution -> report result, terminate. The
+        # terminal signal is workflow_complete (matching T2 semantics) so the
+        # driver's "on workflow_complete" step fires for both tiers.
         self.assertEqual(parsed["status"], "complete")
         self.assertEqual(parsed["iteration"], 1)
-        self.assertEqual(parsed["decision"], "hard_cap_reached")
+        self.assertEqual(parsed["decision"], "workflow_complete")
         # The execution card's structured result flows back to the caller.
         self.assertEqual(parsed["result"]["outcome"], "completed")
         self.assertEqual(parsed["result"]["metadata"], {"tests_passed": 12})
@@ -883,20 +904,24 @@ class TestDoDVerdictRead(unittest.TestCase):
         self.assertTrue(parsed["verdict"]["dod_met"])
 
     def test_dod_met_via_recommendation_advance_only(self):
-        # dod_met missing but recommendation=advance still advances.
+        # OVERRIDE CLOSED: recommendation='advance' NO LONGER overrides a missing
+        # dod_met. The engine does not trust recommendation to advance a failed
+        # DoD — it replans (or escalates) instead. (artifact-neutral verdict:
+        # no behaviors/defect_traces, so the gate defers to dod_met, which is
+        # falsy here.)
         seeded = _loop_state_comment_verifier(
             "t_root", verifier_card="t_verifier", iteration_counter=1)
-        verdict = {"recommendation": "advance", "gaps": []}
+        verdict = {"recommendation": "advance", "gaps": []}  # dod_met absent
         parsed, fake = _run_handler(
             args={"goal": "x", "execution": _execution_t2(),
                   "verifier": _verifier()},
-            create_ids=["t_root"],
+            create_ids=["t_root", "t_exec2", "t_verifier2"],
             preseed_comments={"t_root": [seeded]},
             run_for_task={"t_verifier":
                           _verifier_run(verdict)},
         )
-        self.assertEqual(parsed["status"], "complete")
-        self.assertEqual(parsed["decision"], "advance")
+        self.assertNotEqual(parsed["status"], "complete")
+        self.assertNotEqual(parsed["decision"], "advance")
 
     def test_no_verdict_when_verifier_run_missing(self):
         # T6: a done terminal with no verdict (dropped/stale completion — the
@@ -916,6 +941,202 @@ class TestDoDVerdictRead(unittest.TestCase):
         # Done terminal, no verdict -> re-evaluate (not replan, not phantom).
         self.assertEqual(parsed["status"], "blocked")
         self.assertEqual(parsed["decision"], "reevaluate")
+
+
+# =============================================================================
+# 9b. DoD artifact gate — the engine validates defect_traces before trusting dod_met
+# =============================================================================
+
+class TestDoDArtifactGate(unittest.TestCase):
+    """The verifier's dod_met is a self-report; the engine independently asserts
+    the defect-coverage artifact is complete and carries no latent_defect."""
+
+    def _verdict_with_traces(self, dod_met=True, trace_status="traced",
+                             fabricated=False, n_behaviors=1, n_traces=None):
+        behaviors = [{"behavior": f"b{i}"} for i in range(n_behaviors)]
+        nt = n_traces if n_traces is not None else n_behaviors
+        traces = [{"behavior": f"b{i}", "citation": f"cite{i}",
+                   "status": trace_status, "fabricated": fabricated}
+                  for i in range(nt)]
+        return {"dod_met": dod_met, "recommendation": "advance",
+                "behaviors": behaviors, "defect_traces": traces,
+                "gaps": [], "score": 0.9, "design_version_ref": "v1"}
+
+    def test_advance_when_artifact_complete_all_traced(self):
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier":
+                          _verifier_run(self._verdict_with_traces())},
+        )
+        self.assertEqual(parsed["status"], "complete")
+        self.assertEqual(parsed["decision"], "advance")
+
+    def test_rejects_dod_met_true_when_traces_missing(self):
+        # dod_met=true but defect_traces empty -> NOT advance (self-report
+        # untrusted; the artifact must be complete).
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        verdict = {"dod_met": True, "recommendation": "advance",
+                   "behaviors": [{"behavior": "b1"}], "defect_traces": [],
+                   "gaps": []}
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root", "t_exec2", "t_verifier2"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        self.assertNotEqual(parsed["status"], "complete")
+
+    def test_rejects_dod_met_true_when_fewer_traces_than_behaviors(self):
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        # 2 behaviors, 1 trace -> under-covered -> NOT advance.
+        verdict = self._verdict_with_traces(n_behaviors=2, n_traces=1)
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root", "t_exec2", "t_verifier2"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        self.assertNotEqual(parsed["status"], "complete")
+
+    def test_rejects_dod_met_true_when_a_trace_is_latent_defect(self):
+        # The headline fix: a latent_defect trace hard-blocks advance even when
+        # the verifier mistakenly wrote dod_met=true.
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        verdict = self._verdict_with_traces(dod_met=True,
+                                            trace_status="latent_defect")
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root", "t_exec2", "t_verifier2"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        self.assertNotEqual(parsed["status"], "complete")
+
+    def test_rejects_dod_met_true_when_a_trace_is_fabricated(self):
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        verdict = self._verdict_with_traces(dod_met=True, fabricated=True)
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root", "t_exec2", "t_verifier2"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        self.assertNotEqual(parsed["status"], "complete")
+
+    def test_artifact_neutral_when_not_required_advances_on_dod_met(self):
+        # Generic / ADR-convention: artifact_required not set (default False) +
+        # no behaviors/traces -> artifact-neutral -> dod_met alone advances.
+        # (Keeps the engine usable by consumers that return simple verdicts.)
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        verdict = {"dod_met": True, "recommendation": "advance",
+                   "gaps": []}  # no behaviors/defect_traces
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        self.assertEqual(parsed["status"], "complete")
+
+    def test_artifact_required_blocks_lazy_verifier(self):
+        # A converge phase opts in (artifact_required=True). A verifier that
+        # omits behaviors/defect_traces is lazy -> gate FAILS -> does NOT
+        # advance on dod_met=true alone (the escape hatch is closed for opted-in
+        # phases).
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        verdict = {"dod_met": True, "recommendation": "advance", "gaps": []}
+        verifier_req = _verifier()
+        verifier_req["artifact_required"] = True
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": verifier_req},
+            create_ids=["t_root", "t_exec2", "t_verifier2"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        self.assertNotEqual(parsed["status"], "complete")
+
+    def test_artifact_required_advances_when_artifact_complete(self):
+        # artifact_required=True + a complete artifact (one traced trace per
+        # behavior, no latent_defect) -> advances.
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        verifier_req = _verifier()
+        verifier_req["artifact_required"] = True
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": verifier_req},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier":
+                          _verifier_run(self._verdict_with_traces())},
+        )
+        self.assertEqual(parsed["status"], "complete")
+
+    def test_council_state_persisted_to_root_after_verdict(self):
+        # The driver (not the grandchild verifier) persists council:last_iteration
+        # + council:best_so_far to the root blackboard so replan workers can read
+        # the last verdict + best-so-far for keep/discard.
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        verdict = self._verdict_with_traces(dod_met=True, trace_status="traced")
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        last = le_tools._read_blackboard(fake, fake, "t_root",
+                                         "council:last_iteration")
+        best = le_tools._read_blackboard(fake, fake, "t_root",
+                                         "council:best_so_far")
+        self.assertIsNotNone(last)
+        self.assertEqual(last["dod_verdict"]["dod_met"], True)
+        self.assertEqual(last["design_version_ref"], "v1")
+        self.assertIsNotNone(best)
+        self.assertEqual(best["score"], 0.9)
+
+    def test_best_so_far_updates_only_on_higher_score(self):
+        # A regressing iteration (lower score) does NOT overwrite best_so_far.
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        # Pre-seed a best_so_far at 0.9; this iteration scores 0.5 -> stays 0.9.
+        _bb_payload = json.dumps({"key": "council:best_so_far",
+                                  "value": {"score": 0.9,
+                                            "design_version_ref": "v0"}})
+        best_seed = _Comment("loop_engine",
+                             f"[swarm:blackboard] {_bb_payload}")
+        verdict = self._verdict_with_traces(dod_met=False, trace_status="traced")
+        verdict["score"] = 0.5
+        verdict["design_version_ref"] = "v1"
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root", "t_exec2", "t_verifier2"],
+            preseed_comments={"t_root": [seeded, best_seed]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        best = le_tools._read_blackboard(fake, fake, "t_root",
+                                         "council:best_so_far")
+        self.assertEqual(best["score"], 0.9)  # unchanged — regression discarded
+        self.assertEqual(best["design_version_ref"], "v0")
 
 
 # =============================================================================
