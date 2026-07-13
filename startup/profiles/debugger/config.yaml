@@ -1,0 +1,106 @@
+model:
+  default: glm-5.2
+  provider: zai
+  base_url: https://api.z.ai/api/coding/paas/v4
+  context_length: 1000000
+toolsets:
+  - hermes-cli
+  - kanban
+agent:
+  api_max_retries: 10
+  reasoning_effort: xhigh        # debugging is reasoning-heavy (parity with architect + qa)
+kanban:
+  max_in_progress_per_profile: 2 # orchestrator parks on chains → low active concurrency (tunable)
+  dispatch_stale_timeout_seconds: 14400
+skills:
+  disabled:
+    # -- mattpocock family: legit, but not the debugger's job --
+    # (the trash skills from README §11.2 are KEPT but DISABLED — see the trash block below; not deleted, per user decision)
+    - design-an-interface
+    - request-refactor-plan
+    - ubiquitous-language
+    - claude-handoff
+    - code-review            # verifier reviews; debugger falsifies via verifier, never self-reviews
+    - find-skills
+    - grill-me
+    - grill-with-docs
+    - grilling               # HITL is a blocked card (§6.1), not a live grilling
+    - handoff
+    - implement              # pure orchestrator; fixes ship via dispatched developer cards
+    - loop-me
+    - prototype
+    - research               # debugger dispatches research to the researcher profile
+    - resolving-merge-conflicts
+    - tdd                    # the developer writes tests on the dispatched fix card
+    - to-spec
+    - to-tickets             # feature decomposition is tech-lead/architect territory
+    - triage
+    - wayfinder              # platform decomposition is the architect gate's T3
+    # NOTE: diagnosing-bugs is NOT disabled — it is the debugger's doctrine spine (§11.1).
+    # -- the architect's design doctrine three: NOT this profile (debugger escalates design) --
+    - codebase-design
+    - domain-modeling
+    - improve-codebase-architecture
+    # -- delivery / delegation / loops doctrine: the debug-loop skill embeds its own dispatch --
+    - team-delegation
+    - team-observability
+    - live-testing
+    - wayfinding-auto
+    - qa-build
+    - qa-exploratory
+    - qa-functional
+    - qa-journeys
+    - qa-protocol
+    - qa-security
+    - requesting-code-review
+    - hermes-agent-skill-authoring
+    - web-research
+    # -- parity blanket disables (defense in depth) --
+    - claude-code
+    - codex
+    - decision-mapping
+    - obsidian
+    - opencode
+    - ponytail
+    - ponytail-audit
+    - ponytail-debt
+    - ponytail-gain
+    - ponytail-help
+    - ponytail-review
+    # -- trash / unrelated / redundant: KEPT (present via shared mattpocock symlink) but DISABLED, not deleted (per user decision) --
+    - ask-matt                  # skill router — decomposer + find-skills cover it
+    - edit-article              # article editing — unrelated
+    - git-guardrails-claude-code  # Claude-Code hooks setup — hermes has approvals + command_allowlist
+    - migrate-to-shoehorn       # one-time TS migration — dead after use
+    - obsidian-vault            # Obsidian PKM — hermes uses docs/adr, docs/postmortems
+    - qa                        # mattpocock's GitHub-issue QA — hermes has a dedicated qa profile
+    - scaffold-exercises        # courseware — unrelated
+    - setup-matt-pocock-skills  # one-time repo configurator
+    - setup-pre-commit          # one-time Husky/lint-staged setup
+    - teach                     # educational — unrelated to runtime
+    - wizard                    # one-off bash-procedure generator
+    - writing-beats             # creative writing — unrelated
+    - writing-fragments         # creative writing — unrelated
+    - writing-great-skills      # skill-authoring reference — hermes has hermes-agent-skill-authoring
+    - writing-shape             # creative writing — unrelated
+approvals:
+  mode: 'off'                    # autonomous orchestrator (parity with architect)
+  cron_mode: deny
+command_allowlist:               # parity with architect
+  - execute_code
+  - copy/move file into sensitive credential/SSH/shell-rc path
+  - script execution via -e/-c flag
+  - recursive delete
+plugins:
+  enabled:
+    - intercom
+    - kanban_chains
+  disabled: []
+  entries:
+    intercom:
+      allow_tool_override: true
+    kanban_chains:
+      allow_tool_override: false
+onboarding:
+  seen:
+    tool_progress_prompt: true
