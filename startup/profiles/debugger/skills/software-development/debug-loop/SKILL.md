@@ -126,7 +126,7 @@ no-progress). Your job is the **shape** of the phases + the per-promotion re-pla
 ### The `goal`, `runner`
 - `goal`: the defect, written as one string — the symptom + the repro_attempt +
   env + stakes + originator + the bug-id + branch/worktree. This is posted to
-  the root card blackboard and derives the root idempotency key.
+  the root card blackboard and derives the root idempotency key. **MUST be byte-identical across EVERY `loop_engine` call for one bug** — the key is `loop:{driver}:{goal_hash}`; rewriting the goal between promotions (appending the hypothesis/fix) changes the hash, mints a NEW root, resets `phase_index` to 0, and the loop re-runs phase 0 forever instead of converging (observed: smoke-005). Hypotheses/fixes/verdicts go in phase bodies + the ledger, NEVER in the goal.
 - `runner`: **`"debugger"`** — you. Execution/verifier cards that do not name
   their own assignee inherit `debugger`; each phase below names its own assignee
   to route to the right profile.
@@ -318,3 +318,4 @@ the human owes. Unblock → resume.
 - **ALWAYS write the post-mortem at converge** (all four inputs).
 - **ALWAYS take exit B** when the root cause has no correct seam / spans a boundary.
 - **ALWAYS use the board (`loop_engine` + cards), not subagents, for fan-out.**
+- **ALWAYS pass the EXACT SAME `goal` string to every `loop_engine` call for one bug** — it derives the loop's idempotency key. Any drift (added hypothesis/fix/verdict) mints a new root and resets `phase_index` to 0 → the loop re-runs phase 0 forever and never reaches RCA. Mutate phase bodies + ledger between calls; never the goal.

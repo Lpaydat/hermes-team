@@ -4,70 +4,73 @@ model:
   base_url: https://api.z.ai/api/coding/paas/v4
   context_length: 1000000
 toolsets:
-- hermes-cli
-- kanban
+  - hermes-cli
+  - kanban
 agent:
   api_max_retries: 10
   reasoning_effort: xhigh
 skills:
   disabled:
-  - ask-matt
-  - claude-code
-  - codebase-design
-  - codex
-  - decision-mapping
-  - design-an-interface
-  - diagnosing-bugs
-  - domain-modeling
-  - edit-article
-  - git-guardrails-claude-code
-  - grill-me
-  - grill-with-docs
-  - grilling
-  - handoff
-  - implement
-  - improve-codebase-architecture
-  - loop-me
-  - migrate-to-shoehorn
-  - opencode
-  - ponytail
-  - ponytail-audit
-  - ponytail-debt
-  - ponytail-gain
-  - ponytail-help
-  - ponytail-review
-  - prototype
-  - qa
-  - request-refactor-plan
-  - resolving-merge-conflicts
-  - code-review
-  - scaffold-exercises
-  - setup-matt-pocock-skills
-  - setup-pre-commit
-  - tdd
-  - teach
-  - to-tickets
-  - to-spec
-  - triage
-  - ubiquitous-language
-  - wizard
-  - writing-beats
-  - writing-fragments
-  - writing-shape
-  - research-scout
-  - blogwatcher
-  - messaging-delivery
-  - xurl
+    - ask-matt
+    - claude-code
+    - codebase-design
+    - codex
+    - decision-mapping
+    - design-an-interface
+    - diagnosing-bugs
+    - domain-modeling
+    - edit-article
+    - git-guardrails-claude-code
+    - grill-me
+    - grill-with-docs
+    - grilling
+    - handoff
+    - implement
+    - improve-codebase-architecture
+    - loop-me
+    - migrate-to-shoehorn
+    - opencode
+    - ponytail
+    - ponytail-audit
+    - ponytail-debt
+    - ponytail-gain
+    - ponytail-help
+    - ponytail-review
+    - prototype
+    - qa
+    - request-refactor-plan
+    - resolving-merge-conflicts
+    - code-review
+    - scaffold-exercises
+    - setup-matt-pocock-skills
+    - setup-pre-commit
+    - tdd
+    - teach
+    - to-tickets
+    - to-spec
+    - triage
+    - ubiquitous-language
+    - wizard
+    - writing-beats
+    - writing-fragments
+    - writing-shape
+    - research-scout
+    - blogwatcher
+    - messaging-delivery
+    - xurl
 command_allowlist:
-- execute_code
-- script execution via -e/-c flag
-- recursive delete
+  - execute_code
+  - script execution via -e/-c flag
+  - recursive delete
 _config_version: 32
 fallback_model: []
 plugins:
   enabled:
-  - kanban_chains
+    - kanban_chains
   disabled: []
   entries:
     kanban_chains:
       allow_tool_override: false
+onboarding:
+  seen:
+    tool_progress_prompt: true

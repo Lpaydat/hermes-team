@@ -265,6 +265,7 @@ model:
 toolsets:
   - hermes-cli
   - kanban
+  - loop_engine   # REQUIRED — debug-loop drives the converge loop via the loop_engine tool (declared at profile level; see config note on _toggle_plugin_toolset wiring)
 agent:
   api_max_retries: 10
   reasoning_effort: xhigh        # debugging is reasoning-heavy (parity with architect + qa)
@@ -282,11 +283,12 @@ command_allowlist:               # parity with architect
   - script execution via -e/-c flag
   - recursive delete
 plugins:
-  enabled: [ intercom, kanban_chains ]
+  enabled: [ intercom, kanban_chains, loop_engine ]   # loop_engine REQUIRED — debugger is its first consumer (debug-loop skill drives the converge loop via the loop_engine tool)
   disabled: []
   entries:
     intercom: { allow_tool_override: true }
     kanban_chains: { allow_tool_override: false }
+    loop_engine: { allow_tool_override: false }
 onboarding:
   seen: { tool_progress_prompt: true }
 ```
