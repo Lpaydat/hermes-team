@@ -15,7 +15,7 @@ kanban:
 skills:
   disabled:
     # -- mattpocock family: legit, but not the debugger's job --
-    # (the trash skills in README §11.2 are DELETED from the profile dir, not listed here)
+    # (the trash skills from README §11.2 are KEPT but DISABLED — see the trash block below; not deleted, per user decision)
     - design-an-interface
     - request-refactor-plan
     - ubiquitous-language
@@ -67,6 +67,22 @@ skills:
     - ponytail-gain
     - ponytail-help
     - ponytail-review
+    # -- trash / unrelated / redundant: KEPT (present via shared mattpocock symlink) but DISABLED, not deleted (per user decision) --
+    - ask-matt                  # skill router — decomposer + find-skills cover it
+    - edit-article              # article editing — unrelated
+    - git-guardrails-claude-code  # Claude-Code hooks setup — hermes has approvals + command_allowlist
+    - migrate-to-shoehorn       # one-time TS migration — dead after use
+    - obsidian-vault            # Obsidian PKM — hermes uses docs/adr, docs/postmortems
+    - qa                        # mattpocock's GitHub-issue QA — hermes has a dedicated qa profile
+    - scaffold-exercises        # courseware — unrelated
+    - setup-matt-pocock-skills  # one-time repo configurator
+    - setup-pre-commit          # one-time Husky/lint-staged setup
+    - teach                     # educational — unrelated to runtime
+    - wizard                    # one-off bash-procedure generator
+    - writing-beats             # creative writing — unrelated
+    - writing-fragments         # creative writing — unrelated
+    - writing-great-skills      # skill-authoring reference — hermes has hermes-agent-skill-authoring
+    - writing-shape             # creative writing — unrelated
 approvals:
   mode: 'off'                    # autonomous orchestrator (parity with architect)
   cron_mode: deny
