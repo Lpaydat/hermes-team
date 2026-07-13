@@ -1,0 +1,90 @@
+model:
+  default: glm-5.2
+  provider: zai
+  base_url: https://api.z.ai/api/coding/paas/v4
+  context_length: 1000000
+toolsets:
+  - hermes-cli
+  - kanban
+agent:
+  api_max_retries: 10
+  reasoning_effort: xhigh        # debugging is reasoning-heavy (parity with architect + qa)
+kanban:
+  max_in_progress_per_profile: 2 # orchestrator parks on chains → low active concurrency (tunable)
+  dispatch_stale_timeout_seconds: 14400
+skills:
+  disabled:
+    # -- mattpocock family: legit, but not the debugger's job --
+    # (the trash skills in README §11.2 are DELETED from the profile dir, not listed here)
+    - design-an-interface
+    - request-refactor-plan
+    - ubiquitous-language
+    - claude-handoff
+    - code-review            # verifier reviews; debugger falsifies via verifier, never self-reviews
+    - find-skills
+    - grill-me
+    - grill-with-docs
+    - grilling               # HITL is a blocked card (§6.1), not a live grilling
+    - handoff
+    - implement              # pure orchestrator; fixes ship via dispatched developer cards
+    - loop-me
+    - prototype
+    - research               # debugger dispatches research to the researcher profile
+    - resolving-merge-conflicts
+    - tdd                    # the developer writes tests on the dispatched fix card
+    - to-spec
+    - to-tickets             # feature decomposition is tech-lead/architect territory
+    - triage
+    - wayfinder              # platform decomposition is the architect gate's T3
+    # NOTE: diagnosing-bugs is NOT disabled — it is the debugger's doctrine spine (§11.1).
+    # -- the architect's design doctrine three: NOT this profile (debugger escalates design) --
+    - codebase-design
+    - domain-modeling
+    - improve-codebase-architecture
+    # -- delivery / delegation / loops doctrine: the debug-loop skill embeds its own dispatch --
+    - team-delegation
+    - team-observability
+    - live-testing
+    - wayfinding-auto
+    - qa-build
+    - qa-exploratory
+    - qa-functional
+    - qa-journeys
+    - qa-protocol
+    - qa-security
+    - requesting-code-review
+    - hermes-agent-skill-authoring
+    - web-research
+    # -- parity blanket disables (defense in depth) --
+    - claude-code
+    - codex
+    - decision-mapping
+    - obsidian
+    - opencode
+    - ponytail
+    - ponytail-audit
+    - ponytail-debt
+    - ponytail-gain
+    - ponytail-help
+    - ponytail-review
+approvals:
+  mode: 'off'                    # autonomous orchestrator (parity with architect)
+  cron_mode: deny
+command_allowlist:               # parity with architect
+  - execute_code
+  - copy/move file into sensitive credential/SSH/shell-rc path
+  - script execution via -e/-c flag
+  - recursive delete
+plugins:
+  enabled:
+    - intercom
+    - kanban_chains
+  disabled: []
+  entries:
+    intercom:
+      allow_tool_override: true
+    kanban_chains:
+      allow_tool_override: false
+onboarding:
+  seen:
+    tool_progress_prompt: true
