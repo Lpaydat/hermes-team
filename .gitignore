@@ -114,6 +114,17 @@ startup/profiles/*/skills/.curator_backups/
 startup/profiles/*/skills/.hub/.ignore
 startup/profiles/*/skills/.hub/index-cache/
 
+# Skill usage stats + locks (runtime, regenerated on use)
+startup/profiles/*/skills/.usage.json
+startup/profiles/*/skills/.usage.json.lock
+
+# Self-edit backup snapshots (doctrine .bak.* — not source)
+*.bak.*
+
+# Test / validation / smoke board state (real boards tracked via the whitelist above)
+startup/kanban/boards/dc-val-*/
+startup/kanban/boards/debugger-smoke/
+
 # Test board artifacts (kanban_chains e2e test runs create these)
 startup/kanban/boards/test*-kvstore*
 

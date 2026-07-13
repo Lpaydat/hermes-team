@@ -1,9 +1,0 @@
-{
-  "last_report_path": "/home/lpaydat/.hermes-teams/startup/profiles/verifier/logs/curator/20260711-150438",
-  "last_run_at": "2026-07-11T15:04:38.849452+00:00",
-  "last_run_duration_seconds": 0.043864,
-  "last_run_summary": "auto: no changes; llm: skipped (consolidation off)",
-  "last_run_summary_shown_at": null,
-  "paused": false,
-  "run_count": 1
-}
