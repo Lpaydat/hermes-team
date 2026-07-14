@@ -83,13 +83,21 @@ The caller is linked to the terminal card (last `after` step, or last step of ea
 
 `kanban_delegate` and `qa_swarm` are deprecated — skills reference `kanban_chains` exclusively.
 
-## Finding routing: findings go to tech-lead, not developer
+## Finding routing: triage by finding type, never to developer
 
-When a profile (QA, verifier, any evaluator) discovers findings that require code changes, file them to **tech-lead**, not directly to `developer`. The tech-lead triages (is it real? worth fixing now?) and uses `kanban_chains` to create a dev+verifier pair — guaranteeing every fix gets adversarial review.
+When you discover findings that require changes, **triage before filing** — the orchestrator you route to depends on the finding type:
 
-Filing directly to `developer` creates a lone card with no verifier child. This silently breaks the dev→verifier pipeline invariant: every code change must pass through dev→verifier→merge, regardless of whether it originated from the normal implementation loop or from a QA finding.
+| Finding type | Route to | Why |
+|---|---|---|
+| **Bug** (defect, root-cause-unknown — the thing broke) | `debugger` | debugger diagnoses root cause, then dispatches a dev→verifier pair to fix it |
+| **Non-bug change** (enhancement, config, doc gap — works but should be better) | `tech-lead` | tech-lead triages (real? worth fixing now?) and dispatches a dev→verifier pair |
+| **Spec question / ambiguity** (unclear what correct behavior is) | `product-owner` | PO owns intent; clarifies the spec before anyone codes |
 
-Additionally, **dedup before filing.** Multiple workers or evaluators will independently find the same issue (e.g., SSRF found by functional + security + exploratory testing). Group these as one finding noting which workers confirmed it, then file one combined report — not N redundant cards. The synthesizer step handles this — it reads all worker results, groups by root cause, and files one triage report to tech-lead.
+Never file directly to `developer`. Both `debugger` and `tech-lead` are orchestrators that create a dev+verifier pair via `kanban_chains` — filing to `developer` directly creates a lone card with no verifier child and silently breaks the dev→verifier pipeline invariant: every code change must pass dev→verifier→merge, whether it came from the normal implementation loop or a QA finding.
+
+**Worked example (test bug finding → debugger card):** QA runs the auth flow; login returns 500 on a valid token refresh. That's a defect with unknown root cause → route to `debugger` (NOT tech-lead, NOT developer). The debugger card receives the finding with reproduction + evidence; debugger diagnoses, then uses `kanban_chains` to spin a dev→verifier pair. A spec ambiguity ("should refresh revoke the old token family?") → `product-owner` instead. An enhancement ("add a rate-limit header") → `tech-lead`.
+
+Additionally, **dedup before filing.** Multiple workers or evaluators will independently find the same issue (e.g., SSRF found by functional + security + exploratory testing). Group these as one finding noting which workers confirmed it, then file one combined report — not N redundant cards. The synthesizer step handles this — it reads all worker results, groups by root cause, and files one triage report to the right orchestrator (bug→debugger, non-bug→tech-lead).
 
 ## Never edit platform source (`hermes-agent/`)
 
