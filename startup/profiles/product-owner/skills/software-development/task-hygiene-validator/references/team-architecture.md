@@ -32,7 +32,8 @@ creep. This works whether the project is Rust code or YouTube scripts.
 
 ### 2. Specialists run in parallel
 
-Each specialist profile has its own `max_in_progress_per_profile: 1`.
+Each specialist profile has its own `max_in_progress_per_profile`
+(currently 6) in its `config.yaml`.
 This means tech-lead can work on a coding task while commerce-lead
 works on a pricing update simultaneously. They don't block each other
 because they're different profiles on the same board.
@@ -97,9 +98,9 @@ When a new domain starts:
 
 ## Concurrency model
 
-- **Within a profile**: strictly serial (`max_in_progress_per_profile:
-  1`). Multiple tasks queue; dispatcher picks one at a time in priority
-  order.
+- **Within a profile**: capped at `max_in_progress_per_profile`
+  (currently 6) — up to that many run concurrently, the rest queue and
+  the dispatcher picks them up in priority order.
 - **Across profiles**: fully parallel. Tech-lead and commerce-lead run
   simultaneously without interference.
 - **Queue depth is safe**: 5 queued tasks for tech-lead doesn't break

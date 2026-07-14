@@ -94,7 +94,7 @@ Rules (1-5 unchanged from v1, two additions):
 3. Only the completion boundary writes back to beads (the verifier's pass-merge-complete is that boundary).
 4. Beads-watchdog is the only beads→kanban bridge (idempotency keys mandatory).
 5. Beads reflects committed scope, not real-time execution status. Kanban is the granular record; beads goes stale during active work — accepted.
-6. **`kanban.auto_decompose: false` in the dispatcher gateway's `~/.hermes/config.yaml`** (a global dispatcher setting — no per-board toggle exists; set 2026-07-03, re-read every tick). Belt-and-braces: cards enter at todo/ready, never triage — the decomposer only touches triage.
+6. **`kanban.auto_decompose: false` in the dispatcher gateway's OWN profile config** — the `kanban:` block of `startup/profiles/<profile>/config.yaml`, the SAME config source as the caps (verified: `_resolve_auto_decompose_settings` in `gateway/kanban_watchers.py` reads it via the same `_load_config()` → `cfg.get("kanban")` path as the caps; no per-board toggle exists; set 2026-07-03, re-read every tick so a flip takes effect on the next dispatcher tick without a restart). Belt-and-braces: cards enter at todo/ready, never triage — the decomposer only touches triage.
 7. **Product-owner amendment**: product-owner owns bead CONTENT — it files beads from discovery and is the only role that changes what a bead promises. Tech-lead owns the contract derived from a bead. Verifier-found gaps split mechanically: *contract-vs-code* → tech-lead (re-contract); *contract-vs-intent* (the bead promises the wrong thing) → tech-lead routes to product-owner, who owns bead content. Nobody re-contracts anyone else's artifact.
 
 ## Merge story: serialized merge-owner (no auto-merge queue)
@@ -107,11 +107,11 @@ Rules (1-5 unchanged from v1, two additions):
 
 ## When to route here vs harness-direct
 
-Kanban-native IS the flow for implementation work (loops-engineering Execute phase: "the ONLY flow") — durable cards, auditable chains, per-profile caps now 3 so parallel beads genuinely parallelize. Harness-direct survives only for user-supervised spikes outside the loop (merged under tech-lead + user approval per merge-protocol.md). Never dispatch an ambiguous card. Historical routing table: orchestration-models.md.
+Kanban-native IS the flow for implementation work (loops-engineering Execute phase: "the ONLY flow") — durable cards, auditable chains, per-profile caps now 6 so parallel beads genuinely parallelize. Harness-direct survives only for user-supervised spikes outside the loop (merged under tech-lead + user approval per merge-protocol.md). Never dispatch an ambiguous card. Historical routing table: orchestration-models.md.
 
 ## Concurrency & budget
 
-- Dispatcher caps live in the ROOT `~/.hermes/config.yaml` (the config of whichever gateway holds the machine-global dispatcher lock — per-profile config.yaml kanban blocks are NOT read by the dispatcher; the copies there are failover insurance only). Current: `max_in_progress: 3`, `max_in_progress_per_profile: 1` (a single global value applied to every profile — no per-profile tuning exists), `dispatch_stale_timeout_seconds: 14400`. Caps are read at gateway boot — restart the gateway after changing them.
+- Dispatcher caps live in the **lock-holding gateway's OWN profile config** — the `kanban:` block of `startup/profiles/<profile>/config.yaml` — NOT the global `startup/config.yaml` and NOT `~/.hermes/config.yaml`. The dispatching gateway is whichever profile gateway holds the machine-global `startup/kanban/.dispatcher.lock` (non-deterministic — any profile gateway can win it), and it reads its own profile config at boot. Because the lock-holder is non-deterministic, **all profile configs must agree** on kanban caps for a cap change to take effect regardless of which gateway dispatches. Current per-profile: `max_in_progress_per_profile: 6`, `dispatch_stale_timeout_seconds: 14400`. Caps are read at gateway boot — edit every profile's `config.yaml`, then restart the lock-holding gateway.
 - Raising the per-profile cap above 1 (the T2 parallelism decision) requires: ≥3 genuinely independent leaf beads starving >48h, ≥1 clean end-to-end loop completed, and a file-safety check on the target beads (hotspot files serialize work regardless of agent count). Re-evaluation criteria from the 2026-07-03 consultation, preserved here deliberately.
 - Every card sets `max_runtime_seconds`; every harness call inside follows the harness-commands.md budget recipe (timeout + turn cap + post-hoc cost flag). Cost lands in the completion report → board-level spend is greppable.
 
@@ -119,7 +119,7 @@ Kanban-native IS the flow for implementation work (loops-engineering Execute pha
 
 The dispatch path's lifetime record before commissioning: 0 completions in 29 runs (config debt, not architecture). Prove the substrate with one throwaway loop:
 
-0. Preconditions: root `~/.hermes/config.yaml` has the `kanban:` block (caps + `auto_decompose: false`) and the gateway has been RESTARTED since (caps load at boot); `bd merge-slot create` run once in the target project; developer + verifier profiles resolvable (`hermes profile list`).
+0. Preconditions: each profile's `startup/profiles/<profile>/config.yaml` has the `kanban:` block (caps + `auto_decompose: false`) and the lock-holding gateway has been RESTARTED since (caps load at boot); `bd merge-slot create` run once in the target project; developer + verifier profiles resolvable (`hermes profile list`).
 1. Pick a trivial, real, single-file bead (or write one) on a project board.
 2. tech-lead calls `kanban_chains` (creates dev+verifier cards atomically, links tech-lead as dependent on verifier, blocks with kind=dependency).
 3. Watch: dispatcher claims dev card → developer completes with trace + report + branch/worktree metadata → verification card auto-promotes with the handoff → verifier executes, verdicts, merges via slot → bead closed.

@@ -27,7 +27,7 @@ A generic block (`kind=null`) creates status `blocked` — requires manual unblo
 
 ## max_in_progress_per_profile — dispatcher cap
 
-Global setting in `startup/config.yaml` (team config). Team gateways read this at boot, NOT `~/.hermes/config.yaml`. Default 1 → all same-profile workers execute serially. Raise to 5+ for parallel workers. **Always edit `startup/config.yaml`** — the dispatcher reads it at gateway boot, so restart the dispatcher-holding gateway after changes. Check lock holder: `fuser .dispatcher.lock`.
+Set in each profile's own `startup/profiles/<profile>/config.yaml` (its `kanban:` block). The dispatcher reads the **lock-holding gateway's OWN profile config** (whichever gateway holds `startup/kanban/.dispatcher.lock`), NOT the global `startup/config.yaml` and NOT `~/.hermes/config.yaml`. Current per-profile value: `6`. Because the lock-holder is non-deterministic, **all profile configs must agree** on the cap for a change to take effect regardless of which gateway dispatches — edit every profile's `config.yaml`, then restart the dispatcher-holding gateway. Check lock holder: `fuser .dispatcher.lock`.
 
 ## Finding routing — QA → tech-lead (NOT developer)
 
@@ -72,11 +72,11 @@ Then re-run the dry-run dispatch to confirm `Spawned: 1`.
 
 **Root cause:** When the orchestrator is first spawned, the dispatcher sets `claim_lock = "lambda:<pid>"` with a 15-min TTL. The orchestrator runs, calls `kanban_chains`, and blocks (status → `todo`). When the synthesizer completes, the card is promoted to `ready`. But the stale `claim_lock` from the original spawn is never cleared — the dispatcher sees it and skips the card on every tick.
 
-## Config file location — startup/config.yaml vs ~/.hermes/config.yaml
+## Config file location — per-profile config.yaml vs global configs
 
-Team gateways (venture-builder, tech-lead, etc.) read `startup/config.yaml` at boot, NOT `~/.hermes/config.yaml`. If you change `max_in_progress_per_profile` in `~/.hermes/config.yaml`, the team gateways won't see it — they use the value from `startup/config.yaml` cached at boot time.
+Team gateways (venture-builder, tech-lead, etc.) read the **kanban block of their OWN profile config** — `startup/profiles/<profile>/config.yaml` — at boot, NOT the global `startup/config.yaml` and NOT `~/.hermes/config.yaml`. The dispatcher in particular reads the config of whichever gateway holds `startup/kanban/.dispatcher.lock`. Because that lock-holder is non-deterministic (any profile gateway can win it), **all profile configs must agree** on kanban caps for a change to take effect regardless of which gateway dispatches.
 
-**Always edit `startup/config.yaml` for team-wide settings.** After changing any kanban config (`max_in_progress`, `max_in_progress_per_profile`, `dispatch_interval_seconds`), restart the gateway that holds the dispatcher lock for the change to take effect.
+**Edit every profile's `startup/profiles/<profile>/config.yaml` for kanban settings.** After changing any kanban config (`max_in_progress`, `max_in_progress_per_profile`, `dispatch_interval_seconds`), restart the gateway that holds the dispatcher lock for the change to take effect.
 
 Check which gateway holds the lock: `cat /home/lpaydat/.hermes-teams/startup/kanban/.dispatcher.lock` → PID → `hermes gateway list`.
 

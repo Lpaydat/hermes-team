@@ -70,12 +70,12 @@ Do not write `kanban_delegate(...)` in a skill and expect it to work. Use the re
 
 ## The `max_in_progress_per_profile` constraint
 
-The global dispatcher setting `max_in_progress_per_profile` (in the ROOT `~/.hermes/config.yaml`, NOT per-profile config) caps each profile to N concurrent tasks. Default: 1.
+`max_in_progress_per_profile` is set in each profile's own `startup/profiles/<profile>/config.yaml` (its `kanban:` block). The dispatcher reads the **lock-holding gateway's OWN profile config** (whichever gateway holds `startup/kanban/.dispatcher.lock`), NOT the global `startup/config.yaml` and NOT `~/.hermes/config.yaml`. It caps each profile to N concurrent tasks.
 
-**Impact on fan-out:** If you create 4 child cards all `assignee=qa`, and `max_in_progress_per_profile: 1`, the dispatcher picks up ONE at a time. The other 3 sit in `ready` until the first completes. This is serial execution, not parallel.
+**Impact on fan-out:** If you create 4 child cards all `assignee=qa`, and `max_in_progress_per_profile: 1`, the dispatcher picks up ONE at a time. The other 3 sit in `ready` until the first completes. Raise the cap for parallelism.
 
 **To get true parallelism:**
-1. Raise `max_in_progress_per_profile` in ROOT `~/.hermes/config.yaml` (e.g., to 4)
+1. Raise `max_in_progress_per_profile` in **every** profile's `startup/profiles/<profile>/config.yaml` (e.g., to 4) — because the lock-holder is non-deterministic, all profile configs must agree for the change to take effect regardless of which gateway dispatches.
 2. Restart the gateway (caps load at boot)
 3. Verify: `hermes kanban list --status running` should show multiple `qa` tasks
 

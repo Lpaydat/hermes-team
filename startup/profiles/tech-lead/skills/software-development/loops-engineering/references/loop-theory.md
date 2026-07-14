@@ -73,7 +73,7 @@ The tech-lead runs autonomously once the plan is approved.
 **Beads watchdog**: `~/.hermes/profiles/tech-lead/scripts/beads-watchdog.sh` + `scripts/process-beads.py` — zero-cost cron script scanning all beads projects every 5 min, reports ready work to Telegram. Active projects controlled by `~/.hermes-teams/startup/active-projects.json`. **Never add projects to the active list without asking the user** — they own that decision, and stale "ready" issues usually indicate inactivity, not urgency.
 
 **Three-control duplicate prevention** (proven pattern for autonomous task creation):
-1. **Concurrency cap**: `kanban.max_in_progress_per_profile: 1` in config — dispatcher won't spawn a second tech-lead while one is running. The script also checks `hermes kanban list --status running` before creating anything.
+1. **Concurrency cap**: `kanban.max_in_progress_per_profile` in the profile config (`startup/profiles/<profile>/config.yaml`) — caps same-profile concurrency at N (currently 6). At low N this bounds parallel spawns; the script also checks `hermes kanban list --status running` before creating anything.
 2. **Board scan before create**: the script queries all existing tech-lead tasks, extracts beads IDs from titles (e.g. `[<project>-<hash>] ...`), and skips any issue that already has a task — regardless of task status (ready, running, blocked, done).
 3. **Idempotency keys**: every `hermes kanban create` uses `--idempotency-key "beads-{issue_id}"` so even if both controls fail, the board itself rejects the duplicate.
 

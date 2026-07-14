@@ -131,10 +131,14 @@ If the profile using this skill is a *scoped-fixer* (observer + safe remediation
   cap, respawn guard).
 - **Config boot-time caching.** Gateways read `kanban.max_in_progress` and
   `kanban.max_in_progress_per_profile` at boot and cache them. Changing config after
-  boot does NOT affect running gateways. Team gateways read `startup/config.yaml`
-  (the team config), NOT `~/.hermes/config.yaml` (the default profile config) — these
-  are separate files with separate values. To change dispatcher caps for the team,
-  edit `startup/config.yaml` and restart the gateway holding the dispatcher lock.
+  boot does NOT affect running gateways. The dispatcher reads the **lock-holding
+  gateway's OWN profile config** — the `kanban:` block of
+  `startup/profiles/<profile>/config.yaml` — NOT the global `startup/config.yaml` and
+  NOT `~/.hermes/config.yaml`. Because the lock-holder is non-deterministic (any
+  profile gateway can hold `startup/kanban/.dispatcher.lock`), **all profile configs
+  must agree** on kanban caps for a change to take effect regardless of which gateway
+  dispatches. To change dispatcher caps, edit every profile's `config.yaml` and
+  restart the gateway holding the dispatcher lock.
   Check which gateway holds the lock: `cat <kanban-boards-dir>/.dispatcher.lock`.
 - **Reporting "no cron jobs" from one `cronjob action=list`.** That tool is
   profile-scoped; in a multi-profile team it returns `0` for every profile except

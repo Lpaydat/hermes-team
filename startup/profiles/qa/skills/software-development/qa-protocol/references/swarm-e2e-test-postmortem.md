@@ -84,5 +84,5 @@ QA finding → tech-lead → kanban_delegate → developer + verifier → merge 
 - `kanban_swarm.py` hardcodes `requesting-code-review` and `humanizer` skills for verifier/synthesizer
 - `max_in_progress_per_profile` needs gateway restart to take effect
 - The dispatcher lock is held by the venture-builder gateway (PID 926), not the QA gateway
-- `auto_decompose` can be `false` in root config but still active if the holding gateway started before the change
+- `auto_decompose` lives in the holding gateway's profile config (same source as the caps), NOT a "root config"; it is re-read EVERY dispatcher tick (the #49638 fix in `gateway/kanban_watchers.py` `_resolve_auto_decompose_settings`), so flipping `auto_decompose: false` takes effect on the next tick WITHOUT a gateway restart
 - Platform source edits are overwritten on `hermes update` — work around at profile level only

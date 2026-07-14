@@ -31,8 +31,9 @@ hermes-hq (single board)
 
 1. **Dispatcher sees everything.** No stranded work.
 2. **Concurrency is enforced at the profile level**, not the board
-   level. `kanban.max_in_progress_per_profile: 1` in config prevents a
-   second tech-lead spawn regardless of how many tasks are queued.
+   level. `kanban.max_in_progress_per_profile` (in each profile's
+   `config.yaml`; currently 6) caps how many same-profile tasks run at
+   once regardless of how many are queued.
 3. **Queue discipline is automatic.** Multiple ready tasks for
    tech-lead don't break anything — they queue, dispatcher picks one
    at a time in priority order.
@@ -50,14 +51,17 @@ small agent fleet, one board is simpler and more reliable.
 
 - **Dispatch tick**: every 60s, the gateway's built-in watcher runs
   `dispatch_once()`.
-- **Concurrency cap**: `kanban.max_in_progress_per_profile: 1` — the
-  dispatcher won't spawn a second instance of the same profile while
-  one is running.
+- **Concurrency cap**: `kanban.max_in_progress_per_profile` (currently
+  6, in the profile's `config.yaml`) — caps how many instances of the
+  same profile run at once.
 - **Crash recovery**: if a worker dies mid-task, the stale timeout
   (default 14400s / 4h) reclaims it. Heartbeat every <1h keeps it alive.
-- **Multi-gateway**: if multiple profile gateways run concurrently, only
-  ONE should have `kanban.dispatch_in_gateway: true` (the default
-  profile). Others set it to `false`.
+- **Multi-gateway**: `kanban.dispatch_in_gateway` (default `true`) is the
+  per-gateway on/off gate. The actual single dispatcher is decided by the
+  machine-global `startup/kanban/.dispatcher.lock` backstop — whichever
+  gateway holds it dispatches; others see it contended and stand down (the
+  holder is non-deterministic across restarts, NOT always `default`). Set
+  `dispatch_in_gateway: false` to make a specific gateway skip dispatching.
 
 ## Duplicate task prevention (three-control pattern)
 
