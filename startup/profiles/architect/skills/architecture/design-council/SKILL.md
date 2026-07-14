@@ -158,6 +158,9 @@ Inline essentials:
 - **Capture `root_id` from the first response; echo it as `loop_id`** on every
   re-invocation — drift-immune identity (a rewritten goal no longer resets the
   loop). The goal_hash is the disaster-recovery fallback, not the primary path.
+- **Optionally pass `discover:{dod}`** to ground the goal in the brief's stated
+  behaviors + constraints before converge (a phase-0 grounding worker). Omit for
+  the engine-default fast-pass skeleton (zero-regression).
 - **The converge verifier is `metric_type: "proxy"` + a `battery`** pointing at
   `verifier/secrets/dc-val-battery-secrets.md` — the engine dispatches the
   held-out battery as a **phase terminal** (both verifier AND battery must pass).

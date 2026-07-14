@@ -64,7 +64,8 @@ loop_engine({
   "strict_fact_basis": true,   # T9 — FIRST kwarg (literal). Arms fact-discipline: metric_type + evidence hard-required.
   "goal": "Converged ADR for <DECISION> (standard stakes)",
   "runner": "architect",
-  "loop_id": "<root_id from the first response — echo on EVERY re-invocation (drift-immune)>",
+  "loop_id": "<OMIT on the FIRST call; on EVERY re-invocation echo the root_id captured from the first response (drift-immune)>",
+  # "discover": {"dod": "Ground the goal: extract the brief's stated behaviors + constraints + the decision's stakes before converge."},  # optional — a discover phase-0 worker grounds the goal in evidence; omit for the engine-default fast-pass skeleton.
   "no_progress_threshold": 3,
   "phases": [
     {  # phase 0 — council-converge (T2, cap 3)
@@ -199,7 +200,11 @@ behaviors: #1 rotation-issues-new+stores; #2 admin-revoke-deletes-CURRENT-only;
 **Auth-guardrail:** stakes=HIGH (auth → never low). Phases = high shape (cap 5,
 3-judge ensemble).
 
-**Converge arc (what the loop must do):**
+**Converge arc (v2-native: `metric_type:"proxy"` + `battery`→secrets).** The
+converge verifier is a proxy (LLM judge), so the engine dispatches the held-out
+battery as a **phase terminal** — both the verifier AND the battery must pass
+for the phase to advance; a battery fail replans with the battery's gaps.
+
 1. Iteration 1: execution fans out research (`skills:["docs-verification"]` —
    holds `oauth-refresh-token-rotation.md`, the ground truth) + peers;
    synthesizes design-doc v1 (rotation, but no invalidation of the prior
@@ -208,19 +213,26 @@ behaviors: #1 rotation-issues-new+stores; #2 admin-revoke-deletes-CURRENT-only;
    the admin-revoke-CURRENT-only behavior). Each judge traces: rotation's
    failure-implication = "prior token survives → keeps minting JWTs" →
    `latent_defect`; admin-revoke's = "prior token not covered by CURRENT-only
-   delete" → `latent_defect`. Union → both latent. `dod_met=false`. Engine
-   artifact gate blocks advance → **replan**.
-3. Iteration 2: execution reads `council:last_iteration` (gaps) +
-   `council:best_so_far`; revises to name the invalidation mechanism (token-version
-   column / rotated-token denylist) + an access-JWT revocation path (short TTL +
-   jti denylist).
+   delete" → `latent_defect`. Union → both latent. `dod_met=false`. The
+   **held-out battery** (independent, reads secrets §1/§2) independently
+   re-grades and also flags the rotation latent_defect → `dod_met=false`.
+   Either failure alone blocks; here both fail → engine **replans** with the
+   union of gaps. (The battery is the backstop for the case the *verifier*
+   omits a behavior — here both catch it.)
+3. Iteration 2: execution reads `council:last_iteration` (verifier + battery
+   gaps) + `council:best_so_far`; revises to name the invalidation mechanism
+   (token-version column / rotated-token denylist) + an access-JWT revocation
+   path (short TTL + jti denylist).
 4. Verifier re-traces: rotation → `traced` (prior token invalidated); access
-   path → `traced` (jti denylist). All items pass, no `latent_defect`. `dod_met=true`,
-   artifact complete → **advance** to interview.
+   path → `traced` (jti denylist). All items pass, no `latent_defect`. The
+   battery independently confirms (secrets §2 CITE+GAP+FAILURE on all
+   load-bearing facts). Both verifier AND battery `dod_met=true`, artifact
+   complete → **advance** to interview.
 5. Interview (phase 1): PO confirms the trade-off; reply persisted to
    `council:po_interview`.
-6. ADR (phase 2): written citing the verdict + the defect_traces that caught
-   the gap + the PO reply. ADR-convention DoD met → `workflow_complete`.
+6. ADR (phase 2, `metric_type:"ground_truth"`): written citing the verdict +
+   the defect_traces that caught the gap + the battery verdict + the PO reply.
+   ADR-convention DoD met → `workflow_complete`.
 
 **The battery is the terminal gate:** the final ADR is independently re-graded
 by `verifier/secrets/dc-val-battery-secrets.md` §2 (CITE+GAP+FAILURE +

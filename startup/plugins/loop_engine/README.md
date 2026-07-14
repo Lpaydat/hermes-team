@@ -81,15 +81,15 @@ these fields off the verifier object:
 | `strict_dod` | `boolean` | per-verifier override of the workflow-wide flag (`true` wins). |
 | `artifact_required` | `boolean` | opt-in DoD-artifact gate (the design-council converge use case). When `true`, the engine independently asserts the verdict carries complete `behaviors[]` + `defect_traces[]` with no unfixed latent defect. Default `false` (generic; defers to `dod_met`). |
 
-> **CONTRACT GAP (verifier-spec level):** these fields are NOT yet listed in the
-> schema's `verifier.properties`. They pass through (JSON Schema's
-> `additionalProperties` defaults to `true`) and the engine validates them, but
-> an agent inspecting the schema sees only `{assignee, title, body, skill}`. This
-> is the **same invisible-field gap class** as the `1h5` top-level fix, one
-> nesting level down. **Your consumer skill template MUST instruct passing them
-> explicitly** — the debug-loop smoke proved a weak-context driver drops fields
-> that live only in prose. Until the schema surfaces them, the skill's literal
-> call template is load-bearing (see §5 Worked example).
+> **Verifier-spec field surface (was the CONTRACT GAP; now surfaced):** these
+> fields ARE listed in the schema's `verifier.properties` (the `_VERIFIER_V2_PROPS`
+> shared const, spread into both the top-level and per-phase verifier) — so a
+> schema-strict driver passes them rather than dropping them. They still pass
+> through via `additionalProperties: true` AND the engine validates them.
+> **Even with the schema surface, your consumer skill template should still pass
+> them as literal kwargs** — the debug-loop smoke proved a weak-context driver
+> drops fields that live only in prose (see §5 Worked example). The schema
+> surface makes it less template-dependent; the literal template is belt-and-braces.
 
 ### What the verifier RETURNS — the `dod_verdict`
 
