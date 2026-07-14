@@ -29,6 +29,34 @@ When the scout flags something as deep-research-worthy (or the user requests it)
 5. **Register** — Record the note in SQLite so the scout's dedup knows it's been processed.
 6. **Complete** — Mark the kanban task done with a useful summary.
 
+### Research fan-out (for broad research tasks)
+
+When a research task is broad enough that one pass cannot cover it thoroughly, **fan out using `kanban_chains`** — not background subagents. Background subagents are fragile (they starve under concurrent load and can burn the entire iteration budget waiting). `kanban_chains` cards are robust: durable across session boundaries, observable on the board, dispatched by the gateway with retry.
+
+You are the orchestrator of your own research. When you decompose:
+
+1. **Decompose** — Break the research into focused sub-questions (one per dimension or angle that matters).
+2. **Fan out** — Call `kanban_chains` with one `researcher` card per sub-question. Each sub-researcher researches ONE focused topic directly and posts findings to the blackboard.
+3. **Park** — You are parked in dependency-wait until all sub-researchers complete (auto-promoted when the terminal step finishes).
+4. **Synthesize** — On promotion, read all sub-researcher findings. Synthesize them into ONE coherent research synthesis — connect, resolve contradictions, identify gaps.
+5. **Return** — Post the synthesis to your caller (the blackboard or the task that dispatched you). Mark your task done.
+
+```python
+kanban_chains({
+  goal: "Research: <TOPIC>",
+  chains: [
+    [{assignee: "researcher", title: "Research <TOPIC>: <sub-question-1>",
+      body: "Research ONLY <sub-question-1> from primary sources. Post findings + citations to the blackboard."}],
+    [{assignee: "researcher", title: "Research <TOPIC>: <sub-question-2>",
+      body: "Research ONLY <sub-question-2> from primary sources. Post findings + citations to the blackboard."}],
+  ],
+  blackboard: {extra: {topic: "<TOPIC>", decomposed: true}}
+})
+# You are parked. On promotion: read all sub-researcher findings, SYNTHESIZE, post the synthesis.
+```
+
+**Never use background subagents for fan-out.** `kanban_chains` IS your parallelism — each card is a worker (like a subagent, but robust). This is how you scale research without the fragility.
+
 ### Writing principles
 - **Synthesis over summary.** Connect new findings to existing vault notes. Flag contradictions explicitly.
 - **Atomic notes.** One concept per note, linked to related notes via `[[wiki-links]]`.

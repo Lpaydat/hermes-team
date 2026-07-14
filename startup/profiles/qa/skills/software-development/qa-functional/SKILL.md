@@ -74,7 +74,7 @@ Apply based on artifact type:
 
 ## Program type dispatch
 
-Load the matching reference from the `live-testing` skill directory for type-specific test patterns: `references/cli-testing.md`, `references/api-server-testing.md`, `references/webapp-testing.md`, `references/tui-testing.md`, `references/mobile-app-testing.md`, `references/blockchain-testing.md`, `references/daemon-testing.md`, `references/library-testing.md`.
+Load the matching reference from the `live-testing` skill directory (if enabled) or discover the artifact's API surface by probing it directly: `references/cli-testing.md`, `references/api-server-testing.md`, `references/webapp-testing.md`, `references/tui-testing.md`, `references/mobile-app-testing.md`, `references/blockchain-testing.md`, `references/daemon-testing.md`, `references/library-testing.md`.
 
 ## Post verdicts to blackboard
 

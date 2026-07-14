@@ -109,7 +109,7 @@ When a script creates tasks across multiple boards, pass the board per-command. 
 **Duplicate prevention (3 controls):**
 1. Check `hermes kanban --board <slug> list --assignee <profile> --json` before creating — match beads IDs in task titles
 2. Use `--idempotency-key "beads-<issue-id>"` on every create call
-3. Set `max_in_progress_per_profile: 1` in config to prevent parallel spawns
+3. Set `max_in_progress_per_profile` in each profile's `config.yaml` to bound same-profile concurrency (at the current cap of 6, up to 6 run at once — so controls 1+2 are the real duplicate guard)
 
 ## Budget safety (verified recipe — 2026-07-03)
 
@@ -125,6 +125,6 @@ There is NO per-invocation dollar cap in any installed harness. The working cap 
 | Medium (refactor, integration) | 25 | 2700 | $2.00 |
 | Large (full feature) | 50 | 5400 | $5.00 |
 
-Hermes-side backstops (set these; they exist in code but default OFF): per-task `max_runtime_seconds` at card creation (dispatcher SIGTERM→SIGKILL→timed_out requeue), and the `kanban:` block in the ROOT `~/.hermes/config.yaml` — the dispatcher reads ONLY the config of the gateway holding the machine-global dispatcher lock, never per-profile configs; caps load at gateway boot (restart to apply). `max_in_progress_per_profile` is one global value applied to every profile.
+Hermes-side backstops (set these; they exist in code but default OFF): per-task `max_runtime_seconds` at card creation (dispatcher SIGTERM→SIGKILL→timed_out requeue), and the `kanban:` block in each profile's `startup/profiles/<profile>/config.yaml` — the dispatcher reads the **lock-holding gateway's OWN profile config** (the `kanban:` block of whichever gateway holds `startup/kanban/.dispatcher.lock`), NOT the global `startup/config.yaml` and NOT `~/.hermes/config.yaml`. The lock-holder is non-deterministic, so **all profile configs must agree** on caps for a change to take effect regardless of which gateway dispatches; caps load at gateway boot (restart to apply).
 
 Aggregate spend: per-profile `state.db` tracks per-session token totals (queryable via SQL sum); harness-child spend is invisible to Hermes unless the invoker writes the JSON-envelope cost back to the task — which is why the completion report requires it.

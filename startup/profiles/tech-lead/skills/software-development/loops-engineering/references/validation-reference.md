@@ -2,9 +2,9 @@
 
 Deep reference for the Validate phase. Load when setting up validation for a task or debugging validation quality.
 
-## Matt Pocock's `review` skill — two-axis review
+## Matt Pocock's `code-review` skill — two-axis review
 
-Runs two parallel sub-agents, deliberately separate so one axis can't mask the other:
+(Renamed from `review` in the skills v1.1 update.) Upstream it runs two parallel sub-agents, deliberately separate so one axis can't mask the other. **In Hermes**, the verifier's chains static worker runs BOTH axes itself sequentially inside its own card session — in-session sub-agents (`delegate_task`) are fragile here, and the axis separation is preserved by reporting under separate headings:
 
 ### Standards axis
 Does the code follow the repo's documented coding standards?
@@ -21,9 +21,9 @@ Does the code faithfully implement the originating issue/PRD?
 ### Aggregation
 Reports under `## Standards` and `## Spec` headings separately. Does NOT merge or rerank — the separation is the point.
 
-## `requesting-code-review` (obra/superpowers)
+## `requesting-code-review` (obra/superpowers) — NOT for the kanban loop
 
-Dispatches a code reviewer sub-agent with precisely crafted context — never your session's history.
+Historical/harness-direct-era tooling: dispatches a code reviewer sub-agent with precisely crafted context — never your session's history. In the kanban-native loop the tech-lead never dispatches reviewers (the `verifier` profile owns validation; Phase 4 forbids you from running any of this yourself). Kept for reference only.
 
 1. Get git SHAs: `BASE_SHA=$(git rev-parse HEAD~1)`, `HEAD_SHA=$(git rev-parse HEAD)`
 2. Dispatch reviewer sub-agent with: description, plan/requirements, base SHA, head SHA

@@ -1,24 +1,26 @@
 ---
 name: qa-protocol
-description: "Use when you receive a QA card or are the verifier/synthesizer in a QA swarm. Creates the swarm via qa_swarm tool, blocks until the synthesizer verdicts, then files a combined report to tech-lead. The ONLY skill that creates QA swarms and files findings."
-version: 2.1.0
+description: "Use when you receive a QA card or are the verifier/synthesizer in a QA swarm. Creates the swarm via kanban_chains, blocks until the synthesizer verdicts, then files a combined report to tech-lead. The ONLY skill that creates QA swarms and files findings."
+version: 3.2.0
 author: Hermes Agent
 license: MIT
 metadata:
   hermes:
-    tags: [qa, protocol, orchestrator, swarm, verdict]
+    tags: [qa, protocol, orchestrator, swarm, verdict, chains]
     related_skills: [qa-build, qa-functional, qa-journeys, qa-security, qa-exploratory, team-delegation]
 ---
 
 # QA Protocol — the orchestrator loop
 
-The **swarm** is the unit of QA work: you build the artifact, create a swarm of test workers via the `qa_swarm` tool, block until the synthesizer returns a **verdict**, then file a **triage** — one deduped report to tech-lead. The verdict is the gate: PASS, FAIL, or BLOCK.
+The **swarm** is the unit of QA work: you build the artifact, create ONE swarm of test workers via the `kanban_chains` tool, block until the synthesizer returns a **verdict**, then file a **triage** — one deduped report to tech-lead. The verdict is the gate: PASS, FAIL, or BLOCK.
+
+`kanban_chains` handles all linking and blocking internally. Never call `kanban_link` or `kanban_block` manually — the tool does it for you.
 
 ## Step 1 — Receive
 
 Read the kanban card body, the linked PRD/spec, and any parent task handoff. Extract what was built, what it claims to do, artifact type, and scope.
 
-**Done when:** you can state in one sentence what you're testing and what artifact type it is. If the spec is too vague, file a P4 to tech-lead and block.
+**Done when:** you can state in one sentence what you're testing and what artifact type it is.
 
 ## Step 2 — Plan + Size
 
@@ -30,46 +32,55 @@ Extract claims from the spec and risk-rank them P0–P4 (risk = likelihood × im
 | Claims | <10 | 10–20 | 20+ |
 | Execution | Single session | Swarm (2–3 workers) | Swarm (3–4 workers + containers) |
 
-**Done when:** claims extracted, risk-ranked, sizing determined. For small: build and test inline. For medium/large: build, then create swarm.
+**Done when:** claims extracted, risk-ranked, sizing determined.
 
 ## Step 3 — Build
 
 Build the real artifact from source. For medium/large stateful artifacts, build a container image. Load the `qa-build` skill for build detection, Containerfile generation, and podman build.
 
-**Done when:** artifact builds and you have positive evidence it's running. If build fails, file P0 to tech-lead and stop.
+**Done when:** artifact builds and you have positive evidence it's running.
 
 ## Step 4 — Create swarm (medium/large only)
 
-Call the `qa_swarm` tool with workers chosen based on what the artifact needs:
+Call `kanban_chains` ONCE with chains (parallel workers) + after (verifier + synthesizer). Choose workers based on what the artifact needs:
 
 | Worker | When | Skill |
 |---|---|---|
 | Functional | ALWAYS | qa-functional |
 | Exploratory | ALWAYS | qa-exploratory |
-| Journeys | Multi-step user flows (webapps, API sequences) | qa-journeys |
+| Journeys | Multi-step user flows | qa-journeys |
 | Security | Accepts input or has auth | qa-security |
 
-Write each worker's body with its specific checklist — the exact claims, journeys, checks, or charters to test. The tool allocates ports and blocks you on the synthesizer.
+Write each worker's body with its specific checklist. The tool links the caller to the synthesizer and blocks. Your session ends. You will be auto-promoted when the synthesizer completes.
 
-For small artifacts: skip the swarm, run all test phases inline.
+```
+kanban_chains(
+    goal="QA: test <feature>",
+    chains=[
+        [{"assignee": "qa", "skill": "qa-functional", "title": "[QA] Functional", "body": "<checklist>}"],
+        [{"assignee": "qa", "skill": "qa-security", "title": "[QA] Security", "body": "<checklist>}"]
+    ],
+    after=[
+        {"assignee": "qa", "title": "[QA] Verifier", "body": "Check all workers posted results"},
+        {"assignee": "qa", "skill": "qa-protocol", "title": "[QA] Synthesizer", "body": "Dedup findings, file triage to tech-lead"}
+    ],
+    blackboard={"image_tag": "<tag>", "container_port": 3000, "env_facts": "<facts>"}
+)
+```
 
-## Step 5 — Triage
+**When re-dispatched:** check if a synthesizer has already completed for this card via `kanban_show`. If yes, skip to Step 5 — creating a second swarm orphans the first swarm's workers.
 
-When re-dispatched, read the synthesizer's completion via `kanban_show`. The synthesizer already ran the triage — it deduped findings by root cause and filed one combined report to tech-lead.
+**Stale claim lock:** if re-dispatched but the card sits at `ready` for 30+ minutes without being spawned, the dispatcher may be skipping it due to a stale `claim_lock`. Run `hermes kanban --board <board> dispatch --dry-run` — if it shows `Spawned: 0` despite a ready card, clear the lock: `UPDATE tasks SET claim_lock = NULL, claim_expires = NULL WHERE id = '<id>'`. See `references/platform-constraints.md` for full diagnosis.
 
-- **Verdict FAIL (Critical findings exist):** the report is already filed. Block on the tech-lead's triage card: `kanban_block(reason="dependency: QA triage report t_<id> filed for tech-lead")`
-- **Verdict PASS:** complete the QA card with the test report.
+## Step 5 — Verdict
 
-Include **testability feedback** (Google TE pattern): design decisions that made testing hard, filed as P4 in the triage report.
+When re-dispatched after the synthesizer completes, read its completion via `kanban_show`. The synthesizer already deduped findings by root cause and filed one combined triage report to tech-lead.
 
-## Re-test loop
+`kanban_complete` the QA card with the verdict:
+- **PASS:** all claims proven, no Critical findings. Include the test report.
+- **FAIL:** Critical findings exist. The triage report is already filed to tech-lead. Tech-lead will triage, delegate fixes via `kanban_chains`, and create a new QA card for re-test if needed.
 
-When tech-lead delegates fixes and they merge through the dev→verifier pipeline:
-1. Pull latest, rebuild artifact
-2. Delta re-test (only the fixed dimension)
-3. Regression check (adjacent claims)
-4. Resolved → complete. New issue → file new triage to tech-lead.
-5. 3+ failures on same finding → escalate to tech-lead
+The re-test is a separate QA card — not a continuation of this one. Complete this card; the pipeline handles the rest.
 
 ## Verifier role (in swarm)
 
@@ -80,21 +91,30 @@ When tech-lead delegates fixes and they merge through the dev→verifier pipelin
 
 ## Synthesizer role (in swarm)
 
-The synthesizer runs the triage — the most important step for finding quality:
+The synthesizer runs the **triage**:
 
 1. Read the root card's blackboard and all worker completions via `kanban_show`
-2. **Dedup by root cause:** multiple workers will independently find the same issue (e.g., SSRF found by functional + security + exploratory). Group these as one finding, noting which workers confirmed it.
-3. **File one triage report** to `tech-lead` — a single kanban card with all findings grouped by root cause, severity-ranked:
-   ```
-   [QA][VERDICT] <PASS|FAIL|BLOCK> — N unique findings
-   P1: SSRF — /api/test passes arbitrary URLs (confirmed by 3 workers)
-   P1: Rate limiting — XFF spoof + TOCTOU race (confirmed by 2 workers)
-   P1: Auth mock incomplete — signUp/signIn methods missing
-   ```
-   Each finding includes: claim tested, severity, actual result, reproduction steps (copy-pasteable), evidence, environment.
-4. `kanban_complete(metadata={verdict, findings_count: N, root_causes: N, claims_tested, claims_proven})`
+2. **Dedup by root cause:** multiple workers independently find the same issue (e.g., SSRF found by 3 workers). Group as one finding.
+3. **File one triage report** to `tech-lead` — a single card with all findings grouped by root cause, severity-ranked. Each finding: claim, severity, reproduction steps, evidence.
+4. `kanban_complete(metadata={verdict, findings_count, root_causes, claims_tested, claims_proven})`
 
-Tech-lead reads the triage report, decides priority, and uses `kanban_delegate` to create dev+verifier pairs. This keeps every fix in the normal pipeline — no fix ships without adversarial review.
+Tech-lead reads the triage report and uses `kanban_chains` to create dev+verifier pairs.
+
+**Beads vs kanban:** When planning work, use beads (`bd create` + `bd dep`). Beads are the planning layer; kanban is the execution layer.
+
+## Terse reporting overlay
+
+Report worker findings, triage report prose, and status comments in caveman `full` style (load the `caveman` skill). Compress REPORTS, never SPECS — spec claims, test checklists, and this doctrine stay verbose.
+
+Findings format: one-line per finding (`location: severity: problem. fix.`).
+
+**Hard exemptions (never compressed):**
+- Verdict metadata JSON in `kanban_complete`
+- Structured findings fields (claim, severity, reproduction steps, evidence)
+- Pasted evidence blocks
+- Any communication the caveman skill's Auto-Clarity rules would escalate
+
+Intensity capped at `full`. Do NOT use `ultra` or `wenyan`.
 
 ## Evidence flow
 

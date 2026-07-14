@@ -4,30 +4,23 @@ model:
   base_url: https://api.z.ai/api/coding/paas/v4
   context_length: 1000000
 toolsets:
-  - hermes-cli
-  - kanban
+- hermes-cli
+- kanban
 skills:
   disabled: []
 command_allowlist:
-  - execute_code
+- execute_code
 _config_version: 33
 fallback_model: []
-# ── Security ──────────────────────────────────────────────────────────
-# Secret redaction is ON by default — strings that look like API keys,
-# tokens, and passwords are masked in tool output, logs, and chat
-# responses before the model or user ever sees them. Set redact_secrets
-# to false to disable (e.g. when developing the redactor itself).
-# tirith pre-exec scanning is enabled by default when the tirith binary
-# is available. Configure via security.tirith_* keys or env vars
-# (TIRITH_ENABLED, TIRITH_BIN, TIRITH_TIMEOUT, TIRITH_FAIL_OPEN).
-#
-# security:
-#   redact_secrets: true
-#   tirith_enabled: true
-#   tirith_path: "tirith"
-#   tirith_timeout: 5
-#   tirith_fail_open: true
-
-
 agent:
-  api_max_retries: 10  # Z.AI overload patience — unlocks 30/60/90/120s long-backoff ladder
+  api_max_retries: 10
+kanban:
+  max_in_progress_per_profile: 3
+  max_in_progress: 3
+plugins:
+  enabled:
+  - kanban_chains
+  disabled: []
+  entries:
+    kanban_chains:
+      allow_tool_override: false

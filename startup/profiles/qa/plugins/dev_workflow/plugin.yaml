@@ -1,5 +1,0 @@
-name: dev_workflow
-version: 1.1.0
-description: Dev workflow orchestration tools — delegate work and block until verification completes
-provides_tools:
-  - kanban_delegate

@@ -1,0 +1,107 @@
+model:
+  default: glm-5.2
+  provider: zai
+  base_url: https://api.z.ai/api/coding/paas/v4
+  context_length: 1000000
+toolsets:
+  - hermes-cli
+  - kanban
+  - kanban_chains
+  - loop_engine
+  - intercom
+agent:
+  api_max_retries: 10
+  reasoning_effort: xhigh
+kanban:
+  max_in_progress_per_profile: 3
+  max_in_progress: 3
+skills:
+  disabled:
+    # -- mattpocock family: everything except the design doctrine three --
+    # Deprecated skills dropped from doctrine (absorbed by active skills or gate ceremony)
+    - design-an-interface
+    - request-refactor-plan
+    - ubiquitous-language
+    - ask-matt
+    - claude-handoff
+    - code-review
+    - diagnosing-bugs
+    - edit-article
+    - find-skills
+    - git-guardrails-claude-code
+    - grill-me
+    - grill-with-docs
+    - grilling
+    - handoff
+    - implement
+    - loop-me
+    - migrate-to-shoehorn
+    - obsidian-vault
+    - prototype
+    - qa
+    - research
+    - resolving-merge-conflicts
+    - scaffold-exercises
+    - setup-matt-pocock-skills
+    - setup-pre-commit
+    - tdd
+    - teach
+    - to-spec
+    - to-tickets
+    - triage
+    - wayfinder
+    - wizard
+    - writing-beats
+    - writing-fragments
+    - writing-great-skills
+    - writing-shape
+    # -- delivery / delegation / loops doctrine: never in this profile --
+    - team-delegation
+    - team-observability
+    - live-testing
+    - wayfinding-auto
+    - qa-build
+    - qa-exploratory
+    - qa-functional
+    - qa-journeys
+    - qa-protocol
+    - qa-security
+    - requesting-code-review
+    - hermes-agent-skill-authoring
+    - web-research
+    # -- parity with qa's blanket disables (defense in depth) --
+    - claude-code
+    - codex
+    - decision-mapping
+    - obsidian
+    - opencode
+    - ponytail
+    - ponytail-audit
+    - ponytail-debt
+    - ponytail-gain
+    - ponytail-help
+    - ponytail-review
+approvals:
+  mode: 'off'
+  cron_mode: deny
+command_allowlist:
+  - execute_code
+  - copy/move file into sensitive credential/SSH/shell-rc path
+  - script execution via -e/-c flag
+  - recursive delete
+plugins:
+  enabled:
+    - intercom
+    - kanban_chains
+    - loop_engine
+  disabled: []
+  entries:
+    intercom:
+      allow_tool_override: true
+    kanban_chains:
+      allow_tool_override: false
+    loop_engine:
+      allow_tool_override: false
+onboarding:
+  seen:
+    tool_progress_prompt: true

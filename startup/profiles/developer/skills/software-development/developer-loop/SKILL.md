@@ -133,6 +133,19 @@ The AC evidence mapping is **mandatory** — the verifier re-verifies each item 
 
 This report is what compensates the trace-blind verifier — human-review research shows rationale artifacts + Q&A are what make output-only review work. Skimping here degrades the whole loop.
 
+## Terse reporting overlay
+
+Write the prose sections of your completion report — **Approach**, **Key decisions**, **Deviations from contract**, **Dead ends** — in caveman `full` style (load the `caveman` skill). Compress REPORTS, never SPECS — contracts, ACs, evals commands, and this doctrine stay verbose.
+
+**Hard exemptions (never compressed):**
+- AC evidence mappings (`[x] AC1: <criterion> → <test>`)
+- Test evidence (actual commands + actual output)
+- Structured metadata in `kanban_complete` (`{harness_session_id, transcript_path, ...}`)
+- Session/trace/cost lines
+- Code, commit messages, error strings
+
+Intensity capped at `full`. Do NOT use `ultra` or `wenyan`.
+
 ## 6. Answering the verifier
 
 The verifier may ask questions via card comments (the Q&A channel). Answer factually from your session/trace. If a finding demands a code change, that arrives as a fix card — work it as a retry (§1 warm resume), don't argue verdicts. If you believe a finding is wrong, say so once, with evidence, in a comment; the verifier owns the verdict, tech-lead owns escalations.

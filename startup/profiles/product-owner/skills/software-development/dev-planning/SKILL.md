@@ -1,6 +1,6 @@
 ---
 name: dev-planning
-description: "Plan dev work: discuss requirements, write a PRD, decompose into beads. Use when the user or another agent brings a feature to build. Reaches to-prd and to-issues."
+description: "Plan dev work: discuss requirements, write a PRD, decompose into beads. Use when the user or another agent brings a feature to build. Reaches to-spec and to-tickets."
 ---
 
 # Dev Planning
@@ -19,7 +19,7 @@ The other party may be a human or an agent. Ask one question at a time with a re
 
 ### 2. Write the PRD
 
-Load the `to-prd` skill. Synthesize what you learned — do NOT re-interview.
+Load the `to-spec` skill. Synthesize what you learned — do NOT re-interview.
 
 Write the PRD to `<project-dir>/PRD.md`. Publish it as a bead with `ready-for-agent`.
 
@@ -29,7 +29,7 @@ Review the PRD with the other party before proceeding.
 
 ### 3. Decompose into tracer-bullet beads
 
-Load the `to-issues` skill. Break the PRD into _tracer-bullet_ slices — each delivers end-to-end value, not horizontal layers.
+Load the `to-tickets` skill. Break the PRD into _tracer-bullet_ slices — each delivers end-to-end value, not horizontal layers.
 
 Run autonomously. Do NOT quiz the other party on granularity — if the decomposition is wrong, verification failures will surface it.
 

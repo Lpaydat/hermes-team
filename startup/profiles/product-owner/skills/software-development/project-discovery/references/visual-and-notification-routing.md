@@ -149,9 +149,14 @@ the user think the system isn't tracking what's active.
 
 ### Hermes gateway configuration
 
-**Single-dispatcher posture:** Only one gateway (typically `default` profile)
-owns the kanban dispatcher. Others set `kanban.dispatch_in_gateway: false` in
-`~/.hermes/config.yaml` to avoid SQLite contention.
+**Single-dispatcher posture:** Only one gateway owns the kanban dispatcher at
+a time, decided by the machine-global `startup/kanban/.dispatcher.lock` —
+whichever gateway holds it dispatches; others see it contended and stand down
+(the holder is non-deterministic across restarts, not always `default`).
+`kanban.dispatch_in_gateway` (default `true`, set in each profile's own
+`config.yaml`) is the per-gateway on/off gate; the lock is the backstop that
+enforces a single dispatcher even when every gateway leaves the flag at its
+default.
 
 **Cron delivery routing:** Each cron job's `deliver` field controls where output
 goes. Set it to the platform:channel combination:

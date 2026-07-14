@@ -25,7 +25,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DRY_RUN = "--dry-run" in sys.argv
-CONFIG_FILE = Path.home() / ".hermes-teams/startup/active-projects.json"
+# HERMES_ACTIVE_PROJECTS lets drills point the engine at a fixture project list
+# without touching the live registration (the cron ticks every minute).
+CONFIG_FILE = Path(
+    os.environ.get("HERMES_ACTIVE_PROJECTS", "").strip()
+    or str(Path.home() / ".hermes-teams/startup/active-projects.json")
+)
 KANBAN_ROOT = Path.home() / ".hermes-teams/startup/kanban/boards"
 
 # ── Config ────────────────────────────────────────────────────────────────
@@ -152,12 +157,90 @@ def has_active_po_dispatch_card(board):
     except sqlite3.Error:
         return False
 
+# Wayfinder frontier tickets route by type label straight to the profile that
+# can resolve them (autonomous venture pipeline). grilling/prototype are the
+# HITL-substitute types — PO<->VB over intercom via work-the-map cards — and
+# must NEVER be headless-dispatched by the engine.
+WAYFINDER_ROUTES = {
+    "wayfinder:research": "scout",
+    "wayfinder:task": "ops",
+    "wayfinder:architecture": "architect",  # decisions land as ADRs (docs/agents/adr-convention.md)
+}
+# grilling/prototype are HITL-substitute work; the map epic is an index, not
+# work; an idea brief is a citable record, not work.
+WAYFINDER_SKIP = ("wayfinder:grilling", "wayfinder:prototype", "wayfinder:map", "venture:brief")
+
+def dispatch_wayfinder_ticket(board, project_dir, bead, assignee):
+    """Create one routed card for a wayfinder research/task/architecture ticket."""
+    bead_id = bead["id"]
+    detail = bd_json(project_dir, "show", bead_id) or {}
+    if isinstance(detail, list):
+        detail = detail[0] if detail else {}
+    map_id = detail.get("parent") or ""
+    question = detail.get("description") or bead.get("title", "")
+
+    if DRY_RUN:
+        return [f"dispatch: would route wayfinder ticket {bead_id} → {assignee} on {board}"]
+
+    if assignee == "architect":
+        # Architecture tickets resolve as ADRs: gate posture, decision recorded
+        # append-only in the venture repo per docs/agents/adr-convention.md,
+        # resolution comment cites the ADR by number.
+        body = (
+            f"## Wayfinder ticket {bead_id} — {bead.get('title', '?')}\n\n"
+            f"Map: `{map_id}` (the venture's wayfinding map — its Notes name the idea "
+            f"brief and prior decisions; read it with `bd show {map_id}`).\n\n"
+            f"{question}\n\n"
+            f"## Resolve protocol — architecture (run bd from {project_dir})\n\n"
+            f"1. Answer in gate posture: weigh the alternatives before deciding; every "
+            f"input to the decision needs a named, quotable source.\n"
+            f"2. Record the decision as an ADR in this venture repo under "
+            f"{project_dir}/docs/adr/ per "
+            f"{Path.home()}/.hermes-teams/docs/agents/adr-convention.md: next free "
+            f"ADR-NNN, one decision per file, header line `Introduced-by: {bead_id}`, "
+            f"sections Decision / Context / Alternatives Considered / Consequences / "
+            f"Citations.\n"
+            f"3. Record the resolution on the ticket citing the ADR by number: "
+            f"`bd comment {bead_id} \"RESOLVED: <decision gist> — see ADR-NNN "
+            f"docs/adr/ADR-NNN-<slug>.md\"`\n"
+            f"4. Append the decision to the map's Decisions-so-far index: read "
+            f"`bd show {map_id}`, rewrite its description via `bd update {map_id} "
+            f"--description=...` with the added line `- {bead.get('title', '?')} "
+            f"({bead_id}) — <one-line gist> (ADR-NNN)`.\n"
+            f"5. Complete this card with the decision gist as summary and metadata "
+            f'{{"adr": "ADR-NNN", "posture": "gate"}}. Do NOT `bd close` the '
+            f"ticket yourself — bead-sync closes it when this card is done."
+        )
+    else:
+        body = (
+            f"## Wayfinder ticket {bead_id} — {bead.get('title', '?')}\n\n"
+            f"Map: `{map_id}` (the venture's wayfinding map — its Notes name the idea "
+            f"brief and prior decisions; read it with `bd show {map_id}`).\n\n"
+            f"{question}\n\n"
+            f"## Resolve protocol (run bd from {project_dir})\n\n"
+            f"1. Investigate (AFK). Long artifacts go to a file; link them, don't paste.\n"
+            f"2. Record the resolution on the ticket: `bd comment {bead_id} \"<answer + "
+            f"citation of your sources>\"`\n"
+            f"3. Append the decision to the map's Decisions-so-far index: read "
+            f"`bd show {map_id}`, rewrite its description via `bd update {map_id} "
+            f"--description=...` with the added line `- {bead.get('title', '?')} "
+            f"({bead_id}) — <one-line gist>`.\n"
+            f"4. Complete this card with the answer as summary. Do NOT `bd close` the "
+            f"ticket yourself — bead-sync closes it when this card is done."
+        )
+    ok, _ = run_kanban(board, [
+        "create", f"[wayfinder] {bead.get('title', bead_id)}"[:120],
+        "--assignee", assignee,
+        "--body", body,
+        "--workspace", f"dir:{project_dir}",
+        "--idempotency-key", f"bead-{bead_id}",
+        "--json",
+    ])
+    return [f"dispatch: {'routed' if ok else 'FAILED to route'} wayfinder ticket {bead_id} → {assignee} on {board}"]
+
 def phase_dispatch(board, project_dir):
     """Check bd ready and create a PO dispatch card for one project."""
     actions = []
-
-    if has_active_po_dispatch_card(board):
-        return actions
 
     ready = bd_json(project_dir, "ready")
     if not isinstance(ready, list):
@@ -167,11 +250,21 @@ def phase_dispatch(board, project_dir):
     for bead in ready:
         if not isinstance(bead, dict) or not bead.get("id"):
             continue
-        if "gt:slot" in bead.get("labels", []):
+        labels = bead.get("labels") or []
+        if "gt:slot" in labels:
             continue
+        if any(lab in WAYFINDER_SKIP for lab in labels):
+            continue  # HITL-substitute tickets: PO<->VB own these, never headless
         if card_exists_for_bead(board, bead["id"]):
             continue
+        route = next((WAYFINDER_ROUTES[lab] for lab in labels if lab in WAYFINDER_ROUTES), None)
+        if route:
+            actions.extend(dispatch_wayfinder_ticket(board, project_dir, bead, route))
+            continue
         new_beads.append(bead)
+
+    if has_active_po_dispatch_card(board):
+        return actions
 
     if not new_beads:
         return actions
@@ -193,6 +286,67 @@ def phase_dispatch(board, project_dir):
         "--json",
     ])
     actions.append(f"dispatch: {'created' if ok else 'FAILED'} PO card for {len(new_beads)} bead(s) on {board}")
+    return actions
+
+# ══════════════════════════════════════════════════════════════════════════
+# PHASE 2b: HUMAN ESCALATION PING — human-flagged beads → operator card
+# ══════════════════════════════════════════════════════════════════════════
+
+OPERATOR_BOARD = "hermes-hq"
+
+def hq_ping_exists(bead_id):
+    db = board_db_path(OPERATOR_BOARD)
+    if not db.exists():
+        return False
+    try:
+        conn = sqlite3.connect(str(db))
+        row = conn.execute(
+            "SELECT 1 FROM tasks WHERE idempotency_key = ? AND status != 'archived'",
+            (f"bead-human-{bead_id}",),
+        ).fetchone()
+        conn.close()
+        return row is not None
+    except sqlite3.Error:
+        return False
+
+def phase_human_escalations(board, project_dir):
+    """Async operator ping: every open human-flagged bead gets ONE hq card.
+
+    The flag (`bd tag <id> human`) is set by whoever escalates (e.g. the
+    wayfinding citation rule); this phase makes it VISIBLE without relying on
+    the escalating agent also remembering to ping. Idempotent per bead.
+    """
+    actions = []
+    flagged = bd_json(project_dir, "list", "--all", "--label", "human")
+    if not isinstance(flagged, list):
+        return actions
+    for bead in flagged:
+        if not isinstance(bead, dict) or not bead.get("id"):
+            continue
+        if bead.get("status") == "closed":
+            continue
+        bead_id = bead["id"]
+        if hq_ping_exists(bead_id):
+            continue
+        if DRY_RUN:
+            actions.append(f"human-ping: would create hq card for {bead_id}")
+            continue
+        title = f"[ESCALATION] human answer needed: {bead.get('title', bead_id)}"[:120]
+        body = (
+            f"## Human-flagged bead: {bead_id}\n\n"
+            f"{(bead.get('description') or '')[:1200]}\n\n"
+            f"Answer with: `bd human respond {bead_id}` (comments + closes the bead) "
+            f"from {project_dir}. Board: {board}."
+        )
+        ok, _ = run_kanban(OPERATOR_BOARD, [
+            "create", title,
+            "--assignee", "default",
+            "--priority", "10",
+            "--body", body,
+            "--idempotency-key", f"bead-human-{bead_id}",
+            "--json",
+        ])
+        actions.append(f"human-ping: {'created' if ok else 'FAILED'} hq card for {bead_id}")
     return actions
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -324,6 +478,11 @@ def main():
             all_actions.extend(phase_dispatch(board, path))
         except Exception as e:
             all_actions.append(f"dispatch ERROR [{name}]: {e}")
+
+        try:
+            all_actions.extend(phase_human_escalations(board, path))
+        except Exception as e:
+            all_actions.append(f"human-ping ERROR [{name}]: {e}")
 
         try:
             all_actions.extend(scan_board(board))

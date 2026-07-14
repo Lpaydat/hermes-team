@@ -5,10 +5,9 @@ model:
   context_length: 1000000
 toolsets:
 - hermes-cli
-- kanban
-  - intercom
+- kanban - intercom
 agent:
-  api_max_retries: 10  # Z.AI overload patience — unlocks 30/60/90/120s long-backoff ladder
+  api_max_retries: 10
   reasoning_effort: xhigh
 skills:
   disabled:
@@ -56,7 +55,7 @@ skills:
   - request-refactor-plan
   - requesting-code-review
   - resolving-merge-conflicts
-  - review
+  - code-review
   - scaffold-exercises
   - setup-matt-pocock-skills
   - setup-pre-commit
@@ -66,8 +65,8 @@ skills:
   - tdd
   - teach
   - test-driven-development
-  - to-issues
-  - to-prd
+  - to-tickets
+  - to-spec
   - triage
   - ubiquitous-language
   - wizard
@@ -79,3 +78,14 @@ command_allowlist:
 - script execution via -e/-c flag
 _config_version: 33
 fallback_model: []
+plugins:
+  enabled:
+  - kanban_chains
+  disabled: []
+  entries:
+    kanban_chains:
+      allow_tool_override: false
+
+kanban:
+  max_in_progress_per_profile: 3
+  max_in_progress: 3

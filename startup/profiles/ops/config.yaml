@@ -5,115 +5,84 @@ model:
   context_length: 1000000
   rate_limit_delay: 30
 toolsets:
-  - terminal
-  - file
-  - skills
-  - memory
-  - session_search
-  - web
-  - kanban
-  - todo
-  - cronjob
-  - delegation
-  - code_execution
-  - clarify
+- terminal
+- file
+- skills
+- memory
+- session_search
+- web
+- kanban
+- todo
+- cronjob
+- delegation
+- code_execution
+- clarify
 agent:
   api_max_retries: 10
   reasoning_effort: xhigh
 skills:
   disabled:
-    - computer-use
-    - dogfood
-    - github-code-review
-    - github-issues
-    - github-pr-workflow
-    - himalaya
-    - jupyter-live-kernel
-    - node-inspect-debugger
-    - plan
-    - python-debugpy
-    - requesting-code-review
-    - simplify-code
-    - spike
-    - test-driven-development
+  - computer-use
+  - dogfood
+  - github-code-review
+  - github-issues
+  - github-pr-workflow
+  - himalaya
+  - jupyter-live-kernel
+  - node-inspect-debugger
+  - plan
+  - python-debugpy
+  - requesting-code-review
+  - simplify-code
+  - spike
+  - test-driven-development
 approvals:
   mode: smart
 command_allowlist:
-  - systemctl --user status *
-  - systemctl --user is-active *
-  - systemctl --user is-enabled *
-  - systemctl --user list-units *
-  - df *
-  - du *
-  - free *
-  - which *
-  - command -v *
-  - ls *
-  - cat /proc/*
-  - hermes profile list
-  - hermes profile describe *
-  - hermes auth status *
-  - hermes gateway status *
-  - hermes cron list
-  - git status
-  - git log *
-  - git diff *
-  - git remote -v
-  - git check-ignore *
-  - git rev-parse *
-  - bd --version
-  - pi --version
-  - zz --version
-  - codegraph --help
-  - graphify --version
-  - node --version
-  - npm ls *
-  - pip show *
-  - python3 --version
+- systemctl --user status *
+- systemctl --user is-active *
+- systemctl --user is-enabled *
+- systemctl --user list-units *
+- df *
+- du *
+- free *
+- which *
+- command -v *
+- ls *
+- cat /proc/*
+- hermes profile list
+- hermes profile describe *
+- hermes auth status *
+- hermes gateway status *
+- hermes cron list
+- git status
+- git log *
+- git diff *
+- git remote -v
+- git check-ignore *
+- git rev-parse *
+- bd --version
+- pi --version
+- zz --version
+- codegraph --help
+- graphify --version
+- node --version
+- npm ls *
+- pip show *
+- python3 --version
 _config_version: 33
 fallback_model: []
 plugins:
   enabled:
-    - intercom
+  - intercom
+  - kanban_chains
   disabled: []
   entries:
     intercom:
       allow_tool_override: true
+    kanban_chains:
+      allow_tool_override: false
 
-# ── Security ──────────────────────────────────────────────────────────
-# Secret redaction is ON by default — strings that look like API keys,
-# tokens, and passwords are masked in tool output, logs, and chat
-# responses before the model or user ever sees them. Set redact_secrets
-# to false to disable (e.g. when developing the redactor itself).
-# tirith pre-exec scanning is enabled by default when the tirith binary
-# is available. Configure via security.tirith_* keys or env vars
-# (TIRITH_ENABLED, TIRITH_BIN, TIRITH_TIMEOUT, TIRITH_FAIL_OPEN).
-#
-# security:
-#   redact_secrets: true
-#   tirith_enabled: true
-#   tirith_path: "tirith"
-#   tirith_timeout: 5
-#   tirith_fail_open: true
-
-# ── Fallback Model ────────────────────────────────────────────────────
-# Automatic provider failover when primary is unavailable.
-# Uncomment and configure to enable. Triggers on rate limits (429),
-# overload (529), service errors (503), or connection failures.
-#
-# Supported providers:
-#   openrouter   (OPENROUTER_API_KEY)  — routes to any model
-#   openai-codex (OAuth — hermes auth) — OpenAI Codex
-#   nous         (OAuth — hermes auth) — Nous Portal
-#   zai          (ZAI_API_KEY)         — Z.AI / GLM
-#   kimi-coding  (KIMI_API_KEY)        — Kimi / Moonshot
-#   kimi-coding-cn (KIMI_CN_API_KEY)   — Kimi / Moonshot (China)
-#   minimax      (MINIMAX_API_KEY)     — MiniMax
-#   minimax-cn   (MINIMAX_CN_API_KEY)  — MiniMax (China)
-#   bedrock      (AWS IAM / boto3)     — AWS Bedrock (Converse API)
-#
-# For custom OpenAI-compatible endpoints, add base_url and key_env.
-#
-# fallback_model:
-#   provider: openrouter
-#   model: anthropic/claude-sonnet-4
+kanban:
+  max_in_progress_per_profile: 3
+  max_in_progress: 3

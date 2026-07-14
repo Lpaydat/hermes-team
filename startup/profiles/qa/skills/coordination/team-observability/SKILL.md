@@ -110,6 +110,36 @@ If the profile using this skill is a *scoped-fixer* (observer + safe remediation
 
 - **Querying the empty DB.** Always resolve the real board path first
   (`cat ~/.hermes/kanban/current`), then query `boards/<board>/kanban.db`.
+- **Stale claim_lock stranding ready cards.** When a task is spawned, the dispatcher
+  writes `claim_lock = "lambda:<PID>"` with a TTL (default 15 min). If the worker
+  completes or crashes, the lock SHOULD be cleared by `release_stale_claims` — but
+  sometimes it isn't (observed: lock expired 9+ hours ago, field still set, dispatcher
+  skipped the card every tick). Symptom: a `ready` card sits idle indefinitely while
+  the dispatcher reports `Spawned: 0` on every tick. Diagnosis: check
+  `SELECT id, claim_lock, claim_expires FROM tasks WHERE status = 'ready'` — if
+  `claim_lock` is non-NULL and `claim_expires` is in the past, the lock is stale.
+  Fix: `UPDATE tasks SET claim_lock = NULL, claim_expires = NULL WHERE id = '<id>'`.
+  This is NOT the same as dispatch latency (15+ min scan interval) — a stale lock
+  blocks forever, dispatch latency resolves on the next tick.
+- **Dispatch latency vs stuck card.** The dispatcher reaps zombies every ~1 min but
+  only does a full board scan at irregular intervals (~15 min observed in practice).
+  A `ready` card sitting for 15 min is normal; sitting for 30+ min warrants checking
+  `claim_lock` (above) and the dispatcher log
+  (`grep 'dispatcher.*<board>' <dispatcher_profile>/logs/agent.log`).
+  Verify with `hermes kanban --board <board> dispatch --dry-run` — if it shows
+  `Spawned: 0` despite a ready card, the card is being skipped (stale lock, profile
+  cap, respawn guard).
+- **Config boot-time caching.** Gateways read `kanban.max_in_progress` and
+  `kanban.max_in_progress_per_profile` at boot and cache them. Changing config after
+  boot does NOT affect running gateways. The dispatcher reads the **lock-holding
+  gateway's OWN profile config** — the `kanban:` block of
+  `startup/profiles/<profile>/config.yaml` — NOT the global `startup/config.yaml` and
+  NOT `~/.hermes/config.yaml`. Because the lock-holder is non-deterministic (any
+  profile gateway can hold `startup/kanban/.dispatcher.lock`), **all profile configs
+  must agree** on kanban caps for a change to take effect regardless of which gateway
+  dispatches. To change dispatcher caps, edit every profile's `config.yaml` and
+  restart the gateway holding the dispatcher lock.
+  Check which gateway holds the lock: `cat <kanban-boards-dir>/.dispatcher.lock`.
 - **Reporting "no cron jobs" from one `cronjob action=list`.** That tool is
   profile-scoped; in a multi-profile team it returns `0` for every profile except
   the one the shell is running as, while the operator's GUI shows the team-wide

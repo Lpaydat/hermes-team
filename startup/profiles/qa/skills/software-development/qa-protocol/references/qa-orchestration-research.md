@@ -34,7 +34,7 @@ Profile-scoped plugin at `tech-lead/plugins/dev_workflow/`. Atomically creates d
 Workers post structured JSON to root card: `[swarm:blackboard] {"key": "verdicts", "value": {...}}`. The `latest_blackboard()` function merges all comments. This is the evidence-flow mechanism — no ~/vault/ needed.
 
 ### `max_in_progress_per_profile` constraint
-Global dispatcher setting (root `~/.hermes/config.yaml`). Caps each profile to N concurrent tasks. If all swarm workers are `assignee=qa`, they execute serially unless the cap is raised. Configurable — the user confirmed they can change it.
+Set in each profile's own `startup/profiles/<profile>/config.yaml` (its `kanban:` block). The dispatcher reads the **lock-holding gateway's OWN profile config** (whichever gateway holds `startup/kanban/.dispatcher.lock`), NOT the global `startup/config.yaml` or `~/.hermes/config.yaml`. Caps each profile to N concurrent tasks. If all swarm workers are `assignee=qa`, they execute serially unless the cap is raised. Because the lock-holder is non-deterministic, raise it in **every** profile config for the change to take effect regardless of which gateway dispatches.
 
 ### delegate_task fragility
 Ephemeral, dies with session, shares parent's API rate limits. Under sustained load (3+ subagents), frequently hits HTTP 429 and fails silently. Recovery: check `state.db` for sessions with 1 message + 0 tool_calls + no end_reason = stuck. Kill sandbox, re-dispatch or do it yourself.

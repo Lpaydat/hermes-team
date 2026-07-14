@@ -283,7 +283,7 @@ This creates a root card (shared blackboard), parallel worker cards (each with i
 
 Workers post structured results to the root card's blackboard (JSON comments). The synthesizer reads all blackboard updates via `latest_blackboard()` and produces the final verdict. This is the evidence-flow mechanism — no `~/vault/`, no file system, all in the kanban DB.
 
-**Critical constraint: `max_in_progress_per_profile: 1`.** If all workers are `assignee=qa`, they execute serially (one at a time). The swarm topology is still correct — it's just slower. To get true parallelism, raise the cap in the ROOT `~/.hermes/config.yaml` (not per-profile config — the dispatcher reads only the root config; restart the gateway after changing), or accept serial execution (still durable and crash-safe).
+**Concurrency constraint: `max_in_progress_per_profile`.** If all workers are `assignee=qa`, they run up to N at a time, where N is the cap. The swarm topology is still correct either way. To get true parallelism, raise the cap in **every profile's `startup/profiles/<profile>/config.yaml`** — the dispatcher reads the **lock-holding gateway's OWN profile config** (not the global `startup/config.yaml` or `~/.hermes/config.yaml`), and because the lock-holder is non-deterministic all profile configs must agree; then restart the gateway after changing. Or accept a lower cap (still durable and crash-safe).
 
 #### `kanban_delegate` — a real plugin tool (tech-lead only)
 
