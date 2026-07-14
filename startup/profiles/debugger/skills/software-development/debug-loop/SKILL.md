@@ -305,7 +305,7 @@ broken. The mapping:
 | §5 stage | loop_engine phase | execution (worker) | verifier (DoD-checker) |
 |---|---|---|---|
 | **Reproduce + minimise** | **phase 0** | `researcher` (archaeology) *or* `developer` (failing test) | `verifier` — "tight RED achieved" |
-| **Hypothesise + fix** + **Falsify** | **phase 1** (the converge loop) | `developer` (fix + regression test for the ranked hypothesis) | `verifier` — **falsifies** ("break it another way"; repro green + correct-seam test + suite green + root cause proven) |
+| **Hypothesise + fix** + **Falsify** | **phase 1** (the converge loop) | `developer` (fix + regression test for the ranked hypothesis) | `verifier` — **falsifies** ("break it another way"; repro green + correct-seam test + suite green + root cause proven) **+ code-quality review** (style, fix-logic correctness, alternatives, no new debt) |
 | **Converge / post-mortem** | **phase 2** | `debugger` (writes the RCA from the ledger) | `verifier` — "RCA has all 4 inputs + completion contract" |
 
 #### Phase 0 — Reproduce + minimise  (`max_iterations`: 3)
@@ -343,17 +343,26 @@ This is the converge loop. Each iteration = one ranked hypothesis.
   seam exists — if not, report `no-correct-seam` in the completion metadata,
   which is the exit-B signal).
 - **verifier.assignee**: `verifier` (independent — **never self-grade**).
-- **verifier DoD** (in the verifier body — this *is* the falsify step):
+- **verifier DoD** (in the verifier body — this *is* the falsify step, **plus a
+  code-quality review** to match the implement-loop's maker/checker depth):
   "Evaluate the parent execution's fix. (1) The repro now goes GREEN. (2) A
   regression test exists at a **correct seam** (not a symptom-seam). (3) The full
   suite is green with no new regression. (4) **Falsify**: try to break it another
   way — exercise adjacent inputs/configs/paths the fix did not target. The root
-  cause is *proven* (the fix addresses the cause, not the symptom). Return
-  `dod_verdict`: `dod_met=true`/`recommendation=advance` only if all four hold;
-  `dod_met=false`/`recommendation=replan` with concrete gaps if the fix is a
-  symptom-fix or the repro is not green; `recommendation=escalate` with gaps
-  naming `no-correct-seam` or `root-cause-spans-boundary` if the design-flaw
-  signal is present (→ exit B)."
+  cause is *proven* (the fix addresses the cause, not the symptom). (5)
+  **Code-quality review** (reuse the verifier profile's code-review capability —
+  a full review, not just falsify): the fix is clean and idiomatic
+  (style/cleanliness); the fix *logic* is correct (addresses the cause with the
+  smallest sound change, no incidental behaviour change); alternatives were
+  considered (at least one named alternative was rejected for a stated reason —
+  read it from the developer's completion metadata, do not re-derive); no new
+  debt is introduced (no TODOs, workarounds, or escape hatches papering over the
+  cause). Return `dod_verdict`: `dod_met=true`/`recommendation=advance` only if
+  all five hold; `dod_met=false`/`recommendation=replan` with concrete gaps if
+  the fix is a symptom-fix, the repro is not green, OR a code-quality gap is
+  material — cite it (`file_line` for style, the rejected alternative,
+  introduced debt); `recommendation=escalate` with gaps naming `no-correct-seam`
+  or `root-cause-spans-boundary` if the design-flaw signal is present (→ exit B)."
 - **verifier.metric_type**: `ground_truth` — repro GREEN, regression test at a
   correct seam, full suite green, and falsification all pass/fail mechanically
   (no battery needed). The verifier RETURNS `evidence:[Claim]`: cite the now-green
@@ -361,6 +370,14 @@ This is the converge loop. Each iteration = one ranked hypothesis.
   suite run (`test_output`), and the falsification probe (`probe_result` /
   `test_output`) — re-opening each. An un-cited "fix is done" claim forces
   `dod_met=false` → replan (no symptom-fix advances on assertion).
+  **The (5) code-quality review does NOT change `metric_type`** — the declared
+  gate stays `ground_truth` (the mechanical pass/fail the engine grades); the
+  review is an *additional maker/checker duty instructed in the card body*,
+  reusing the verifier's existing code-review capability. Its findings are
+  reported as **cited evidence gaps** (`file_line` for style, the rejected
+  alternative, introduced debt) that force `dod_met=false` → replan — still a
+  fact, not a judged "quality score", so no `proxy`/`battery` is introduced and
+  the v2 cutover invariant holds.
 - **On replan** (`dod_met=false`): `loop_engine` mints a fresh developer card
   (next ranked hypothesis) + a fresh verifier card, and re-parks you. You
   re-inject the breadcrumb ledger (prior hypotheses tried + why they failed) so
