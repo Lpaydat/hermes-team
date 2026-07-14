@@ -152,6 +152,16 @@ contract (items + `dod_verdict` schema + engine validation) is in
 
 Inline essentials:
 
+- **`strict_fact_basis: true` is the FIRST kwarg** (loop_engine v2, literal not
+  prose) — arms the fact-discipline layer: `metric_type` + `evidence` become
+  hard-required. A weak-context driver drops it if it lives only in prose.
+- **Capture `root_id` from the first response; echo it as `loop_id`** on every
+  re-invocation — drift-immune identity (a rewritten goal no longer resets the
+  loop). The goal_hash is the disaster-recovery fallback, not the primary path.
+- **The converge verifier is `metric_type: "proxy"` + a `battery`** pointing at
+  `verifier/secrets/dc-val-battery-secrets.md` — the engine dispatches the
+  held-out battery as a **phase terminal** (both verifier AND battery must pass).
+  The ADR-record verifier is `metric_type: "ground_truth"` (mechanical; no battery).
 - **Explicit `assignee` on every card spec** is load-bearing — `runner` falls
   back to `worker`/`default` (no such profile dirs), so omitting `assignee`
   stalls. Set `assignee:"architect"` on execution cards, `assignee:"verifier"`

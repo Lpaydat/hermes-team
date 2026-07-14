@@ -61,8 +61,10 @@ loop_engine({
 
 ```python
 loop_engine({
+  "strict_fact_basis": true,   # T9 — FIRST kwarg (literal). Arms fact-discipline: metric_type + evidence hard-required.
   "goal": "Converged ADR for <DECISION> (standard stakes)",
   "runner": "architect",
+  "loop_id": "<root_id from the first response — echo on EVERY re-invocation (drift-immune)>",
   "no_progress_threshold": 3,
   "phases": [
     {  # phase 0 — council-converge (T2, cap 3)
@@ -88,15 +90,22 @@ loop_engine({
       "verifier": {
         "assignee": "verifier",
         "skill": "dod-verdict",
+        "metric_type": "proxy",
+        "battery": {"path": "startup/profiles/verifier/secrets/dc-val-battery-secrets.md",
+                    "runner": "verifier"},
         "artifact_required": true,
         "title": "[DoD] Converge — <DECISION>",
         "body": ("<the CONCRETE DoD from dod-contract.md as the behaviors[]+defect_traces[] "
                  "ARTIFACT with the fabrication guard (re-open the brief, confirm each cite "
                  "exists; non-matching => fabricated => latent_defect). Score the 6 items "
-                 "pass/fail. Complete via kanban_complete(metadata={'dod_verdict':{behaviors, "
-                 "defect_traces, dod_met, score, design_version_ref, items, gaps, recommendation}}). "
+                 "pass/fail. ALSO return evidence:[Claim] — cite each material claim (the brief "
+                 "behaviors + the design mechanisms) so an un-cited claim forces dod_met=false. "
+                 "Complete via kanban_complete(metadata={'dod_verdict':{behaviors, defect_traces, "
+                 "evidence, dod_met, score, design_version_ref, items, gaps, recommendation}}). "
                  "CONTRACT: recommendation MUST NOT be 'advance' unless dod_met is true. "
-                 "The engine validates the artifact and will not advance on a latent_defect.>")
+                 "metric_type=proxy: the engine dispatches the held-out battery (secrets) as a "
+                 "PHASE TERMINAL — both this verifier AND the battery must pass to advance; a "
+                 "battery fail replans with its gaps.>")
       }
     },
     {  # phase 1 — PO-HITL interview (T1, RE-ENTRANT)
@@ -125,6 +134,7 @@ loop_engine({
       "verifier": {
         "assignee": "verifier",
         "skill": "dod-verdict",
+        "metric_type": "ground_truth",
         "title": "[DoD] ADR convention — <DECISION>",
         "body": ("ADR-convention DoD ONLY (do NOT re-litigate design quality — the converge "
                  "phase owns that). Check: adr_on_disk, sections_present (Context/Alternatives/"
@@ -150,6 +160,9 @@ Same 3-phase shape as standard, but:
 "verifier": {
   "assignee": "verifier",
   "skill": "dod-verdict",
+  "metric_type": "proxy",
+  "battery": {"path": "startup/profiles/verifier/secrets/dc-val-battery-secrets.md",
+              "runner": "verifier"},
   "artifact_required": true,
   "title": "[DoD] Converge ensemble — <DECISION>",
   "body": ("Spawn 3 INDEPENDENT verifier sub-cards via kanban_chains (each "

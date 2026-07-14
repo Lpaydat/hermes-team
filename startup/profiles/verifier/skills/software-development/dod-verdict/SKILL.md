@@ -101,9 +101,21 @@ kanban_complete(metadata={"dod_verdict": {
             "failure_modes_explicit":"pass|fail", "consequences_complete":"pass|fail"},
   "gaps": [{"item":"...", "issue":"...", "citation":"...", "failure":"...",
             "severity":"critical|important|minor"}],
+  "evidence": [{"text":"<material claim>", "citations": [{"artifact_type":"adr_doc|file_line|probe_result", "locator":"<...>", "quote?":"<...>"}], "material": true}],
   "recommendation": "advance|replan|escalate"
 }})
 ```
+
+The `evidence` field (loop_engine v2): cite every material claim. The engine's
+**evidence gate** forces `dod_met=false` on an un-cited material claim — and
+under `strict_fact_basis` (which design-council sets), a verdict with no
+`evidence` key trips the gate outright. `evidence` complements `defect_traces`
+(cited-claims discipline vs defect enumeration).
+
+For a `metric_type:"proxy"` phase (the converge phase), the engine ALSO
+dispatches the held-out **battery** card as a phase terminal — your verdict is
+necessary but not sufficient; both you AND the battery must pass. You do not
+dispatch the battery; the engine does.
 
 ## Contract (load-bearing)
 

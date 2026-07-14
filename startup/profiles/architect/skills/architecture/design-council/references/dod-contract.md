@@ -150,9 +150,17 @@ re-score the design — the converge phase owns that.
      "failure": "<REQUIRED for defect_coverage: the concrete failure-implication>",
      "severity": "critical | important | minor"}
   ],
+  "evidence": [ { "text": "<material claim>", "citations": [{"artifact_type": "adr_doc|file_line|probe_result|...", "locator": "<...>", "quote?": "<...>"}], "material": true } ],
   "recommendation": "advance | replan | escalate"
 }
 ```
+
+The `evidence` field (loop_engine v2): every material claim cited. The engine's
+**evidence gate** forces `dod_met=false` on an un-cited material claim (and, under
+`strict_fact_basis`, on a verdict with no `evidence` key at all). It is
+complementary to the `artifact_required` defect-coverage gate — `evidence` is the
+general cited-claims discipline; `behaviors[]`/`defect_traces[]` is the
+design-council-specific defect enumeration. Both fire.
 
 ### Verifier verdict logic (the verifier applies this)
 
@@ -229,7 +237,16 @@ verifier that forgets the contract never ships a bad ADR — it parks.
 synthesized the round — a separate verifier session with a clean context,
 seeing only the design doc + this contract.
 
-## Honest framing — the battery is the terminal gate
+## Honest framing — the held-out battery is the engine-native terminal gate
+
+The converge verifier declares `metric_type: "proxy"` + a `battery` pointing at
+`verifier/secrets/dc-val-battery-secrets.md`. The engine **dispatches the
+battery card itself** as a phase terminal (assigned to `battery.runner`, never
+the converge agent) — **both the verifier AND the battery must pass** for the
+phase to advance; a battery fail replans with the battery's gaps. This is the
+engine-native held-out gate (replaces the fragile manual post-ADR battery card,
+which broke under the sandbox). It fires **within** the converge loop — a missed
+defect is caught + re-converged *before* the ADR.
 
 This DoD makes the defect **non-omittable** (every stated behavior must be
 enumerated + traced/flagged) and **non-overridable** (a `latent_defect`
@@ -238,8 +255,8 @@ hard-blocks advance). It **raises pre-battery catch probability** via the
 independently *derives* the full defect chain — the verifier might still omit
 the right behavior from `behaviors[]`.
 
-The **held-out battery** (`verifier/secrets/dc-val-battery-secrets.md` §2:
-CITE+GAP+FAILURE + fabrication guard §2.3) is the **terminal gate** that
-independently re-grades the final ADR. §6: judge vs battery diverge → **trust
-the battery**. The converge loop raises the base rate; the battery closes the
+The held-out battery (§2: CITE+GAP+FAILURE + fabrication guard §2.3) is the
+**ground-truth terminal gate** that independently re-grades. §6: judge vs
+battery diverge → **trust the battery**. The converge loop raises the base rate;
+the battery closes the
 gap.

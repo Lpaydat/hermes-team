@@ -1,5 +1,79 @@
 """Tool schemas — what the LLM sees."""
 
+# v2 verifier fields (hermes-teams-drj — the 1h5 sibling, one nesting level
+# down). The engine (tools.py) reads + validates these off the verifier object;
+# declaring them in the schema lets a tool-calling driver pass them (otherwise
+# it sees only {assignee, title, body, skill} and drops them on real runs).
+# Shared by the top-level `verifier` and each phase's `verifier`.
+_VERIFIER_V2_PROPS = {
+    "metric_type": {
+        "type": "string",
+        "enum": ["ground_truth", "proxy"],
+        "description": (
+            "T4 — declare the metric kind gating this phase. "
+            "'ground_truth' = a mechanical, infallible check (test pass/fail, "
+            "grep, count); needs no battery. 'proxy' = a gameable judgment "
+            "(LLM-rubric, human rating); REQUIRES 'battery'. Absent = treated "
+            "as ground_truth unless strict_fact_basis is on."
+        ),
+    },
+    "battery": {
+        "type": "object",
+        "description": (
+            "T5/B6 — held-out battery spec, required when metric_type='proxy'. "
+            "The engine dispatches a SEPARATE independent battery card "
+            "(assigned to battery.runner, never the phase exec) as a terminal "
+            "gate; both the verifier AND the battery must pass for the phase "
+            "to advance."
+        ),
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Path/locator of the disjoint held-out battery artifact.",
+            },
+            "runner": {
+                "type": "string",
+                "description": "Profile to assign the battery card (independence is load-bearing).",
+            },
+        },
+        "required": ["path", "runner"],
+    },
+    "dod_signals": {
+        "type": "array",
+        "description": (
+            "T8 — machine-checkable DoD signals "
+            "[{artifact_type, locator, expectation?}]. Required under "
+            "strict_dod; absent = compat warn."
+        ),
+        "items": {
+            "type": "object",
+            "properties": {
+                "artifact_type": {"type": "string"},
+                "locator": {"type": "string"},
+                "expectation": {"type": "string"},
+            },
+            "required": ["artifact_type", "locator"],
+        },
+    },
+    "strict_fact_basis": {
+        "type": "boolean",
+        "description": "Per-verifier override of the workflow-wide strict_fact_basis flag (true wins).",
+    },
+    "strict_dod": {
+        "type": "boolean",
+        "description": "Per-verifier override of the workflow-wide strict_dod flag (true wins).",
+    },
+    "artifact_required": {
+        "type": "boolean",
+        "default": False,
+        "description": (
+            "Opt-in DoD-artifact gate (the design-council converge use case). "
+            "When true, the engine asserts the verdict carries complete "
+            "behaviors[] + defect_traces[] with no unfixed latent defect."
+        ),
+    },
+}
+
 LOOP_ENGINE = {
     "name": "loop_engine",
     "description": (
@@ -129,6 +203,7 @@ LOOP_ENGINE = {
                         "type": "string",
                         "description": "Skill to force-load into the verifier worker.",
                     },
+                    **_VERIFIER_V2_PROPS,
                 },
                 "required": ["title", "body"],
             },
@@ -289,6 +364,7 @@ LOOP_ENGINE = {
                                 "title": {"type": "string"},
                                 "body": {"type": "string"},
                                 "skill": {"type": "string"},
+                                **_VERIFIER_V2_PROPS,
                             },
                             "required": ["title", "body"],
                         },
