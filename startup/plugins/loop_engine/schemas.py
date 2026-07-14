@@ -166,6 +166,84 @@ LOOP_ENGINE = {
                     "guard."
                 ),
             },
+            "strict_fact_basis": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "T9 (bd hermes-teams-3g2): strict-fact-basis opt-in. When "
+                    "true, the loop hard-requires evidence-cited claims + a "
+                    "metric_type on every verifier — an un-cited material claim "
+                    "or absent metric_type hard-fails the evidence gate. "
+                    "Persisted to loop_state so the decide-time evidence gate "
+                    "can read it on every re-promotion (the driver is stateless "
+                    "between iterations). Default false = today's additive "
+                    "behavior (zero-regression). Workflow-wide: a per-verifier "
+                    "strict_fact_basis overrides upward (true wins)."
+                ),
+            },
+            "strict_dod": {
+                "type": "boolean",
+                "default": False,
+                "description": (
+                    "B9: strict-definition-of-done opt-in. When true, the "
+                    "verifier's DoD must include structured dod_signals (not "
+                    "pure prose) — a pure-prose DoD is hard-rejected at "
+                    "validation. Default false = today's prose-DoD compat. "
+                    "Workflow-wide: a per-verifier strict_dod overrides upward "
+                    "(true wins)."
+                ),
+            },
+            "loop_id": {
+                "type": "string",
+                "description": (
+                    "B7 (T6): durable loop handle — aliased to root_id. On "
+                    "RE-INVOCATION, echo the root_id captured from the first "
+                    "invocation here (drift-immune root pin: opens that exact "
+                    "card and reads loop_state directly, with no goal_hash "
+                    "derivation). Omit on the FIRST call to use the goal_hash "
+                    "bootstrap fallback (byte-for-byte, zero regression). See "
+                    "_resolve_root / SPEC §identity."
+                ),
+            },
+            "discover": {
+                "type": "object",
+                "description": (
+                    "B3/SPEC §2: optional discover phase-0 config. When present, "
+                    "the engine runs a grounding discover phase before "
+                    "phases[0] (or the single execution). The discover worker "
+                    "grounds the goal (cites evidence) and its output feeds the "
+                    "first phase. Omit to use the engine-default discover (or "
+                    "skip discover entirely when goal is already a cited-claim "
+                    "array)."
+                ),
+                "properties": {
+                    "assignee": {
+                        "type": "string",
+                        "description": (
+                            "Profile name to assign the discover card to. "
+                            "OPTIONAL: when omitted the card inherits the "
+                            "workflow's resolved runner (configured runner -> "
+                            "worker -> default)."
+                        ),
+                    },
+                    "dod": {
+                        "type": "string",
+                        "description": (
+                            "The grounding definition-of-done — the discover "
+                            "worker's instructions (becomes the card body). "
+                            "REQUIRED, non-empty."
+                        ),
+                    },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": (
+                            "Caps the discover converge loop. OPTIONAL: defaults "
+                            "to DEFAULT_MAX_ITERATIONS when omitted."
+                        ),
+                    },
+                },
+                "required": ["dod"],
+            },
             "phases": {
                 "type": "array",
                 "description": (
@@ -234,3 +312,104 @@ LOOP_ENGINE = {
         ],
     },
 }
+
+
+# ── v2: citation primitive (T1, bd hermes-teams-4gm) ──────────────────────────
+#
+# ONE shared representation for facts, used by BOTH discover (input grounding)
+# AND the evidence-evaluator (output evidence). The engine enforces STRUCTURE
+# only — the independent verifier card re-opens each citation (reads file:line,
+# re-runs the probe, checks the sha) per the existing independent-verifier trust
+# model. See SPEC.md §Fact-Based Loop Enhancement (v2) §1.
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+# The SEED artifact_type enum — the cross-domain locators every consumer gets
+# for free. ``artifact_type`` is an OPEN enum: the seed covers code / design /
+# research; a consumer registers domain extensions via
+# :func:`register_artifact_type` (the engine never infers types — it only
+# validates membership). The locator's semantics are per-type (type-dispatched
+# re-open is the verifier profile's concern, not the engine's).
+SEED_ARTIFACT_TYPES = frozenset({
+    "file_line",
+    "test_output",
+    "grep_result",
+    "commit_sha",
+    "url",
+    "adr_doc",
+    "probe_result",
+    "error_string",
+})
+
+# Runtime extension registry — the "open" half of the open enum.
+_EXTRA_ARTIFACT_TYPES: set = set()
+
+
+def register_artifact_type(name: str) -> None:
+    """Register a domain extension to the ``artifact_type`` enum (T1).
+
+    ``artifact_type`` is an OPEN enum: the seed set covers the cross-domain
+    locators (file_line / test_output / ...), and a consumer registers its own
+    domain types (e.g. ``design_token``, ``research_paper``) so its citations
+    pass the engine's structure check. The engine never infers types — it only
+    validates membership — so extension is the consumer's explicit declaration.
+
+    Idempotent (a set); re-registering the same name is a no-op.
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("artifact_type name must be a non-empty string")
+    _EXTRA_ARTIFACT_TYPES.add(name.strip())
+
+
+def known_artifact_types() -> frozenset:
+    """Return the full artifact_type enum: the seed set ∪ registered extensions."""
+    return SEED_ARTIFACT_TYPES | _EXTRA_ARTIFACT_TYPES
+
+
+@dataclass
+class Citation:
+    """A pointer to evidence + the optional exact snippet asserted (T1).
+
+    The machine address (``locator``) is what the verifier re-opens:
+      * ``file_line``    -> "calc.py:10"
+      * ``commit_sha``   -> "a78e25e"
+      * ``url``          -> "https://..."
+      * ``test_output``  -> "pytest -q -> 3 failed"
+      * ``probe_result`` / ``error_string`` / ... — type-dispatched by verifier.
+
+    ``quote`` (optional) is the exact snippet the claim asserts is at the
+    locator — the verifier confirms it matches (the semantic check).
+
+    This is the importable building block; the on-the-wire shape (board /
+    run.metadata JSON) is a plain dict validated by
+    :func:`loop_engine.tools.validate_citation`.
+    """
+
+    artifact_type: str
+    locator: str
+    quote: Optional[str] = None
+
+
+@dataclass
+class Claim:
+    """A material assertion + its evidence (T1).
+
+    ``text`` is the material assertion; ``citations`` is its evidence. A
+    MATERIAL claim (``material=True``, the default) MUST carry >=1 citation —
+    an un-cited material claim is the hard-fail primitive that makes facts not
+    self-claim. A non-material claim (``material=False``, e.g. a framing /
+    context statement the verdict does not depend on) MAY carry an empty
+    citations list. Materiality is ultimately judged by the verifier (T1
+    resolution); ``material`` is the consumer's opt-out flag.
+
+    Representation choice (T1): ONE struct with ``material: bool = True`` over
+    two parallel structs — simpler (one validator path), fail-safe (default
+    material -> empty citations hard-fails), and materiality is verifier-judged
+    so a bool flag is the minimal representation.
+    """
+
+    text: str
+    citations: List[Citation] = field(default_factory=list)
+    material: bool = True

@@ -1,8 +1,15 @@
 # loop_engine — dynamic-workflow / loop-engineering plugin (spec)
 
 > **Status:** DRAFT spec (v1 = engine only). A **generic loop-engineering engine** — drives any iterative converge-loop workflow on the durable kanban board. Composes with `kanban_chains` (execute) + `verifier` (evaluate); modifies neither. **Consumer-agnostic:** example consumers include debugging (the debugger profile), design (`design-council`), research, and UX/UI — each supplies its own phases/DoD; the engine has no domain-specific concepts.
+> **v2 (fact-based loop) — 2026-07-13:** the engine gains a fact-discipline layer — inputs grounded (`discover`), outputs evidence-cited (`dod_verdict.evidence`), proxy metrics battery-gated, identity `root_id`-pinned. **Evolves v1 in place** (not a rewrite); **HARD runtime cutover** for the fact-based core (evidence + `metric_type` required). Design authority: wayfinder map `hermes-teams-j3z` (10 resolved tickets); implementation beads labelled `loop-engine-v2`. See §Thesis + §Fact-Based Loop Enhancement below.
 > **Branch:** `design/debugging-workflow` (worktree). Implementation gets its own branch (shared plugin infra).
 > **Date:** 2026-07-13.
+
+---
+
+## Thesis (v2: fact-based loop)
+
+**loop_engine is a dynamic-workflow engine: it breaks a GOAL into ordered PHASES, each phase a discover→execute→verify converge-loop driven on the durable kanban board** (stateless driver re-promoted per iteration; board = external state). The v1 core (phases, board state, execute via `kanban_chains`, verifier evaluate, layered exits) is the foundation. The **v2 fact-discipline layer** makes each phase *trustworthy*: INPUTS grounded (`discover`, evidence-cited, structural fast-pass), OUTPUTS evidence-cited (verifier re-opens every citation; evidence gates `dod_met`), proxy METRICS battery-gated (terminal independent card, required), IDENTITY root-pinned (`root_id`; `goal_hash` demoted to bootstrap fallback). **Nothing advances on assertion** — every fact verifier-re-opened, every proxy held-out-checked. Goal-breakdown × per-phase loop-engineering × fact-discipline × durable board = a resumable, trustworthy converge.
 
 ---
 
@@ -141,3 +148,67 @@ The whole thing is **durable by construction**: the loop-driver is itself a clai
 - **Verified showstoppers (both cleared against real code):** (1) `block_recurrences` does not count `kind="dependency"` parks; (2) the verifier → driver `run.metadata` path is confirmed end-to-end (store + surface).
 - **Relationship to the debugger spec:** the engine is the foundation; the debugger's debug-loop (reproduce → hypothesise/fix → falsify → converge, each a phase) becomes the engine's first consumer. Build the engine first, then the debugging loop on top.
 - **Honest residual risks** (to address in the implementation plan, not this spec): partial-topology corruption if the driver crashes mid-phase-authoring (mitigated by atomic `create_task(parents=)` per card + idempotent re-drive reconciliation); silent optimistic-lock drop if a verifier/driver run is reclaimed mid-verdict (the engine must detect a dropped completion and re-evaluate); compound tick latency across a multi-handoff iteration (acceptable for v1, optimization later); `auto_decompose` potentially mutating engine-authored topology (assume sole-author or board-disabled for v1).
+
+---
+
+## Fact-Based Loop Enhancement (v2)
+
+> The v2 layer composes on the v1 engine core. **Evolves v1 in place** (not a rewrite); **HARD runtime cutover** for the fact-based core (evidence + `metric_type` required) — see §Migration below. Design authority: wayfinder map `hermes-teams-j3z`; each subsection links its resolved design ticket (`bd show <id>`) for full depth.
+
+### 1. Citation primitive — T1 (`hermes-teams-4gm`)
+ONE shared representation for facts, used by BOTH discover (input) + evaluator (output):
+```
+Citation = { artifact_type: <enum>, locator: <string>, quote?: <string> }
+Claim     = { text: <string>, citations: [Citation] }
+```
+- `artifact_type` ∈ open enum: `file_line, test_output, grep_result, commit_sha, url, adr_doc, probe_result, error_string` (extensible — the domain adapter: code / design / research).
+- **Verifier card re-opens** each citation (reads file:line, re-runs probe, checks sha); **engine enforces structure only** (type ∈ enum, locator non-empty) — stays pure orchestration (matches the existing independent-verifier trust model).
+- **Hard-fail → replan** on any un-cited material claim. This is what makes facts not self-claim. ("Material" = the decision/verdict depends on it; the verifier judges materiality.)
+
+### 2. discover — input grounding — T2 (`hermes-teams-ldr`)
+Always-on, engine-governed **phase 0**. Grounds the goal in evidence before planning.
+- **Single-call w/ redirect:** driver calls `loop_engine({goal, discover:{assignee,dod,max_iterations}, phases:[...]})`; engine runs discover first; "scope clear" → continue to `phases[0]`; "replan" → park driver, re-plan from the discoveries.
+- **Structural fast-pass:** if the goal arrives as `[Claim]` with citations, skip the discover worker (already grounded); bare goal → discover worker runs. Adaptive cost: always-on in principle, free for pre-grounded goals.
+- **Absorbs** Round-0 prep (doctrine-read, worktree carve, ledger seed) + current phase-0 reproduce. The driver no longer self-grounds from memory. v1 callers get discover automatically (engine default, +1 phase) — honest improvement (v1 goals weren't grounded).
+
+### 3. evidence-evaluator — output grounding — T3 (`hermes-teams-mg7`)
+`dod_verdict` (v1 §Evaluate step) gains `evidence`:
+```
+dod_verdict = {
+  dod_met: bool, score: number, gaps:[{dimension,issue}],
+  recommendation: "advance"|"replan"|"escalate",
+  evidence: [Claim]    // NEW — every material claim + its citations
+}
+```
+- **Evidence gates `dod_met`**: `dod_met=true` REQUIRES DoD satisfied AND every material claim cited + re-opened OK. Un-cited material → `dod_met=false` → replan.
+- **score = DoD-quality** (0..1, informational/trend); **evidence = binary gate**. Engine routes on `dod_met`; score is reported, not routed on.
+
+### 4. metric-typing + held-out battery — T4/T5 (`hermes-teams-h40`, `hermes-teams-be2`)
+The autoresearch doctrine enforced: ground-truth metrics are infallible; proxy metrics are gameable + need a held-out battery.
+- **`metric_type` declared per-phase-verifier** (`ground_truth | proxy`) — a verifier-spec field (parallel to assignee/DoD/max_iterations). Consumer's knowledge; no engine inference.
+- **proxy → held-out battery REQUIRED** (validation error if a proxy verifier lacks a battery; the loop refuses to run — proxy-without-battery IS the overfitting failure).
+- **battery spec:** `battery:{path, runner}` in the verifier spec (consumer points at the disjoint battery artifact + names the independent runner). e.g. design-council: `battery:{path:'verifier/secrets/dc-val-battery-secrets.md', runner:'verifier'}`.
+- **Battery = separate CARD** (engine dispatches to the `runner`, never the phase exec/agent); **terminal gate** after the per-phase verifier passes; **both must pass** (battery fail → replan the phase with the battery's gaps). The battery card returns its own evidence-cited `dod_verdict`.
+- design-council fit: its terminal battery = a battery card on its terminal proxy verifier. **For the DEBUGGER** (ground-truth metrics = tests) **no battery needed**.
+
+### 5. identity — root_id (kill goal_hash drift) — T6 (`hermes-teams-prz`)
+The durable identity of a loop = `root_id` (the root card's task id), NOT the goal hash. Amends v1 §State.
+- loop_engine already returns `root_id`; re-invocation ACCEPTS it back as `loop_id` (alias `root_id`); engine keys `loop_state` on it directly.
+- **`goal_hash` demoted to bootstrap-only fallback** (first-call minting + cross-workflow separation). Today's path preserved verbatim → **zero regression, no data migration** (loop_state = blackboard comments ON root_id).
+- Removes the load-bearing "keep goal byte-identical" driver-discipline dependency (the retracted defect-#5 class). Disaster-recovery (lost `loop_id`) falls back to goal_hash.
+
+### 6. ops hardening — T7/T8 (`hermes-teams-76n`, `hermes-teams-cqv`)
+- **install-smoke CI (T7):** a test that loads loop_engine via the REAL `PluginManager.discover_and_load()` against a throwaway profile (NOT direct-import), exercising all 4 enable gates incl. the plugin-symlink discovery gate. Catches the install-defect class (the 4-layer chain that blocked the debugger smoke). **Meta-gotcha:** `pyproject.toml testpaths=["tests"]` must be extended (or the test invoked explicitly) or CI won't collect it.
+- **DoD-checkability linter (T8):** INPUT-side linter (symmetric to the existing OUTPUT-side `_validate_dod_artifact`). A checkable DoD declares ≥1 `DoDSignal{artifact_type, locator, expectation?}` (reuses the T1 enum + `count`). Pure-prose DoDs warned (compat) / hard-failed (`strict_dod` opt-in). Validation errors become structured JSON `{phase_index, field, expected, got, hint}` so the driver self-corrects.
+
+### 7. migration — hard cutover — T9 (`hermes-teams-s54`)
+**HARD cutover for the fact-based core** (enforcement, not gradual — consistent with discover-always-on + battery-required):
+- **evidence (T3) + `metric_type` (T4) REQUIRED.** v1 consumers migrate in lockstep: a **coupled engine + consumer-skill release**. debug-loop adds `metric_type` (`ground_truth` for reproduce/fix/falsify phases) + ensures verifiers RETURN evidence (re-open citations per T1). design-council migration = separate map.
+- **`strict_fact_basis` is the opt-in MECHANISM for the cutover** (T9, bd hermes-teams-3g2; mirrors `strict_dod`). Default `False` = today's additive behavior (an absent `metric_type` is accepted; a verdict with no `evidence` key passes) — zero-regression, so the engine ships the capability ahead of the coupled consumer-skill release. When a consumer enables it (workflow-wide OR per-verifier, same asymmetry as `strict_dod`), it HARD-REQUIRES both: (1) **metric_type** at the validate-seam — a verifier spec WITHOUT `metric_type` is a validation error, the loop refuses to run; (2) **evidence** at the evidence-gate — a verdict WITHOUT an `evidence` key forces `dod_met=false` (nothing advances on assertion; un-cited material already trips, preserved). Consumers (B10 debug-loop) opt in at their coupled release; the engine never forces the cutover unilaterally.
+- **discover = engine default** (v1 callers get it, zero skill change for discover itself).
+- **`loop_id` (T6) + `strict_dod` (T8) + `strict_fact_basis` (T9)** all keep zero-regression/opt-in defaults (the hard cutover is per-consumer opt-in, not a unilateral engine flip).
+- If the engine ships without the coupled skill update, the debugger breaks until updated. One coordinated release.
+
+### v2 Out of Scope
+- **Ensemble/adversarial verifier (Enhancement D)** — complementary to the battery (ensembles reduce proxy variance; battery catches overfit); defer until a proxy loop shows high evaluator variance.
+- **Per-domain grounding-bar calibration** (what "grounded enough" means for debugging vs design vs research); **discover budget/cost caps**; **citation observability/UI**; **nested discover** (a discover sub-loop). All post-v2 sharpening.

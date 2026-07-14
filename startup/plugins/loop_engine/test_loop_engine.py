@@ -527,7 +527,7 @@ class TestFirstInvocation(unittest.TestCase):
     def test_inits_loop_state_on_root(self):
         parsed, fake = _run_handler(
             args={"goal": "debug the flake", "execution": _execution()},
-            create_ids=["t_root", "t_exec"],
+            create_ids=["t_root", "t_discover", "t_exec"],
         )
         # A [swarm:blackboard] comment with key=loop_state lands on the root.
         state_comments = []
@@ -548,14 +548,15 @@ class TestFirstInvocation(unittest.TestCase):
     def test_creates_root_then_one_execution_card_parented_on_root(self):
         parsed, fake = _run_handler(
             args={"goal": "debug the flake", "execution": _execution()},
-            create_ids=["t_root", "t_exec"],
+            create_ids=["t_root", "t_discover", "t_exec"],
         )
         creates = _create_calls(fake)
-        self.assertEqual(len(creates), 2, "T1 spine: root + ONE execution card")
+        # T1 spine: root, the always-on discover card, then ONE execution card.
+        self.assertEqual(len(creates), 3)
 
-        # Root created first, then the single execution card parented on it.
+        # Root created first (no parents); the execution card is parented on root.
         self.assertIsNone(creates[0]["parents"])  # root has no parents
-        self.assertEqual(creates[1]["parents"], ["t_root"])
+        self.assertEqual(creates[2]["parents"], ["t_root"])  # execution on root
         self.assertEqual(parsed["root_id"], "t_root")
         self.assertEqual(parsed["execution_card"], "t_exec")
 
@@ -572,7 +573,7 @@ class TestFirstInvocation(unittest.TestCase):
     def test_returns_blocked_status(self):
         parsed, fake = _run_handler(
             args={"goal": "debug the flake", "execution": _execution()},
-            create_ids=["t_root", "t_exec"],
+            create_ids=["t_root", "t_discover", "t_exec"],
         )
         self.assertEqual(parsed["status"], "blocked")
         self.assertEqual(parsed["terminal_ids"], ["t_exec"])
@@ -587,7 +588,7 @@ class TestDependencyPark(unittest.TestCase):
     def test_links_driver_to_execution_card(self):
         parsed, fake = _run_handler(
             args={"goal": "debug the flake", "execution": _execution()},
-            create_ids=["t_root", "t_exec"],
+            create_ids=["t_root", "t_discover", "t_exec"],
             task_id="t_driver",
         )
         links = _calls(fake, "link_tasks")
@@ -599,7 +600,7 @@ class TestDependencyPark(unittest.TestCase):
     def test_blocks_driver_as_dependency(self):
         parsed, fake = _run_handler(
             args={"goal": "debug the flake", "execution": _execution()},
-            create_ids=["t_root", "t_exec"],
+            create_ids=["t_root", "t_discover", "t_exec"],
             task_id="t_driver",
         )
         blocks = _calls(fake, "block_task")
@@ -776,14 +777,14 @@ class TestVerifierDispatch(unittest.TestCase):
                   "execution": _execution_t2(),
                   "verifier": _verifier(),
                   "max_iterations": 3},
-            create_ids=["t_root", "t_exec", "t_verifier"],
+            create_ids=["t_root", "t_discover", "t_exec", "t_verifier"],
         )
         creates = _create_calls(fake)
-        # Three cards: root, execution (parent=root), verifier (parent=exec).
-        self.assertEqual(len(creates), 3)
-        self.assertIsNone(creates[0]["parents"])           # root
-        self.assertEqual(creates[1]["parents"], ["t_root"])  # execution on root
-        self.assertEqual(creates[2]["parents"], ["t_exec"])  # verifier on exec
+        # Four cards: root, discover, execution (parent=root), verifier (parent=exec).
+        self.assertEqual(len(creates), 4)
+        self.assertIsNone(creates[0]["parents"])            # root
+        self.assertEqual(creates[2]["parents"], ["t_root"])  # execution on root
+        self.assertEqual(creates[3]["parents"], ["t_exec"])  # verifier on exec
         # The verifier card is surfaced so the caller can track it.
         self.assertEqual(parsed["verifier_card"], "t_verifier")
 
@@ -794,10 +795,10 @@ class TestVerifierDispatch(unittest.TestCase):
                   "verifier": _verifier(assignee="verifier",
                                         title="Verify: fix",
                                         body="DoD: green; write dod_verdict")},
-            create_ids=["t_root", "t_exec", "t_verifier"],
+            create_ids=["t_root", "t_discover", "t_exec", "t_verifier"],
         )
         creates = _create_calls(fake)
-        v_create = creates[2]
+        v_create = creates[3]
         self.assertEqual(v_create["assignee"], "verifier")
         self.assertEqual(v_create["title"], "Verify: fix")
         self.assertIn("dod_verdict", v_create["body"])
@@ -807,7 +808,7 @@ class TestVerifierDispatch(unittest.TestCase):
             args={"goal": "fix the bug",
                   "execution": _execution_t2(),
                   "verifier": _verifier()},
-            create_ids=["t_root", "t_exec", "t_verifier"],
+            create_ids=["t_root", "t_discover", "t_exec", "t_verifier"],
             task_id="t_driver",
         )
         # The driver is linked to the VERIFIER (not the execution card).
@@ -830,7 +831,7 @@ class TestVerifierDispatch(unittest.TestCase):
                   "execution": _execution_t2(),
                   "verifier": _verifier(),
                   "max_iterations": 3},
-            create_ids=["t_root", "t_exec", "t_verifier"],
+            create_ids=["t_root", "t_discover", "t_exec", "t_verifier"],
         )
         state_comments = []
         for (args, _kw) in _calls(fake, "add_comment"):
@@ -853,7 +854,7 @@ class TestVerifierDispatch(unittest.TestCase):
             args={"goal": "fix the bug",
                   "execution": _execution_t2(),
                   "verifier": _verifier()},
-            create_ids=["t_root", "t_exec", "t_verifier"],
+            create_ids=["t_root", "t_discover", "t_exec", "t_verifier"],
         )
         self.assertEqual(parsed["status"], "blocked")
         self.assertEqual(parsed["terminal_ids"], ["t_verifier"])
@@ -1233,7 +1234,7 @@ class TestConvergeLoop(unittest.TestCase):
                 "verifier": _verifier(),
                 "max_iterations": 5}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
             "t_exec3", "t_verifier3",
         ], run_for_task={
@@ -1277,7 +1278,7 @@ class TestConvergeLoop(unittest.TestCase):
                 "verifier": _verifier(),
                 "max_iterations": 5}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
             "t_exec3", "t_verifier3",
         ], run_for_task={
@@ -1293,12 +1294,13 @@ class TestConvergeLoop(unittest.TestCase):
             _run_with_fake(fake, args)
         # Exactly 3 execution cards and 3 verifier cards were dispatched.
         new_cards = _create_calls_new(fake)
-        exec_cards = [c for c in new_cards if c["parents"] == ["t_root"]]
+        exec_cards = [c for c in new_cards if c["parents"] == ["t_root"]
+                      and not c["title"].startswith("discover:")]
         self.assertEqual(len(exec_cards), 3)
-        # Each verifier parented on its execution card.
-        self.assertEqual(new_cards[1]["parents"], ["t_exec1"])
-        self.assertEqual(new_cards[3]["parents"], ["t_exec2"])
-        self.assertEqual(new_cards[5]["parents"], ["t_exec3"])
+        # Each verifier parented on its execution card (discover card at index 0).
+        self.assertEqual(new_cards[2]["parents"], ["t_exec1"])
+        self.assertEqual(new_cards[4]["parents"], ["t_exec2"])
+        self.assertEqual(new_cards[6]["parents"], ["t_exec3"])
 
 
 # =============================================================================
@@ -1317,7 +1319,7 @@ class TestHardCap(unittest.TestCase):
                 "verifier": _verifier(),
                 "max_iterations": 2}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
         ], run_for_task={
             "t_verifier1": _verifier_run(_dod_verdict(
@@ -1353,7 +1355,7 @@ class TestHardCap(unittest.TestCase):
                 "verifier": _verifier(),
                 "max_iterations": 2}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
         ], run_for_task={
             "t_verifier1": _verifier_run(_dod_verdict(
@@ -1380,7 +1382,7 @@ class TestHardCap(unittest.TestCase):
                 "verifier": _verifier(),
                 "max_iterations": 2}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
         ], run_for_task={
             "t_verifier1": _verifier_run(_dod_verdict(
@@ -1413,7 +1415,7 @@ class TestHardCap(unittest.TestCase):
                 "verifier": _verifier(),
                 "max_iterations": 2}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
         ], run_for_task={
             "t_verifier1": _verifier_run(_dod_verdict(
@@ -1428,7 +1430,8 @@ class TestHardCap(unittest.TestCase):
         self.assertEqual(parsed["decision"], "hard_cap")
         # Only 2 execution cards dispatched (attempts 1 and 2); no 3rd.
         exec_cards = [c for c in _create_calls_new(fake)
-                      if c["parents"] == ["t_root"]]
+                      if c["parents"] == ["t_root"]
+                      and not c["title"].startswith("discover:")]
         self.assertEqual(len(exec_cards), 2)
 
 
@@ -1500,19 +1503,19 @@ class TestPhaseDecomposition(unittest.TestCase):
         phases = _phases(2)
         parsed, fake = _run_handler(
             args={"goal": "ship the feature", "phases": phases},
-            create_ids=["t_root", "t_exec0", "t_verifier0"],
+            create_ids=["t_root", "t_discover", "t_exec0", "t_verifier0"],
         )
         creates = _create_calls_new(fake)
-        # Phase 0: exec on root, verifier on exec.
-        self.assertEqual(len(creates), 2)
-        self.assertEqual(creates[0]["parents"], ["t_root"])
-        self.assertEqual(creates[1]["parents"], ["t_exec0"])
+        # Phase 0: discover + exec on root, verifier on exec.
+        self.assertEqual(len(creates), 3)
+        self.assertEqual(creates[1]["parents"], ["t_root"])    # exec0 on root
+        self.assertEqual(creates[2]["parents"], ["t_exec0"])   # verifier0 on exec
 
     def test_first_invocation_returns_blocked(self):
         phases = _phases(2)
         parsed, fake = _run_handler(
             args={"goal": "ship the feature", "phases": phases},
-            create_ids=["t_root", "t_exec0", "t_verifier0"],
+            create_ids=["t_root", "t_discover", "t_exec0", "t_verifier0"],
         )
         self.assertEqual(parsed["status"], "blocked")
         self.assertEqual(parsed["terminal_ids"], ["t_verifier0"])
@@ -1527,17 +1530,17 @@ class TestPhaseDecomposition(unittest.TestCase):
         ]
         parsed, fake = _run_handler(
             args={"goal": "ship it", "phases": phases},
-            create_ids=["t_root", "t_exec0", "t_verifier0"],
+            create_ids=["t_root", "t_discover", "t_exec0", "t_verifier0"],
         )
         creates = _create_calls_new(fake)
         # Phase 0 verifier carries phase 0's DoD.
-        self.assertIn("API returns 200", creates[1]["body"])
+        self.assertIn("API returns 200", creates[2]["body"])
 
     def test_driver_parks_on_phase_zero_verifier(self):
         phases = _phases(2)
         parsed, fake = _run_handler(
             args={"goal": "ship it", "phases": phases},
-            create_ids=["t_root", "t_exec0", "t_verifier0"],
+            create_ids=["t_root", "t_discover", "t_exec0", "t_verifier0"],
             task_id="t_driver",
         )
         links = _calls(fake, "link_tasks")
@@ -1657,7 +1660,7 @@ class TestMultiPhaseWorkflow(unittest.TestCase):
         phases = _phases(2)
         args = {"goal": "ship the feature", "phases": phases}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec0", "t_verifier0",
+            "t_root", "t_discover", "t_exec0", "t_verifier0",
             "t_exec1", "t_verifier1",
         ], run_for_task={
             "t_verifier0": _verifier_run(
@@ -1684,7 +1687,7 @@ class TestMultiPhaseWorkflow(unittest.TestCase):
         phases = _phases(2)
         args = {"goal": "ship the feature", "phases": phases}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec0", "t_verifier0",
+            "t_root", "t_discover", "t_exec0", "t_verifier0",
             "t_exec1", "t_verifier1",
         ], run_for_task={
             "t_verifier0": _verifier_run(_dod_verdict(dod_met=True)),
@@ -1693,7 +1696,8 @@ class TestMultiPhaseWorkflow(unittest.TestCase):
         for _ in range(3):  # first + advance + complete
             _run_with_fake(fake, args)
         new_cards = _create_calls_new(fake)
-        exec_cards = [c for c in new_cards if c["parents"] == ["t_root"]]
+        exec_cards = [c for c in new_cards if c["parents"] == ["t_root"]
+                      and not c["title"].startswith("discover:")]
         self.assertEqual(len(exec_cards), 2)
 
 
@@ -1713,7 +1717,7 @@ class TestBudgetExhaustion(unittest.TestCase):
                 "max_iterations": 10,
                 "budget": 2}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
         ], run_for_task={
             "t_verifier1": _verifier_run(_dod_verdict(
@@ -1740,7 +1744,7 @@ class TestBudgetExhaustion(unittest.TestCase):
                 "max_iterations": 10,
                 "budget": 2}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
         ], run_for_task={
             "t_verifier1": _verifier_run(_dod_verdict(
@@ -1812,7 +1816,7 @@ class TestNoProgress(unittest.TestCase):
                 "max_iterations": 10,
                 "no_progress_threshold": 2}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
             "t_exec3", "t_verifier3",
         ], run_for_task={
@@ -1839,7 +1843,7 @@ class TestNoProgress(unittest.TestCase):
                 "max_iterations": 10,
                 "no_progress_threshold": 2}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
             "t_exec3", "t_verifier3",
         ], run_for_task={
@@ -2011,7 +2015,7 @@ class TestNonStopBounded(unittest.TestCase):
                 "max_iterations": 100,
                 "budget": 2}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
         ], run_for_task={
             "t_verifier1": _verifier_run(_dod_verdict(
@@ -2038,7 +2042,7 @@ class TestNonStopBounded(unittest.TestCase):
                 "max_iterations": 100,
                 "no_progress_threshold": 2}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
             "t_exec3", "t_verifier3",
         ], run_for_task={
@@ -2060,7 +2064,7 @@ class TestNonStopBounded(unittest.TestCase):
                 "verifier": _verifier(),
                 "max_iterations": 2}
         fake = FakeKanbanDB(create_ids=[
-            "t_root", "t_exec1", "t_verifier1",
+            "t_root", "t_discover", "t_exec1", "t_verifier1",
             "t_exec2", "t_verifier2",
         ], run_for_task={
             "t_verifier1": _verifier_run(_dod_verdict(
@@ -2208,11 +2212,11 @@ class TestRunnerCardAssignee(unittest.TestCase):
                                 "title": "w", "body": "b"},
                   "verifier": {"assignee": "verifier",
                                "title": "v", "body": "vb"}},
-            create_ids=["t_root", "t_exec", "t_verifier"],
+            create_ids=["t_root", "t_discover", "t_exec", "t_verifier"],
         )
         creates = _create_calls(fake)
-        self.assertEqual(creates[1]["assignee"], "developer")
-        self.assertEqual(creates[2]["assignee"], "verifier")
+        self.assertEqual(creates[2]["assignee"], "developer")   # exec
+        self.assertEqual(creates[3]["assignee"], "verifier")    # verifier
 
     def test_resolved_runner_stored_in_loop_state(self):
         parsed, fake = _run_handler(
@@ -2286,11 +2290,11 @@ class TestRunnerCardAssignee(unittest.TestCase):
         ]
         parsed, fake = _run_handler(
             args={"goal": "ship it", "runner": "debugger", "phases": phases},
-            create_ids=["t_root", "t_exec0", "t_verifier0"],
+            create_ids=["t_root", "t_discover", "t_exec0", "t_verifier0"],
         )
         new_cards = _create_calls_new(fake)
-        self.assertEqual(new_cards[0]["assignee"], "developer")
-        self.assertEqual(new_cards[1]["assignee"], "verifier")
+        self.assertEqual(new_cards[1]["assignee"], "developer")   # exec0
+        self.assertEqual(new_cards[2]["assignee"], "verifier")    # verifier0
 
 
 class TestRunnerValidation(unittest.TestCase):
@@ -2405,12 +2409,12 @@ class TestIntentStableCardKeys(unittest.TestCase):
     def test_first_invocation_t1_stamps_exec_key(self):
         parsed, fake = _run_handler(
             args={"goal": "debug the flake", "execution": _execution()},
-            create_ids=["t_root", "t_exec"], task_id="t_drv",
+            create_ids=["t_root", "t_discover", "t_exec"], task_id="t_drv",
         )
         creates = _create_calls(fake)
-        # [0] root (goal-hash key from T4); [1] exec (intent-stable key).
+        # [0] root (goal-hash key); [2] exec (intent-stable key) after discover.
         self.assertIsNotNone(creates[0]["idempotency_key"])  # root
-        self.assertEqual(creates[1]["idempotency_key"],
+        self.assertEqual(creates[2]["idempotency_key"],
                          "loop:t_drv:phase0:iter0:exec")
 
     def test_first_invocation_t2_stamps_exec_and_verifier_keys(self):
@@ -2418,14 +2422,14 @@ class TestIntentStableCardKeys(unittest.TestCase):
             args={"goal": "converge the loop",
                   "execution": _execution_t2(),
                   "verifier": _verifier(), "max_iterations": 3},
-            create_ids=["t_root", "t_exec", "t_ver"], task_id="t_drv",
+            create_ids=["t_root", "t_discover", "t_exec", "t_ver"], task_id="t_drv",
         )
         creates = _create_calls(fake)
-        self.assertEqual(len(creates), 3)
+        self.assertEqual(len(creates), 4)
         # T2 seeds iteration_counter=1, so the first iteration's cards are iter1.
-        self.assertEqual(creates[1]["idempotency_key"],
-                         "loop:t_drv:phase0:iter1:exec")
         self.assertEqual(creates[2]["idempotency_key"],
+                         "loop:t_drv:phase0:iter1:exec")
+        self.assertEqual(creates[3]["idempotency_key"],
                          "loop:t_drv:phase0:iter1:verify")
 
 
