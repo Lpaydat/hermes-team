@@ -393,6 +393,69 @@ class RootIdKeyingTests(unittest.TestCase):
                          "unresolved loop_id falls back to goal_hash mint")
         self.assertEqual(resp["status"], "blocked")  # first-invocation proceeded
 
+    # ── 5. DRIFT-IMMUNITY REAL (hermes-teams-wz1) ─────────────────────────
+    def test_goal_drift_without_loop_id_still_reopens_same_root(self):
+        """hermes-teams-wz1 (defect-#5 NOT killed on real runs): the REAL
+        duplicate-root scenario. The agent DROPS loop_id on a re-invocation
+        AND reformulates the goal (goal-byte drift). loop_id only confers
+        drift-immunity WHEN supplied; the smoke evidence (debugger-smoke
+        board) shows the agent does NOT always echo it:
+
+          smoke-006 minted TWO roots from ONE driver (t_e9b62693):
+            t_1565815a  key=loop:t_e9b62693:bfd9832ae7  (goal A, 376 bytes)
+            t_799af08b  key=loop:t_e9b62693:e1c8cac7a3  (goal B, 379 bytes)
+          with ZERO loop_id_mismatch events (loop_id was absent, not stale).
+
+        The goal_hash fallback (``loop:{driver}:{sha1(goal)[:10]}``) is
+        drift-SENSITIVE — different goal bytes mint a different root. The
+        driver card IS the durable workflow identity (one driver = one loop),
+        so the engine must recover the SAME root across goal drift EVEN WHEN
+        loop_id is absent. This is drift-immunity made REAL, not gated on the
+        agent remembering to pass loop_id. One bug = one root.
+        """
+        fake = RootIdFakeDB(create_ids=[
+            "t_root", "t_disc1", "t_exec1",    # call 1 (bootstrap)
+            "t_dup", "t_disc2", "t_exec2",     # call 2 pre-fix (duplicate)
+        ])
+
+        # Call 1 — bootstrap, no loop_id: the goal_hash fallback mints root R
+        # and the engine records R on the driver so it is recoverable later.
+        resp1 = _run(
+            {"goal": "alpha goal bytes", "execution": _execution()},
+            fake, task_id="t_driver")
+        self.assertEqual(resp1["status"], "blocked")  # first-invocation parks
+        root_r = resp1["root_id"]
+
+        # Call 2 — goal bytes DRIFT + loop_id ABSENT (the real-world bug).
+        drifted = "BETA completely different goal bytes — different sha1 salt"
+        self.assertNotEqual(
+            _goal_hash_key("t_driver", "alpha goal bytes"),
+            _goal_hash_key("t_driver", drifted),
+            "test setup sanity: the two goals must hash differently (drift)")
+
+        resp2 = _run(
+            {"goal": drifted, "execution": _execution()},
+            fake, task_id="t_driver")
+
+        # (a) ONE bug = ONE root: the SAME root reopened despite goal drift +
+        # no loop_id. Pre-fix this mints a duplicate (the smoke-006 defect).
+        self.assertEqual(
+            resp2["root_id"], root_r,
+            "goal drift + no loop_id must NOT mint a duplicate root — the "
+            "driver is the durable workflow identity (one bug = one root)")
+
+        # (b) Exactly ONE root card was minted across both calls (no duplicate).
+        # The root create has an idempotency_key and NO parents (children have
+        # parents=[root_id]); count just the parentless creates.
+        root_creates = [
+            kw for (m, a, kw) in _calls_in(fake, "create_task")
+            if kw.get("idempotency_key") and not kw.get("parents")
+        ]
+        self.assertEqual(
+            len(root_creates), 1,
+            "exactly one root card (pre-fix minted two on goal drift — the "
+            "smoke-006 duplicate-root defect)")
+
 
 if __name__ == "__main__":
     unittest.main()

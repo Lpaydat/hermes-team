@@ -109,10 +109,20 @@ LOOP_ENGINE = {
         "type": "object",
         "properties": {
             "goal": {
-                "type": "string",
+                # T8 (hermes-teams-22y): polymorphic — a bare goal string (v1,
+                # the 192-test baseline) OR a non-empty [Claim] array (the T2
+                # structural fast-pass: a goal that arrives already-grounded
+                # skips the discover worker; _validate + the handler at
+                # tools.py:1638 read the [Claim] form). Both shapes derive the
+                # same root idempotency key from a stable display string.
+                "type": ["string", "array"],
                 "description": (
-                    "What the workflow accomplishes. Posted to the root card "
-                    "blackboard and used to derive the root idempotency key."
+                    "What the workflow accomplishes. EITHER a non-empty string "
+                    "(the bare goal) OR a non-empty array of Claim dicts "
+                    "(text + citations) — the structural fast-pass form: a goal "
+                    "that arrives already-grounded skips the discover worker. "
+                    "Posted to the root card blackboard and used to derive the "
+                    "root idempotency key."
                 ),
             },
             "runner": {
@@ -277,6 +287,21 @@ LOOP_ENGINE = {
                     "card and reads loop_state directly, with no goal_hash "
                     "derivation). Omit on the FIRST call to use the goal_hash "
                     "bootstrap fallback (byte-for-byte, zero regression). See "
+                    "_resolve_root / SPEC §identity."
+                ),
+            },
+            "root_id": {
+                # T8 (hermes-teams-22y): documented alias. The engine reads
+                # `args.get("loop_id") or args.get("root_id")` (tools.py), so
+                # root_id has ALWAYS been an accepted input — surfacing it as an
+                # explicit property makes it discoverable to an agent reading the
+                # schema (previously it hid behind loop_id's description text).
+                "type": "string",
+                "description": (
+                    "Accepted alias of loop_id (the engine resolves "
+                    "`loop_id or root_id`). Echo the root_id captured from the "
+                    "first invocation on RE-INVOCATION. Omit on the FIRST call "
+                    "to use the goal_hash bootstrap fallback. See loop_id / "
                     "_resolve_root / SPEC §identity."
                 ),
             },

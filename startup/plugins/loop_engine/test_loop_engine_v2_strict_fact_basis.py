@@ -224,5 +224,202 @@ class TestStrictFactBasisEvidenceGate(unittest.TestCase):
         self.assertIsNone(out)
 
 
+# =============================================================================
+# Evidence-gate vs verifier-output vocabulary reconciliation (bd hermes-teams-lf5)
+# =============================================================================
+# Review #4 claimed a deadlock: ``_evidence_gate`` checks ``evidence:[Claim]``
+# but verifiers emit ``behaviors``/``defect_traces`` (read by
+# ``_validate_dod_artifact``) -> the gate "REJECTS correctly-evidenced verdicts
+# -> every strict phase needed manual force-advance." The smoke-calc/calc-add
+# loop (debugger-smoke, strict_fact_basis=true) CONVERGED AUTONOMOUSLY, which
+# contradicts the deadlock claim. These tests pin the resolution: the two gates
+# are SEPARATE and BOTH must pass; a verdict that carries a cited defect-coverage
+# artifact (``behaviors``/``defect_traces``) but NO ``evidence:[Claim]`` key
+# REPLANS under strict (the contract — the artifact does not substitute for the
+# fact-basis), and the SAME verdict with cited ``evidence:[Claim]`` ADDED
+# ADVANCES (no deadlock). The smoke converged once the verifier emitted proper
+# cited Claims; the gate is correct.
+
+class TestEvidenceGateVocabularyReconciliation(unittest.TestCase):
+    """Pin that ``evidence:[Claim]`` (evidence gate) and ``behaviors`` /
+    ``defect_traces`` (artifact gate) are DISTINCT contracts, and that a
+    correctly-evidenced verdict ADVANCES under strict_fact_basis (no false
+    reject). Reconciles bd hermes-teams-lf5 review #4 vs the autonomous smoke."""
+
+    # --- helpers: a valid defect-coverage artifact (the design-council shape) --
+
+    def _artifact_verdict(self, dod_met=True, recommendation="advance",
+                          evidence=None):
+        """A verdict carrying a COMPLETE defect-coverage artifact (behaviors +
+        defect_traces, each trace cited + non-latent). This is the shape
+        ``_validate_dod_artifact`` accepts when ``artifact_required=True``.
+        ``evidence`` omitted => artifact-only (NO evidence key) — the shape the
+        review claimed the gate wrongly rejects."""
+        v = {
+            "dod_met": dod_met,
+            "recommendation": recommendation,
+            "gaps": [],
+            "behaviors": [
+                {"id": "B1", "statement": "calc.add returns a+b for all inputs"},
+            ],
+            "defect_traces": [
+                {"behavior_id": "B1",
+                 "citation": "test_calc.py:12::assert add(2,3)==5 (passed)",
+                 "status": "verified",
+                 "fabricated": False},
+            ],
+        }
+        if evidence is not None:
+            v["evidence"] = evidence
+        return v
+
+    # The reconciliation: artifact-only (no evidence key) REPLANS under strict.
+    # Cited defect_traces do NOT satisfy the evidence gate — they are a DIFFERENT
+    # gate (defect coverage), not the fact-basis primitive. This is BY DESIGN.
+    def test_artifact_only_verdict_replans_under_strict(self):
+        v = self._artifact_verdict()  # behaviors+defect_traces, NO evidence key
+        out = le_tools._apply_evidence_gate(v, strict_fact_basis=True)
+        self.assertFalse(out["dod_met"],
+                         "an artifact-only verdict (no evidence:[Claim]) must NOT "
+                         "advance under strict — defect_traces are not a substitute "
+                         "for the cited-Claim fact basis")
+        self.assertEqual(out["recommendation"], "replan")
+        self.assertIn("evidence", out["evidence_gate"])
+
+    # The reconciliation (inverse): the SAME artifact verdict WITH cited
+    # evidence:[Claim] ADDED ADVANCES under strict. No deadlock — the gate
+    # accepts correctly-evidenced verdicts. This is the false-reject the review
+    # claimed; it does not occur.
+    def test_artifact_plus_cited_evidence_advances_under_strict(self):
+        v = self._artifact_verdict(
+            evidence=[_claim("the add() flip is fixed: add(2,3)==5",
+                             citations=[_cite("test_calc.py:12",
+                                              quote="assert add(2,3)==5")])])
+        out = le_tools._apply_evidence_gate(v, strict_fact_basis=True)
+        self.assertTrue(out["dod_met"],
+                        "a verdict carrying BOTH a cited artifact AND cited "
+                        "evidence:[Claim] must ADVANCE under strict — no false reject")
+        self.assertEqual(out["recommendation"], "advance")
+        self.assertNotIn("evidence_gate", out)
+
+    # The two gates compose at the routing seam: advance requires BOTH
+    # dod_met (post evidence-gate) AND artifact_complete. Artifact-only fails the
+    # evidence gate; artifact+cited-evidence passes both -> the advance condition
+    # the handler uses at tools.py ``if dod_met and artifact_complete``.
+    def test_routing_composition_artifact_only_blocks_advance(self):
+        v = self._artifact_verdict()
+        gated = le_tools._apply_evidence_gate(v, strict_fact_basis=True)
+        dod_met = bool(gated and gated.get("dod_met"))
+        artifact_complete = le_tools._validate_dod_artifact(gated, True)
+        self.assertFalse(dod_met and artifact_complete,
+                         "artifact-only must NOT satisfy the advance condition")
+
+    def test_routing_composition_artifact_plus_evidence_advances(self):
+        v = self._artifact_verdict(
+            evidence=[_claim("add() fixed",
+                             citations=[_cite("test_calc.py:12")])])
+        gated = le_tools._apply_evidence_gate(v, strict_fact_basis=True)
+        dod_met = bool(gated and gated.get("dod_met"))
+        artifact_complete = le_tools._validate_dod_artifact(gated, True)
+        self.assertTrue(dod_met and artifact_complete,
+                        "artifact + cited evidence must satisfy the advance condition")
+
+    # Default-off zero-regression: an artifact-only verdict (no evidence key)
+    # PASSES the evidence gate when strict is off (additive — the gate fires only
+    # when strict opts in or evidence is present-but-malformed).
+    def test_artifact_only_passes_under_default(self):
+        v = self._artifact_verdict()
+        out = le_tools._apply_evidence_gate(v)  # strict_fact_basis defaults False
+        self.assertTrue(out["dod_met"],
+                        "default-off must pass an artifact-only verdict (additive)")
+        self.assertEqual(out["recommendation"], "advance")
+
+
+# =============================================================================
+# per-verifier strict_fact_basis -> loop_state (input/decide symmetry)
+# bd hermes-teams-qc4
+# =============================================================================
+# The validate-seam (metric_type) already ORs the per-verifier flag
+# (``_validate`` v_sfb; ``_validate_phases`` pver_sfb), so a per-verifier opt-in
+# correctly hard-rejects a bare metric_type at call time. BUT the value
+# PERSISTED to loop_state — and therefore read by the DECIDE-time evidence gate
+# (``_apply_evidence_gate(..., strict_fact_basis=loop_state.get("strict_fact_basis"))``
+# at the discover / verifier / battery decide seams) — was sourced ONLY from
+# top-level args (handler ``strict_fact_basis = bool(args.get("strict_fact_basis"))``).
+# So a consumer setting ONLY ``verifier.strict_fact_basis=True`` got metric_type
+# required (good) but the evidence gate silently DISABLED (bad): an un-cited
+# material verdict ADVANCED. These tests pin the SINGLE resolution point that
+# feeds loop_state (``_resolve_strict_fact_basis``): the effective flag is
+# top-level OR any-verifier OR any-phase-verifier (true wins), so a
+# per-verifier-only opt-in reaches the decide-time gate.
+
+class TestPerVerifierStrictFactBasisLoopStateResolution(unittest.TestCase):
+    """``_resolve_strict_fact_basis`` is the single resolution point whose result
+    is persisted to loop_state and read by the decide-time evidence gate on every
+    re-promotion. Per the schema's "per-verifier overrides upward (true wins)"
+    promise, a per-verifier-only ``strict_fact_basis=True`` (NO top-level) must
+    resolve True so the evidence gate honors it — the decide-time mirror of
+    ``test_per_verifier_strict_rejects_bare_metric_type`` (the input half).
+    (bd hermes-teams-qc4.)"""
+
+    # THE BUG: a per-verifier-ONLY opt-in (NO top-level) resolves True so the
+    # persisted loop_state value honors it at decide-time. Pre-fix the handler
+    # read only top-level args -> this returned False -> evidence gate disabled.
+    def test_per_verifier_only_resolves_true_single_phase(self):
+        args = {"verifier": _verifier(strict_fact_basis=True)}
+        self.assertTrue(
+            le_tools._resolve_strict_fact_basis(args),
+            "a per-verifier-only strict_fact_basis (no top-level) must resolve "
+            "True so the decide-time evidence gate honors it")
+
+    # Multi-phase: a per-phase-verifier opt-in aggregates upward (true wins).
+    def test_per_verifier_only_resolves_true_multi_phase(self):
+        args = {"phases": [
+            {"execution": _execution(), "verifier": _verifier()},
+            {"execution": _execution(),
+             "verifier": _verifier(strict_fact_basis=True)},
+        ]}
+        self.assertTrue(
+            le_tools._resolve_strict_fact_basis(args),
+            "any phase's verifier.strict_fact_basis must aggregate upward")
+
+    # Top-level still resolves True (the existing path — zero-regression).
+    def test_top_level_resolves_true(self):
+        self.assertTrue(le_tools._resolve_strict_fact_basis(
+            {"strict_fact_basis": True}))
+
+    # Default-off: no flag anywhere resolves False (additive zero-regression).
+    def test_no_flag_anywhere_resolves_false(self):
+        self.assertFalse(le_tools._resolve_strict_fact_basis(
+            {"verifier": _verifier()}))
+
+    # True wins: top-level True + a per-verifier False still resolves True.
+    def test_top_level_true_with_verifier_false_resolves_true(self):
+        self.assertTrue(le_tools._resolve_strict_fact_basis(
+            {"strict_fact_basis": True,
+             "verifier": _verifier(strict_fact_basis=False)}))
+
+    # THE DECIDE-TIME CONSEQUENCE: a workflow with ONLY verifier.strict_fact_basis
+    # (no top-level) -> the resolved value reaches the evidence gate -> a bare
+    # (no-evidence-key) verdict REPLANS (no advance). Mirrors
+    # test_strict_bare_verdict_forces_dod_met_false but with the per-verifier flag
+    # routed through the resolution point that feeds loop_state. Pre-fix the gate
+    # was silently disabled (resolved False) -> the bare verdict ADVANCED.
+    def test_per_verifier_only_bare_verdict_replans_at_decide_time(self):
+        args = {"verifier": _verifier(metric_type="ground_truth",
+                                      strict_fact_basis=True)}
+        resolved = le_tools._resolve_strict_fact_basis(args)
+        bare = _verdict(dod_met=True, recommendation="advance")  # no evidence key
+        out = le_tools._apply_evidence_gate(bare, strict_fact_basis=resolved)
+        self.assertTrue(
+            resolved,
+            "per-verifier-only opt-in must resolve True (the loop_state value)")
+        self.assertFalse(
+            out["dod_met"],
+            "a bare verdict under a per-verifier-only strict_fact_basis must "
+            "force dod_met=false at decide-time (no advance on assertion)")
+        self.assertEqual(out["recommendation"], "replan")
+
+
 if __name__ == "__main__":
     unittest.main()

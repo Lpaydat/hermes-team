@@ -240,8 +240,34 @@ def _idempotency_key(my_card_id, run_id, goal):
     return f"loop:{my_card_id}:{salt}"
 
 
+def _is_loop_root(kb, conn, task, task_id):
+    """Defensive ownership predicate (T8, hermes-teams-22y): is ``task_id``
+    actually a loop_engine root?
+
+    A loop root carries EITHER a ``loop_state`` blackboard (written by the
+    first invocation and updated on every re-promotion) OR a ``loop:``
+    idempotency-key marker (the create-time signal on the root card). A card
+    with NEITHER is a stranger — the engine must not drive its topology.
+    ``task`` is the already-fetched task object (avoids a second ``get_task``).
+    Both signals are checked defensively so a deployment whose task object does
+    not expose ``idempotency_key`` still works via the loop_state blackboard.
+    """
+    # (a) loop_state blackboard — the durable post-first-invocation signal.
+    try:
+        if _read_blackboard(kb, conn, task_id, "loop_state") is not None:
+            return True
+    except Exception:  # kernel/mock without comments -> fall through to (b)
+        pass
+    # (b) the loop: idempotency-key marker — the create-time signal. Covers a
+    # root whose loop_state has not been written yet (e.g. a just-minted root
+    # re-resolved within the same promotion window) on deployments that expose
+    # the key on the task object.
+    idem = getattr(task, "idempotency_key", None)
+    return bool(idem and str(idem).startswith("loop:"))
+
+
 def _resolve_root(kb, conn, loop_id):
-    """Return ``loop_id`` if it resolves to an existing card, else None (T6/B7).
+    """Return ``loop_id`` if it resolves to an existing LOOP-ROOT card, else None.
 
     The durable identity of a loop is ``root_id`` (the root card's task id), NOT
     the goal hash. When a caller supplies ``loop_id`` (aliased to ``root_id``),
@@ -251,6 +277,12 @@ def _resolve_root(kb, conn, loop_id):
     trusted; the caller falls back to the goal_hash bootstrap path and a
     ``loop_id_mismatch`` event is logged. loop_state itself is unaffected — it
     lives as blackboard comments ON root_id, so pinning the root pins the state.
+
+    T8 (hermes-teams-22y): OWNERSHIP CHECK. A loop_id that resolves to an
+    EXISTING but UNRELATED card (no loop_state blackboard, no ``loop:``
+    idempotency marker) is rejected -> None. Without this, a stale/garbage
+    loop_id colliding with a stranger card's id would drive that stranger's
+    topology. See :func:`_is_loop_root`.
     """
     if not loop_id:
         return None
@@ -261,6 +293,8 @@ def _resolve_root(kb, conn, loop_id):
     if task is None:
         return None
     if not getattr(task, "id", None):
+        return None
+    if not _is_loop_root(kb, conn, task, loop_id):
         return None
     return loop_id
 
@@ -1571,6 +1605,39 @@ def _escalate(kb, conn, root_id, loop_state, author, run_id, my_card_id,
 # ── Handler ───────────────────────────────────────────────────────────────────
 
 
+def _resolve_strict_fact_basis(args):
+    """Resolve the EFFECTIVE ``strict_fact_basis`` persisted to loop_state.
+
+    The decide-time evidence gate reads ``loop_state.get("strict_fact_basis")``
+    on every re-promotion (discover / verifier / battery seams), so the value
+    persisted at first invocation IS the value the gate enforces. Per the
+    schema's "per-verifier overrides upward (true wins)" promise, the effective
+    flag is True if ANY source opts in: top-level ``args.strict_fact_basis``,
+    the single-phase ``verifier.strict_fact_basis``, or any phase's
+    ``verifier.strict_fact_basis``.
+
+    The validate-seam (``_validate`` / ``_validate_phases``) already ORs the
+    per-verifier flag for the metric_type requirement; this centralizes the
+    SAME OR for the persisted/decide value so a per-verifier-only opt-in no
+    longer silently disables the evidence gate (bd hermes-teams-qc4 — input/
+    decide symmetry). Default False = today's additive behavior (zero-regression).
+    """
+    if bool(args.get("strict_fact_basis")):
+        return True
+    verifier = args.get("verifier")
+    if isinstance(verifier, dict) and bool(verifier.get("strict_fact_basis")):
+        return True
+    phases = args.get("phases")
+    if isinstance(phases, list):
+        for phase in phases:
+            if not isinstance(phase, dict):
+                continue
+            pver = phase.get("verifier")
+            if isinstance(pver, dict) and bool(pver.get("strict_fact_basis")):
+                return True
+    return False
+
+
 def loop_engine(args: dict, **kwargs) -> str:
     """Drive ONE iteration of the outer phase-loop.
 
@@ -1624,7 +1691,10 @@ def loop_engine(args: dict, **kwargs) -> str:
     # loop_state so the decide-time evidence gate can read it on every
     # re-promotion (the driver is stateless between iterations). Default
     # False = today's additive behavior (zero-regression).
-    strict_fact_basis = bool(args.get("strict_fact_basis"))
+    # qc4 (bd hermes-teams-qc4): resolve the EFFECTIVE flag = top-level OR
+    # any-verifier OR any-phase-verifier (true wins), so a per-verifier-only
+    # opt-in is honored at decide-time too — not just at the validate-seam.
+    strict_fact_basis = _resolve_strict_fact_basis(args)
     author = _author(**kwargs)
 
     # T6/B7: loop_id (aliased to root_id) is the durable loop handle. Supplied
@@ -1664,6 +1734,24 @@ def loop_engine(args: dict, **kwargs) -> str:
                 kb._append_event(
                     conn, my_card_id, "loop_id_mismatch",
                     {"supplied": loop_id, "fallback": "goal_hash"})
+            # hermes-teams-wz1 (drift-immunity REAL): the driver card durably
+            # records its root on its OWN blackboard, so a re-invocation that
+            # DROPS loop_id (observed on every smoke — the agent does not always
+            # echo it) AND reformulates the goal (goal-byte drift) still recovers
+            # the SAME root. Without this, the goal_hash fallback below mints a
+            # DUPLICATE root on every drifted re-invocation (defect-#5 class:
+            # smoke-006 minted t_1565815a + t_799af08b from one driver
+            # t_e9b62693 — different goal salts, ZERO loop_id_mismatch events).
+            # The driver is the durable workflow identity (one driver = one
+            # loop), so pinning the root to it makes drift-immunity REAL, not
+            # gated on the agent remembering to pass loop_id. loop_id (PRIMARY
+            # above) stays the preferred path; this is the drift-recovery
+            # backstop for the loop_id-less re-invocation.
+            driver_root = _read_blackboard(kb, conn, my_card_id,
+                                           "loop_engine_root")
+            if driver_root:
+                root_id = _resolve_root(kb, conn, driver_root)
+        if root_id is None:
             idem_key = _idempotency_key(my_card_id, run_id, goal)
             root_id = kb.create_task(
                 conn,
@@ -1673,6 +1761,11 @@ def loop_engine(args: dict, **kwargs) -> str:
                 created_by=author,
                 idempotency_key=idem_key,
             )
+            # Record the root on the driver so a drifted, loop_id-less
+            # re-invocation recovers it via the drift-recovery backstop above
+            # (one driver = one root across goal drift).
+            _write_blackboard(kb, conn, my_card_id, author,
+                              "loop_engine_root", root_id)
 
         # 2. First invocation vs re-invocation: loop_state on the blackboard is
         #    the single source of truth (the driver is stateless between
@@ -2150,11 +2243,21 @@ def _reinvoke_discover(kb, conn, root_id, loop_state, author, run_id,
     # (the single-call redirect: phases[0] runs after discover grounds the goal).
     if dod_met:
         phases = loop_state.get("phases")
+        # Thread the discover-era flags (strict_fact_basis / budget /
+        # no_progress_threshold) forward so _begin_first_user_phase's fresh
+        # loop_state carries them. Without this, its signature defaults
+        # (strict_fact_basis=False, budget=None) OVERWRITE the discover-era
+        # loop_state -> the canonical v2 shape (discover + strict_fact_basis)
+        # silently loses its user-phase evidence gate + budget guard.
+        # (bead hermes-teams-u7k.)
         return _begin_first_user_phase(
             kb, conn, root_id, phases, None, None, None, author,
             my_card_id, run_id, loop_state.get("resolved_runner"),
+            budget=loop_state.get("budget"),
+            no_progress_threshold=loop_state.get("no_progress_threshold"),
             loop_state_extras={"discover_state": "done",
-                               "discover": loop_state.get("discover")})
+                               "discover": loop_state.get("discover")},
+            strict_fact_basis=loop_state.get("strict_fact_basis"))
 
     # ── layered exits (mirror _reinvoke_verifier's deterministic guards) ───────
     threshold = int(loop_state.get("no_progress_threshold")
@@ -2718,12 +2821,30 @@ def _resolve_phase_specs(loop_state, execution, verifier):
 
     Multi-phase: read from loop_state['phases'][phase_index]. Single-phase:
     use the top-level execution/verifier passed to the handler.
+
+    T8 (hermes-teams-22y): defensive bounds check. ``stored_phases[phase_index]``
+    was an unguarded indexed lookup; a stale/corrupt loop_state (phase_index out
+    of ``[0, len)``, a non-numeric phase_index, or an empty phases list) raised
+    IndexError/ValueError and crashed the driver. When the index is out of
+    range, fall back to the top-level execution/verifier rather than crashing —
+    the driver is stateless between promotions and a corrupt phase_index is a
+    recoverable state, not a fatal one. Logged at WARNING so the fallback is
+    observable without halting the workflow.
     """
     stored_phases = loop_state.get("phases")
-    if stored_phases is not None:
-        phase_index = int(loop_state.get("phase_index", 0))
-        current = stored_phases[phase_index]
-        return current["execution"], current.get("verifier")
+    if stored_phases:
+        try:
+            phase_index = int(loop_state.get("phase_index", 0))
+        except (TypeError, ValueError):
+            phase_index = -1  # non-numeric -> force the fallback below
+        if 0 <= phase_index < len(stored_phases):
+            current = stored_phases[phase_index]
+            return current["execution"], current.get("verifier")
+        logger.warning(
+            "_resolve_phase_specs: phase_index=%s out of range [0, %s) for "
+            "stored phases — falling back to top-level execution/verifier "
+            "(stale/corrupt loop_state); loop_state keys=%s",
+            phase_index, len(stored_phases), sorted(loop_state.keys()))
     return execution, verifier
 
 

@@ -28,6 +28,10 @@
 !startup/plugins/
 !startup/plugins/**
 
+# ── Re-include: integration tests (parallel-dispatch proof) ────
+!startup/tests/
+!startup/tests/**
+
 # ── Re-include: global config ───────────────────────────────────
 !startup/config.yaml
 !startup/kanban/
@@ -124,6 +128,7 @@ startup/profiles/*/skills/.usage.json.lock
 # Test / validation / smoke board state (real boards tracked via the whitelist above)
 startup/kanban/boards/dc-val-*/
 startup/kanban/boards/debugger-smoke/
+startup/kanban/boards/test88-design-v2/
 
 # Test board artifacts (kanban_chains e2e test runs create these)
 startup/kanban/boards/test*-kvstore*

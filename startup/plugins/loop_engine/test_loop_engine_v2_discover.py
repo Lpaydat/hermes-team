@@ -492,6 +492,136 @@ class TestZeroRegressionNoDiscoverBlock(unittest.TestCase):
 
 
 # =============================================================================
+# 7. discover scope-clear threads strict_fact_basis / budget / no_progress_threshold
+#    (bead hermes-teams-u7k — the canonical v2 shape: discover + strict_fact_basis)
+# =============================================================================
+
+class TestDiscoverScopeClearThreadsStrictFlags(unittest.TestCase):
+    """bead hermes-teams-u7k (T1): the discover scope-clear redirect
+    (``_reinvoke_discover`` -> ``_begin_first_user_phase``) MUST thread
+    ``strict_fact_basis`` / ``budget`` / ``no_progress_threshold`` forward so the
+    canonical v2 shape (discover + strict_fact_basis) keeps its user-phase
+    evidence gate and budget guard.
+
+    REGRESSION GUARD: the prior discover smoke (classes 1-6 above) drove
+    discover=unconfigured OR discover without strict_fact_basis -> the
+    scope-clear redirect either fast-passed (never hit) or had nothing to drop.
+    This class is the ONLY one that CONFIGURES discover AND opts into
+    strict_fact_basis + budget simultaneously, so the scope-clear path through
+    ``_reinvoke_discover -> _begin_first_user_phase`` actually runs with flags
+    to carry. Without the thread-through, ``_begin_first_user_phase`` defaults
+    them (``strict_fact_basis=False``, ``budget=None``) and OVERWRITES loop_state
+    -> the user-phase evidence gate is silently disabled + budget guard dropped.
+    """
+
+    BUDGET = 10
+    NO_PROGRESS = 4  # != DEFAULT_NO_PROGRESS_THRESHOLD (2) so a reset is detectable
+
+    def _args(self):
+        discover = _discover_spec()
+        # strict_fact_basis hardens the validate-seam: the verifier MUST declare
+        # metric_type or the loop refuses to run. This is the canonical v2 shape.
+        verifier = _verifier(assignee="verifier")
+        verifier["metric_type"] = "ground_truth"
+        return {"goal": "fix the flaky calc test",
+                "discover": discover,
+                "strict_fact_basis": True,
+                "budget": self.BUDGET,
+                "no_progress_threshold": self.NO_PROGRESS,
+                "phases": [_phase(_execution(assignee="developer"), verifier)]}
+
+    def _scope_clear_brief(self):
+        """A CITED context brief — the discover scope-clear output. Strict gate is
+        on, so the discover verdict itself must carry cited evidence to pass."""
+        return [_claim("failing test is test_calc at calc/tests/test_calc.py:42",
+                       citations=[_cite("calc/tests/test_calc.py:42",
+                                        quote="def test_add")])]
+
+    def _drive_to_scope_clear(self, args):
+        """Call 1 dispatches discover; seed a cited scope-clear verdict; call 2
+        runs the scope-clear redirect (_reinvoke_discover -> _begin_first_user_phase).
+        Returns (fake, parsed_call2)."""
+        # t_exec2/t_verifier2 are reserved for the bare-verdict replan in the
+        # consequence test; harmless extras for the flag-preservation tests.
+        fake = FakeKanbanDB(create_ids=[
+            "t_root", "t_discover", "t_exec", "t_verifier",
+            "t_exec2", "t_verifier2"])
+        # 1) dispatch discover (driver parks on the discover card).
+        p1, _ = _run_with_fake(fake, args)
+        self.assertEqual(p1.get("phase"), "discover",
+                         "precondition: call 1 must dispatch discover")
+        # 2) seed a CITED scope-clear verdict (strict gate is on -> evidence req'd).
+        fake.run_for_task["t_discover"] = _discover_run(_discover_verdict(
+            dod_met=True, recommendation="advance",
+            evidence=self._scope_clear_brief()))
+        # 3) re-invoke: discover scope-clears -> user phase 0 built.
+        p2, _ = _run_with_fake(fake, args)
+        return fake, p2
+
+    # -- the bug: flags dropped to defaults by _begin_first_user_phase ----------
+
+    def test_scope_clear_preserves_strict_fact_basis(self):
+        """After discover scope-clear, loop_state.strict_fact_basis MUST still be
+        True. The scope-clear redirect must thread it forward, NOT let
+        _begin_first_user_phase reset it to its False default."""
+        fake, _ = self._drive_to_scope_clear(self._args())
+        ls = le_tools._read_blackboard(fake, "fake_conn", "t_root", "loop_state")
+        self.assertTrue(
+            ls.get("strict_fact_basis"),
+            "strict_fact_basis must survive the discover scope-clear redirect "
+            "(the canonical v2 shape keeps its user-phase evidence gate)")
+
+    def test_scope_clear_preserves_budget_and_no_progress(self):
+        """The budget + no_progress_threshold guards MUST survive the scope-clear
+        redirect (not reset to None / default) so the user phase stays bounded."""
+        fake, _ = self._drive_to_scope_clear(self._args())
+        ls = le_tools._read_blackboard(fake, "fake_conn", "t_root", "loop_state")
+        self.assertEqual(
+            ls.get("budget"), self.BUDGET,
+            "budget must survive the discover scope-clear redirect")
+        self.assertEqual(
+            (ls.get("exit_counters") or {}).get("budget_remaining"), self.BUDGET,
+            "budget_remaining is re-seeded from the threaded budget on scope-clear")
+        self.assertEqual(
+            ls.get("no_progress_threshold"), self.NO_PROGRESS,
+            "no_progress_threshold must survive the discover scope-clear redirect")
+
+    # -- the consequence: a bare user-phase verdict is hard-rejected post-discover
+
+    def test_bare_user_verdict_hard_rejected_after_scope_clear(self):
+        """CONSEQUENCE of the thread-through: with strict_fact_basis carried
+        forward, a BARE (uncited) user-phase verifier verdict is hard-rejected
+        (dod_met forced false -> replan) AFTER discover grounds the goal. This is
+        'nothing advances on assertion' for the canonical v2 shape — exactly the
+        gate the scope-clear bug silently disabled."""
+        args = self._args()
+        fake, p2 = self._drive_to_scope_clear(args)
+        # After scope-clear the driver parks on the user-phase verifier.
+        self.assertEqual(p2.get("status"), "blocked",
+                         "precondition: after scope-clear the driver parks on "
+                         "the user-phase verifier")
+        # Seed a BARE user-phase verdict: dod_met=true, advance, NO evidence key.
+        bare = {"dod_met": True, "recommendation": "advance", "gaps": []}
+        fake.run_for_task["t_verifier"] = _FakeRun(
+            task_id="t_verifier", summary="verified",
+            metadata={"dod_verdict": bare}, outcome="completed")
+        # Re-invoke the user-phase verifier path.
+        p3, _ = _run_with_fake(fake, args)
+        self.assertNotEqual(
+            p3.get("status"), "complete",
+            "a bare user-phase verdict must NOT complete post-discover "
+            "(strict_fact_basis gates it -> replan)")
+        self.assertNotEqual(
+            p3.get("decision"), "advance",
+            "a bare user-phase verdict must NOT advance post-discover")
+        surfaced = p3.get("verdict") or {}
+        self.assertFalse(
+            surfaced.get("dod_met"),
+            "the user-phase evidence gate must force dod_met=false on a bare "
+            "verdict post-discover (the gate the scope-clear bug disabled)")
+
+
+# =============================================================================
 # Validation seam (goal polymorphism + discover block shape)
 # =============================================================================
 
