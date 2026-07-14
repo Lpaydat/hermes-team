@@ -139,7 +139,13 @@ The FAIL→fix→re-verify loop runs **without you**: the verifier files finding
 
 1. **Read the accumulated findings first** (the `REVIEW-ITERATION` comments on the dev card — the whole story is there).
 2. **Then the trace**: read the developer's harness transcript from the ledger (`~/vault/traces/<board>/<chain-root>/attempt-N.jsonl`). Grep for the moment judgment diverged from spec. The fix is usually the contract wording for that exact moment — not rewriting the whole task.
-3. **Decide**: re-contract (update PRD/contract, then a NEW dev+verifier chain via `kanban_chains` with the corrected contract — cold restart per Ralph when the approach was wrong), switch the harness model, or abandon the slice back to the user.
+3. **Classify the ESCALATE, then route by defect class** (do not blind-retry — iter≥3 means the dev↔verify loop is stalled; find out *why* before re-dispatching):
+   - **Defect-class bug** (root-cause-unknown, no contract wording explains the failure — the blind-retry hole): **teardown first, then route to `debugger`**. Drain the in-flight dev+verifier chain on this defect — complete or cancel its outstanding fix cards — **BEFORE** creating the debugger card, so two loops never own one defect at once (`no two-loops-one-defect`). Then file the defect (repro + accumulated findings + ledger trace) to `debugger` for its root-cause converge loop; the debugger diagnoses and dispatches its own dev+verifier pair to fix + falsify. You do not write the fix.
+   - **Contract gap** (the spec wording caused the failure): re-contract — update PRD/contract, then a NEW dev+verifier chain via `kanban_chains` with the corrected contract (cold restart per Ralph when the approach was wrong).
+   - **Harness/agent ceiling** (the model genuinely cannot do it): switch the harness model.
+   - **Wrong slice**: abandon the slice back to the user.
+
+   Spec-gap you caused → Case B (fix the contract first). Contract-vs-INTENT gap (the bead promises the wrong thing) → `product-owner`.
 
 **Case B — spec gap you caused**: if any FAIL reveals the contract itself was wrong (not the code), update the PRD/contract BEFORE anything re-runs — the spec is not static; it evolves as you see what the agent builds. Contract-vs-INTENT gaps (the bead promises the wrong thing) route to product-owner, who owns bead content.
 
