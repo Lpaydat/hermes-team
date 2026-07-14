@@ -1,27 +1,20 @@
-"""Tool schemas — what the LLM sees."""
+"""Tool schema — what the LLM sees for kanban_chains."""
 
 KANBAN_CHAINS = {
     "name": "kanban_chains",
     "description": (
-        "Create complex task topologies — parallel chains with optional sequential synthesis — "
-        "in one atomic call. This is the ONLY way to create delegated work topologies; "
-        "do NOT use kanban_create for delegation or swarm cards.\n\n"
+        "Create a matrix topology: N parallel chains of sequential steps, an optional "
+        "sequential `after` fan-in tail, and a shared root blackboard. Replaces both "
+        "kanban_delegate (tech-lead dev→verifier pairs) and qa_swarm (workers→verifier→synth).\n\n"
         "What it does (atomically):\n"
-        "1. Creates a root card (shared blackboard) with your goal, completed immediately so "
-        "children can promote when ready\n"
-        "2. Creates each chain's steps sequentially: step[0] is parented on root, step[n] on "
-        "step[n-1]. All chains run in parallel.\n"
-        "3. If 'after' is given, creates the after sequence (fan-in): step[0] is parented on the "
-        "last step of EVERY chain, then each later step is parented on the previous\n"
-        "4. Links your card as dependent on the terminal card(s): the last 'after' step, or the "
-        "last step of each chain when there is no 'after'\n"
-        "5. Blocks your card (kind=dependency -> status=todo), verified before returning\n"
-        "6. Returns immediately — you auto-promote when all terminal work completes\n\n"
-        "Examples:\n"
-        "- tech-lead: chains=[[dev, verifier], ...], no after -> blocks on all verifiers.\n"
-        "- QA: chains=[[worker], ...], after=[verifier, synthesizer] -> blocks on synthesizer.\n"
-        "- research: chains=[[scout], ...], after=[compile_report] -> blocks on report.\n\n"
-        "Validation runs BEFORE any card is created, so a bad call leaves no partial topology. "
+        "1. Creates a root card (shared blackboard) with your goal + optional container/port info, then completes it\n"
+        "2. For each chain: creates its steps sequentially — step[0] is parented on root, step[n] on step[n-1]\n"
+        "3. If `after` is present: creates the after steps sequentially — after[0] is parented on the LAST step of EVERY chain (fan-in), after[n] on after[n-1]\n"
+        "4. Links your card as child of the terminal card(s): last `after` step if present, else the last step of each chain\n"
+        "5. Blocks your card (kind=dependency → status=todo) and verifies the block took effect\n"
+        "6. Returns immediately — you auto-promote when the terminal card(s) complete\n\n"
+        "If `blackboard.image_tag` is set, the first step of each chain gets an auto-allocated port "
+        "(base_port + chain_index) baked into its body. Pass a `blackboard` to share image/env/spec context.\n\n"
         "Do NOT call kanban_complete until you are re-dispatched after promotion."
     ),
     "parameters": {
@@ -29,45 +22,40 @@ KANBAN_CHAINS = {
         "properties": {
             "goal": {
                 "type": "string",
-                "description": "What the topology accomplishes. Posted to the root card blackboard.",
+                "description": "What this matrix accomplishes. Posted to the root card blackboard.",
             },
             "chains": {
                 "type": "array",
-                "description": (
-                    "Parallel chains of sequential steps. Each inner array is one chain; its steps "
-                    "run in order (parent->child). All chains run in parallel."
-                ),
+                "description": "Parallel chains. Chains run concurrently; each inner array is a sequence of steps that run in order.",
                 "items": {
                     "type": "array",
-                    "description": "One chain: an ordered list of steps (1+).",
+                    "description": "One chain — its steps run sequentially (step[n] depends on step[n-1]).",
                     "items": {
                         "type": "object",
                         "properties": {
                             "assignee": {
                                 "type": "string",
-                                "description": "Profile name to assign this step to.",
+                                "description": "Profile name assigned to this step.",
                             },
                             "title": {
                                 "type": "string",
-                                "description": "Short title for the card.",
+                                "description": "Card title for this step.",
                             },
                             "body": {
                                 "type": "string",
-                                "description": (
-                                    "Full step body: acceptance criteria, instructions, constraints."
-                                ),
+                                "description": "What this step does — becomes the card body.",
                             },
                             "skill": {
                                 "type": "string",
-                                "description": "Skill to force-load into the worker for this step.",
+                                "description": "Skill to force-load into this step's worker.",
                             },
                             "workspace_path": {
                                 "type": "string",
-                                "description": "Absolute path to the project directory (becomes dir:<path> workspace).",
+                                "description": "Absolute path to the repo for this step's workspace (passed as dir:<path>).",
                             },
                             "priority": {
                                 "type": "integer",
-                                "description": "Priority tiebreaker.",
+                                "description": "Priority tiebreaker for this card.",
                             },
                         },
                         "required": ["assignee", "title", "body"],
@@ -76,29 +64,29 @@ KANBAN_CHAINS = {
             },
             "after": {
                 "type": "array",
-                "description": (
-                    "Optional sequential fan-in that runs after ALL chains complete. step[0] is "
-                    "parented on the last step of every chain; each later step is parented on the "
-                    "previous. The caller blocks on the last after step."
-                ),
+                "description": "Optional sequential tail that runs after ALL chains complete. after[0] fans in from the last step of every chain.",
                 "items": {
                     "type": "object",
                     "properties": {
                         "assignee": {
                             "type": "string",
-                            "description": "Profile name to assign this step to.",
+                            "description": "Profile name assigned to this step.",
                         },
                         "title": {
                             "type": "string",
-                            "description": "Short title for the card.",
+                            "description": "Card title for this step.",
                         },
                         "body": {
                             "type": "string",
-                            "description": "Step body (optional; defaults to the title).",
+                            "description": "What this step does — becomes the card body. Optional for after steps.",
                         },
                         "skill": {
                             "type": "string",
-                            "description": "Skill to force-load into the worker for this step.",
+                            "description": "Skill to force-load into this step's worker.",
+                        },
+                        "priority": {
+                            "type": "integer",
+                            "description": "Priority tiebreaker for this card.",
                         },
                     },
                     "required": ["assignee", "title"],
@@ -106,15 +94,11 @@ KANBAN_CHAINS = {
             },
             "blackboard": {
                 "type": "object",
-                "description": (
-                    "Optional shared blackboard, posted as a [swarm:blackboard] comment on the root "
-                    "card. When image_tag is set, each chain's first step gets an auto-allocated port "
-                    "(base_port + chain_index) baked into its body."
-                ),
+                "description": "Optional shared context posted to the root card as a [swarm:blackboard] comment. When image_tag is set, each chain's first step gets a container + auto-allocated port baked into its body.",
                 "properties": {
                     "image_tag": {
                         "type": "string",
-                        "description": "Container image tag for worker containers.",
+                        "description": "Pre-built container image tag (e.g. 'qa-test:t_5ccbc475').",
                     },
                     "container_port": {
                         "type": "integer",
@@ -123,12 +107,12 @@ KANBAN_CHAINS = {
                     },
                     "base_port": {
                         "type": "integer",
-                        "description": "First host port; each chain's first step gets base_port + chain_index.",
+                        "description": "First host port for chain containers. Each chain's first step gets base_port + chain_index.",
                         "default": 18081,
                     },
                     "env_facts": {
                         "type": "string",
-                        "description": "Critical environment notes, posted to the blackboard.",
+                        "description": "Critical environment notes posted to the blackboard.",
                     },
                     "spec_path": {
                         "type": "string",
@@ -136,9 +120,13 @@ KANBAN_CHAINS = {
                     },
                     "extra": {
                         "type": "object",
-                        "description": "Arbitrary extra key-value pairs posted to the blackboard.",
+                        "description": "Arbitrary extra key-value pairs merged into the blackboard payload.",
                     },
                 },
+            },
+            "idempotency_key": {
+                "type": "string",
+                "description": "Optional dedup key applied to the root card (re-running with the same key returns the existing root instead of duplicating).",
             },
         },
         "required": ["goal", "chains"],

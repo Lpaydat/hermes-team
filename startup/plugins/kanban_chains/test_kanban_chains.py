@@ -3,43 +3,44 @@
 Test suite for kanban_chains — the unified parallel-chains + optional synthesis
 topology creator.
 
-These tests run WITHOUT a live kanban DB: they mock the kanban_db module that
-the handler imports via _kb(), and assert the EXACT sequence of API calls.
-This proves the handler mechanically builds:
+These tests run WITHOUT a live kanban DB: they mock the subprocess calls the
+handler makes to `hermes kanban ...` and assert the EXACT sequence of CLI
+invocations. This proves the handler mechanically builds:
 
-  root card (completed)  ->  N parallel chains (each sequential)
-                           ->  optional `after` fan-in tail
-                           ->  caller linked + blocked (dependency)
+  root card (completed)  →  N parallel chains (each sequential)
+                           →  optional `after` fan-in tail
+                           →  caller linked + blocked (dependency)
 
 Coverage (19 areas):
   1.  Schema definition (KANBAN_CHAINS, name, required fields, step shapes)
-  2.  Handler importable + helpers present
+  2.  Handler importable
   3.  Simple topology (1 chain, 1 step, no after)
   4.  Multi-chain (2 chains, 1 step each)
   5.  Chain with multiple steps (parenting within a chain)
   6.  After fan-in sequence
   7.  After with multiple steps (parenting within after)
-  8.  Container block (image_tag -> container setup in body)
+  8.  Container block (image_tag → container setup in body)
   9.  Port allocation (base_port + chain_index)
-  10. Block success (block_task returns True -> status=blocked)
-  11. Block failure (block_task returns False -> error)
-  12. Validation errors
-  13. Skill flag (skills= in create_task)
-  14. Workspace flag (workspace_path= in create_task)
-  15. Plugin registration (__init__ + plugin.yaml)
-  16. Compile check (all .py)
-  17. Root card completed after create
-  18. Blackboard comment on root with [swarm:blackboard] prefix
-  19. Regression: port string coercion (int() fix)
+  10. Idempotency key on root
+  11. Block verification (status=todo → blocked)
+  12. Block failure (non-todo status → error)
+  13. Validation errors
+  14. Skill flag (--skill singular)
+  15. Workspace flag (--workspace dir:<path>)
+  16. Plugin registration (__init__ + plugin.yaml)
+  17. Compile check (all .py)
+  18. Root card completed after create
+  19. Blackboard comment on root with [swarm:blackboard] prefix
 """
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
-# -- Path setup -----------------------------------------------------------------
+# ── Path setup ────────────────────────────────────────────────────────────────
 PLUGIN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(PLUGIN_DIR))
 
@@ -47,102 +48,81 @@ import tools as kc_tools
 import schemas as kc_schemas
 
 
-# =============================================================================
-# Mock kanban_db
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════════════════════════════════
 
-_Comment = __import__("collections").namedtuple("_Comment", ["author", "body"])
+class FakeSubprocess:
+    """Records every `hermes kanban ...` call and returns canned responses.
 
-
-class FakeKanbanDB:
-    """Records every kanban_db API call and returns canned responses.
-
-    Methods mocked: connect_closing (ctx mgr), create_task, add_comment,
-    list_comments, complete_task, link_tasks, block_task.
-
-    create_task returns successive IDs from `create_ids` and accepts an
-    idempotency_key (recorded, not deduped — see the E2E suite for real
-    idempotency). add_comment/list_comments back the topology-recovery read.
-    block_task returns `block_result` (True/False).
+    Handles subcommands: create, complete, comment, link, block, show.
+      - create → successive dicts from `create_responses` (JSON, via _run_kanban_json)
+      - show   → {"task": {"status": show_status}} (JSON, via _run_kanban_json)
+      - others → OK (returncode 0)
     """
 
-    def __init__(self, create_ids=None, block_result=True):
-        self.create_ids = create_ids or []
-        self.block_result = block_result
-        self._create_idx = 0
-        self.calls = []  # list of (method_name, args_tuple, kwargs_dict)
-        self._comments = {}  # task_id -> list of _Comment (for list_comments)
+    def __init__(self, create_responses=None, show_status="todo"):
+        self.create_responses = create_responses or []
+        self.show_status = show_status
+        self._call_idx = 0
+        self.calls = []  # list of full argv lists
 
-    # -- context manager for connect_closing --
+    def run(self, cmd, **kwargs):
+        self.calls.append(list(cmd))
+        # cmd looks like ['hermes', 'kanban', '--board', board, <verb>, ...]
+        args = cmd[4:] if len(cmd) > 4 else []
 
-    def connect_closing(self, board=None):
-        self.calls.append(("connect_closing", (), {"board": board}))
-        return self
+        if args and args[0] == "create":
+            if self._call_idx < len(self.create_responses):
+                resp = self.create_responses[self._call_idx]
+                self._call_idx += 1
+                return self._ok(json.dumps(resp))
+            return self._fail("no more canned create responses")
 
-    def __enter__(self):
-        return "fake_conn"
+        if args and args[0] == "show":
+            return self._ok(json.dumps({"task": {"status": self.show_status}}))
 
-    def __exit__(self, *args):
-        return False
+        # complete / comment / link / block — always succeed
+        return self._ok("OK")
 
-    # -- kanban_db API methods --
+    def _ok(self, stdout):
+        m = MagicMock()
+        m.returncode = 0
+        m.stdout = stdout
+        m.stderr = ""
+        return m
 
-    def create_task(self, conn, title=None, body=None, assignee=None,
-                    created_by=None, parents=None, skills=None,
-                    workspace_path=None, priority=0, idempotency_key=None):
-        kwargs = {
-            "title": title,
-            "body": body,
-            "assignee": assignee,
-            "created_by": created_by,
-            "parents": parents,
-            "skills": skills,
-            "workspace_path": workspace_path,
-            "priority": priority,
-            "idempotency_key": idempotency_key,
-        }
-        self.calls.append(("create_task", (conn,), kwargs))
-        if self._create_idx < len(self.create_ids):
-            tid = self.create_ids[self._create_idx]
-            self._create_idx += 1
-            return tid
-        return f"t_fallback_{self._create_idx}"
-
-    def add_comment(self, conn, task_id, author, text):
-        self.calls.append(("add_comment", (conn, task_id, author, text), {}))
-        self._comments.setdefault(task_id, []).append(_Comment(author, text))
-
-    def list_comments(self, conn, task_id):
-        self.calls.append(("list_comments", (conn, task_id), {}))
-        return list(self._comments.get(task_id, []))
-
-    def complete_task(self, conn, task_id, summary=None, metadata=None):
-        self.calls.append(("complete_task", (conn, task_id),
-                           {"summary": summary, "metadata": metadata}))
-
-    def link_tasks(self, conn, parent_id, child_id):
-        self.calls.append(("link_tasks", (conn, parent_id, child_id), {}))
-
-    def block_task(self, conn, task_id, reason=None, kind=None,
-                   expected_run_id=None):
-        self.calls.append(("block_task", (conn, task_id),
-                           {"reason": reason, "kind": kind,
-                            "expected_run_id": expected_run_id}))
-        return self.block_result
+    def _fail(self, stderr):
+        m = MagicMock()
+        m.returncode = 1
+        m.stdout = ""
+        m.stderr = stderr
+        return m
 
 
-# =============================================================================
-# Test helpers
-# =============================================================================
-
-def _create_calls(fake):
-    """Return list of kwargs dicts for every create_task call."""
-    return [kw for (method, _, kw) in fake.calls if method == "create_task"]
+def _extract_create_calls(fake):
+    """Return only the create calls, each as a list of argv after the verb."""
+    return [cmd[5:] for cmd in fake.calls if len(cmd) > 4 and cmd[4] == "create"]
 
 
-def _calls(fake, method_name):
-    """Return list of (args, kwargs) for every call matching method_name."""
-    return [(args, kw) for (m, args, kw) in fake.calls if m == method_name]
+def _calls_with_verb(fake, verb):
+    """Return full cmd lists whose kanban verb is `verb`."""
+    return [cmd for cmd in fake.calls if len(cmd) > 4 and cmd[4] == verb]
+
+
+def _arg_value(args, flag):
+    """Return the value following `flag` in an argv list, or None."""
+    if flag in args:
+        return args[args.index(flag) + 1]
+    return None
+
+
+def _run_handler(args, create_responses, show_status="todo", task_id="t_caller"):
+    """Convenience: run kanban_chains against a fresh FakeSubprocess, return (parsed, fake)."""
+    fake = FakeSubprocess(create_responses=create_responses, show_status=show_status)
+    with patch.object(kc_tools.subprocess, "run", side_effect=fake.run):
+        result = kc_tools.kanban_chains(args=args, task_id=task_id)
+    return json.loads(result), fake
 
 
 def _chain_step(assignee="developer", title="do thing", body="build it",
@@ -157,17 +137,9 @@ def _chain_step(assignee="developer", title="do thing", body="build it",
     return step
 
 
-def _run_handler(args, create_ids, block_result=True, task_id="t_caller"):
-    """Convenience: run kanban_chains with a FakeKanbanDB, return (parsed, fake)."""
-    fake = FakeKanbanDB(create_ids=create_ids, block_result=block_result)
-    with patch.object(kc_tools, "_kb", return_value=fake):
-        result = kc_tools.kanban_chains(args=args, task_id=task_id)
-    return json.loads(result), fake
-
-
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 # 1. Schema tests
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestSchema(unittest.TestCase):
 
@@ -184,7 +156,7 @@ class TestSchema(unittest.TestCase):
 
     def test_optional_params_present(self):
         props = kc_schemas.KANBAN_CHAINS["parameters"]["properties"]
-        for opt in ("after", "blackboard"):
+        for opt in ("after", "blackboard", "idempotency_key"):
             self.assertIn(opt, props)
 
     def test_chain_step_required_fields(self):
@@ -210,9 +182,9 @@ class TestSchema(unittest.TestCase):
         self.assertEqual(bb["base_port"]["default"], 18081)
 
 
-# =============================================================================
-# 2. Handler importable + helpers present
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2. Handler importable
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestHandlerExists(unittest.TestCase):
 
@@ -221,52 +193,54 @@ class TestHandlerExists(unittest.TestCase):
         self.assertTrue(callable(kc_tools.kanban_chains))
 
     def test_helpers_present(self):
-        for name in ("_board", "_kb", "_run_id", "_my_card_id",
-                     "_author", "_validate", "_container_section"):
+        for name in ("_get_board", "_run_kanban", "_run_kanban_json",
+                     "_get_my_card_id", "_validate", "_container_block"):
             self.assertTrue(hasattr(kc_tools, name), f"missing helper {name}")
 
 
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 # 3. Simple topology (1 chain, 1 step, no after)
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestSimpleTopology(unittest.TestCase):
 
     def test_single_chain_single_step(self):
         parsed, fake = _run_handler(
             args={"goal": "ship feature", "chains": [[_chain_step()]]},
-            create_ids=["t_root", "t_c0"],
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
         )
         self.assertEqual(parsed["status"], "blocked")
         self.assertEqual(parsed["root_id"], "t_root")
         self.assertEqual(parsed["chains"], [["t_c0"]])
-        self.assertEqual(parsed.get("after", []), [])
+        self.assertEqual(parsed["after"], [])
         self.assertEqual(parsed["terminal_ids"], ["t_c0"])
+        self.assertTrue(parsed["block_verified"])
 
-        creates = _create_calls(fake)
+        creates = _extract_create_calls(fake)
         self.assertEqual(len(creates), 2)  # root + 1 step
 
         # step parented on root
-        self.assertEqual(creates[1]["parents"], ["t_root"])
+        self.assertEqual(_arg_value(creates[1], "--parent"), "t_root")
 
         # caller linked as child of the chain terminal
-        links = _calls(fake, "link_tasks")
+        links = _calls_with_verb(fake, "link")
         self.assertEqual(len(links), 1)
-        link_args = links[0][0]
-        self.assertEqual(link_args[1], "t_c0")      # parent
-        self.assertEqual(link_args[2], "t_caller")  # child
+        self.assertEqual(links[0][5], "t_c0")      # parent
+        self.assertEqual(links[0][6], "t_caller")  # child
 
         # caller blocked with dependency
-        blocks = _calls(fake, "block_task")
+        blocks = _calls_with_verb(fake, "block")
         self.assertEqual(len(blocks), 1)
-        block_kw = blocks[0][1]
-        self.assertEqual(block_kw["kind"], "dependency")
-        self.assertIn("t_c0", block_kw["reason"])
+        # block <my_card_id> <reason...> --kind dependency
+        block_argv = blocks[0][5:]
+        self.assertEqual(block_argv[0], "t_caller")
+        self.assertIn("--kind", block_argv)
+        self.assertEqual(_arg_value(block_argv, "--kind"), "dependency")
 
 
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 # 4. Multi-chain (2 chains, 1 step each)
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestMultiChain(unittest.TestCase):
 
@@ -276,27 +250,27 @@ class TestMultiChain(unittest.TestCase):
                 [_chain_step(title="A")],
                 [_chain_step(title="B")],
             ]},
-            create_ids=["t_root", "t_c0", "t_c1"],
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}, {"id": "t_c1"}],
         )
         self.assertEqual(parsed["chains"], [["t_c0"], ["t_c1"]])
         self.assertEqual(parsed["terminal_ids"], ["t_c0", "t_c1"])
 
-        # caller linked to BOTH chain terminals
-        links = _calls(fake, "link_tasks")
-        link_parents = sorted(l[0][1] for l in links)
+        # caller linked to BOTH chain terminals (no after → per-chain link)
+        links = _calls_with_verb(fake, "link")
+        link_parents = sorted(l[5] for l in links)
         self.assertEqual(link_parents, ["t_c0", "t_c1"])
         for l in links:
-            self.assertEqual(l[0][2], "t_caller")
+            self.assertEqual(l[6], "t_caller")
 
         # both chain steps parented on root
-        creates = _create_calls(fake)
-        self.assertEqual(creates[1]["parents"], ["t_root"])
-        self.assertEqual(creates[2]["parents"], ["t_root"])
+        creates = _extract_create_calls(fake)
+        self.assertEqual(_arg_value(creates[1], "--parent"), "t_root")
+        self.assertEqual(_arg_value(creates[2], "--parent"), "t_root")
 
 
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 # 5. Chain with multiple steps (intra-chain parenting)
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestChainMultipleSteps(unittest.TestCase):
 
@@ -305,24 +279,24 @@ class TestChainMultipleSteps(unittest.TestCase):
             args={"goal": "sequential", "chains": [
                 [_chain_step(title="first"), _chain_step(title="second")],
             ]},
-            create_ids=["t_root", "t_s0", "t_s1"],
+            create_responses=[{"id": "t_root"}, {"id": "t_s0"}, {"id": "t_s1"}],
         )
         self.assertEqual(parsed["chains"], [["t_s0", "t_s1"]])
         self.assertEqual(parsed["terminal_ids"], ["t_s1"])
 
-        creates = _create_calls(fake)
-        # step[0] -> root, step[1] -> step[0]
-        self.assertEqual(creates[1]["parents"], ["t_root"])
-        self.assertEqual(creates[2]["parents"], ["t_s0"])
+        creates = _extract_create_calls(fake)
+        # step[0] → root, step[1] → step[0]
+        self.assertEqual(_arg_value(creates[1], "--parent"), "t_root")
+        self.assertEqual(_arg_value(creates[2], "--parent"), "t_s0")
 
 
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 # 6. After fan-in sequence
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestAfterFanIn(unittest.TestCase):
 
-    def test_after_step0_fans_in_from_chain_terminals(self):
+    def test_after_zero_fans_in_from_chain_terminals(self):
         parsed, fake = _run_handler(
             args={
                 "goal": "synth after",
@@ -332,25 +306,31 @@ class TestAfterFanIn(unittest.TestCase):
                 ],
                 "after": [{"assignee": "synth", "title": "merge"}],
             },
-            create_ids=["t_root", "t_c0", "t_c1", "t_a0"],
+            create_responses=[
+                {"id": "t_root"}, {"id": "t_c0"}, {"id": "t_c1"}, {"id": "t_a0"},
+            ],
         )
         self.assertEqual(parsed["after"], ["t_a0"])
         self.assertEqual(parsed["terminal_ids"], ["t_a0"])
 
-        creates = _create_calls(fake)
-        # after[0] parented on ALL chain terminals via parents=
-        self.assertEqual(creates[3]["parents"], ["t_c0", "t_c1"])
+        links = _calls_with_verb(fake, "link")
+        # 2 fan-in links (t_c0→t_a0, t_c1→t_a0) + 1 caller link (t_a0→caller)
+        self.assertEqual(len(links), 3)
+        fan_in = sorted((l[5], l[6]) for l in links if l[6] == "t_a0")
+        self.assertEqual(fan_in, [("t_c0", "t_a0"), ("t_c1", "t_a0")])
+        caller_links = [l for l in links if l[6] == "t_caller"]
+        self.assertEqual(len(caller_links), 1)
+        self.assertEqual(caller_links[0][5], "t_a0")
 
-        # caller linked to the after terminal only
-        links = _calls(fake, "link_tasks")
-        self.assertEqual(len(links), 1)
-        self.assertEqual(links[0][0][1], "t_a0")
-        self.assertEqual(links[0][0][2], "t_caller")
+        # after[0] created with NO --parent
+        creates = _extract_create_calls(fake)
+        after_create = creates[-1]
+        self.assertNotIn("--parent", after_create)
 
 
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 # 7. After with multiple steps (intra-after parenting)
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestAfterMultipleSteps(unittest.TestCase):
 
@@ -364,26 +344,28 @@ class TestAfterMultipleSteps(unittest.TestCase):
                     {"assignee": "synth", "title": "report"},
                 ],
             },
-            create_ids=["t_root", "t_c0", "t_a0", "t_a1"],
+            create_responses=[
+                {"id": "t_root"}, {"id": "t_c0"}, {"id": "t_a0"}, {"id": "t_a1"},
+            ],
         )
         self.assertEqual(parsed["after"], ["t_a0", "t_a1"])
         self.assertEqual(parsed["terminal_ids"], ["t_a1"])
 
-        creates = _create_calls(fake)
-        # after[0] (creates[2]) parented on chain terminals; after[1] parented on after[0]
-        self.assertEqual(creates[2]["parents"], ["t_c0"])
-        self.assertEqual(creates[3]["parents"], ["t_a0"])
+        creates = _extract_create_calls(fake)
+        # after[0] (creates[2]) no parent; after[1] (creates[3]) parented on after[0]
+        self.assertNotIn("--parent", creates[2])
+        self.assertEqual(_arg_value(creates[3], "--parent"), "t_a0")
 
         # caller linked to last after step only
-        links = _calls(fake, "link_tasks")
-        self.assertEqual(len(links), 1)
-        self.assertEqual(links[0][0][1], "t_a1")
-        self.assertEqual(links[0][0][2], "t_caller")
+        links = _calls_with_verb(fake, "link")
+        caller_links = [l for l in links if l[6] == "t_caller"]
+        self.assertEqual(len(caller_links), 1)
+        self.assertEqual(caller_links[0][5], "t_a1")
 
 
-# =============================================================================
-# 8. Container block (image_tag -> container setup in body)
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. Container block (image_tag → container setup in body)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestContainerBlock(unittest.TestCase):
 
@@ -394,18 +376,18 @@ class TestContainerBlock(unittest.TestCase):
                 "chains": [[_chain_step(title="worker")]],
                 "blackboard": {"image_tag": "qa-test:latest", "container_port": 3000},
             },
-            create_ids=["t_root", "t_c0"],
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
         )
-        creates = _create_calls(fake)
-        chain_body = creates[1]["body"]
+        creates = _extract_create_calls(fake)
+        chain_body = _arg_value(creates[1], "--body")
         self.assertIn("## Container", chain_body)
         self.assertIn("qa-test:latest", chain_body)
         self.assertIn("podman run -d", chain_body)
 
 
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 # 9. Port allocation (base_port + chain_index)
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestPortAllocation(unittest.TestCase):
 
@@ -420,18 +402,24 @@ class TestPortAllocation(unittest.TestCase):
                 ],
                 "blackboard": {"image_tag": "img:1"},
             },
-            create_ids=["t_root", "t_c0", "t_c1", "t_c2"],
+            create_responses=[
+                {"id": "t_root"}, {"id": "t_c0"}, {"id": "t_c1"}, {"id": "t_c2"},
+            ],
         )
-        creates = _create_calls(fake)
+        creates = _extract_create_calls(fake)
         ports = []
-        workers = []
         for c in creates[1:]:  # skip root
-            body = c["body"]
+            body = _arg_value(c, "--body")
             self.assertIn("Port: ", body)
             ports.append(_after(body, "Port: "))
-            workers.append(_after(body, "qa-worker-"))
-        # base_port default 18081 -> 18081, 18082, 18083
+        # base_port default 18081 → 18081, 18082, 18083
         self.assertEqual(ports, ["18081", "18082", "18083"])
+
+        # worker names should be qa-worker-1, qa-worker-2, qa-worker-3
+        workers = []
+        for c in creates[1:]:
+            body = _arg_value(c, "--body")
+            workers.append(_after(body, "qa-worker-"))
         self.assertEqual(workers, ["1", "2", "3"])
 
     def test_custom_base_port(self):
@@ -441,11 +429,13 @@ class TestPortAllocation(unittest.TestCase):
                 "chains": [[_chain_step(title="c0")], [_chain_step(title="c1")]],
                 "blackboard": {"image_tag": "img:1", "base_port": 20000},
             },
-            create_ids=["t_root", "t_c0", "t_c1"],
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}, {"id": "t_c1"}],
         )
-        creates = _create_calls(fake)
-        self.assertIn("Port: 20000", creates[1]["body"])
-        self.assertIn("Port: 20001", creates[2]["body"])
+        creates = _extract_create_calls(fake)
+        body0 = _arg_value(creates[1], "--body")
+        body1 = _arg_value(creates[2], "--body")
+        self.assertIn("Port: 20000", body0)
+        self.assertIn("Port: 20001", body1)
 
 
 def _after(text, marker):
@@ -455,61 +445,87 @@ def _after(text, marker):
     return rest.split()[0] if rest.split() else ""
 
 
-# =============================================================================
-# 10. Block success (block_task returns True -> status=blocked)
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. Idempotency key on root
+# ═══════════════════════════════════════════════════════════════════════════════
 
-class TestBlockSuccess(unittest.TestCase):
+class TestIdempotencyKey(unittest.TestCase):
 
-    def test_block_ok_returns_blocked(self):
+    def test_key_passed_to_root_create(self):
+        parsed, fake = _run_handler(
+            args={
+                "goal": "dedup me",
+                "chains": [[_chain_step()]],
+                "idempotency_key": "run-42",
+            },
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
+        )
+        creates = _extract_create_calls(fake)
+        root_create = creates[0]
+        self.assertIn("--idempotency-key", root_create)
+        self.assertEqual(_arg_value(root_create, "--idempotency-key"), "run-42")
+
+    def test_no_key_means_no_flag(self):
+        parsed, fake = _run_handler(
+            args={"goal": "no key", "chains": [[_chain_step()]]},
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
+        )
+        creates = _extract_create_calls(fake)
+        self.assertNotIn("--idempotency-key", creates[0])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 11. Block verification (status=todo → blocked)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestBlockVerification(unittest.TestCase):
+
+    def test_block_verified_returns_blocked(self):
         parsed, fake = _run_handler(
             args={"goal": "block ok", "chains": [[_chain_step()]]},
-            create_ids=["t_root", "t_c0"],
-            block_result=True,
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
+            show_status="todo",
         )
         self.assertEqual(parsed["status"], "blocked")
+        self.assertTrue(parsed["block_verified"])
 
-        blocks = _calls(fake, "block_task")
-        self.assertEqual(len(blocks), 1)
-        block_args = blocks[0][0]
-        self.assertEqual(block_args[1], "t_caller")
-        self.assertEqual(blocks[0][1]["kind"], "dependency")
+        # a show call was made on the caller
+        shows = _calls_with_verb(fake, "show")
+        self.assertEqual(len(shows), 1)
+        self.assertEqual(shows[0][5], "t_caller")
 
 
-# =============================================================================
-# 11. Block failure (block_task returns False -> error)
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 12. Block failure (non-todo status → error)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestBlockFailure(unittest.TestCase):
 
-    def test_block_fail_returns_error(self):
+    def test_non_todo_status_returns_error(self):
         parsed, fake = _run_handler(
             args={"goal": "block fail", "chains": [[_chain_step()]]},
-            create_ids=["t_root", "t_c0"],
-            block_result=False,
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
+            show_status="running",
         )
         self.assertIn("error", parsed)
-        self.assertIn("Block failed", parsed["error"])
-        # Cards were still created
-        self.assertEqual(parsed["root_id"], "t_root")
+        self.assertFalse(parsed.get("block_verified", False))
+        self.assertIn("running", parsed["error"])
 
 
-# =============================================================================
-# 12. Validation errors
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 13. Validation errors
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestValidationErrors(unittest.TestCase):
 
     def _expect_error(self, args):
-        fake = FakeKanbanDB(create_ids=[])
-        with patch.object(kc_tools, "_kb", return_value=fake):
+        # validation happens before any subprocess call
+        fake = FakeSubprocess(create_responses=[])
+        with patch.object(kc_tools.subprocess, "run", side_effect=fake.run):
             result = kc_tools.kanban_chains(args=args, task_id="t_caller")
         parsed = json.loads(result)
         self.assertIn("error", parsed)
-        # validation must not call any kanban_db method
-        actual_kb_calls = [c for c in fake.calls if c[0] != "connect_closing"]
-        # connect_closing shouldn't be called either since validation returns early
-        self.assertEqual(fake.calls, [], "validation must not call kanban_db at all")
+        self.assertEqual(fake.calls, [], "validation must not call kanban")
 
     def test_missing_goal(self):
         self._expect_error({"chains": [[_chain_step()]]})
@@ -539,6 +555,7 @@ class TestValidationErrors(unittest.TestCase):
         self._expect_error({"goal": "x", "chains": [[step]]})
 
     def test_after_step_missing_assignee(self):
+        # chains valid, but after step invalid → still an error (caught in _validate)
         self._expect_error({
             "goal": "x",
             "chains": [[_chain_step()]],
@@ -546,41 +563,45 @@ class TestValidationErrors(unittest.TestCase):
         })
 
 
-# =============================================================================
-# 13. Skill flag (skills= in create_task)
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 14. Skill flag (--skill singular)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestSkillFlag(unittest.TestCase):
 
-    def test_skill_passed_as_list(self):
+    def test_skill_is_singular_flag(self):
         parsed, fake = _run_handler(
             args={"goal": "skilled", "chains": [[_chain_step(skill="tdd")]]},
-            create_ids=["t_root", "t_c0"],
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
         )
-        creates = _create_calls(fake)
+        creates = _extract_create_calls(fake)
         chain_create = creates[1]
-        self.assertEqual(chain_create["skills"], ["tdd"])
+        self.assertIn("--skill", chain_create)
+        self.assertEqual(_arg_value(chain_create, "--skill"), "tdd")
+        # MUST be singular, not --skills
+        self.assertNotIn("--skills", chain_create)
 
 
-# =============================================================================
-# 14. Workspace flag (workspace_path= in create_task)
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 15. Workspace flag (--workspace dir:<path>)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestWorkspaceFlag(unittest.TestCase):
 
-    def test_workspace_path_passed(self):
+    def test_workspace_dir_form(self):
         parsed, fake = _run_handler(
             args={"goal": "ws", "chains": [[_chain_step(workspace_path="/repo/app")]]},
-            create_ids=["t_root", "t_c0"],
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
         )
-        creates = _create_calls(fake)
+        creates = _extract_create_calls(fake)
         chain_create = creates[1]
-        self.assertEqual(chain_create["workspace_path"], "/repo/app")
+        self.assertIn("--workspace", chain_create)
+        self.assertEqual(_arg_value(chain_create, "--workspace"), "dir:/repo/app")
 
 
-# =============================================================================
-# 15. Plugin registration
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 16. Plugin registration
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestPluginRegistration(unittest.TestCase):
 
@@ -595,9 +616,9 @@ class TestPluginRegistration(unittest.TestCase):
         self.assertIn("- kanban_chains", src)
 
 
-# =============================================================================
-# 16. Compile check
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 17. Compile check
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestCompileCheck(unittest.TestCase):
 
@@ -614,75 +635,64 @@ class TestCompileCheck(unittest.TestCase):
         py_compile.compile(str(PLUGIN_DIR / "__init__.py"), doraise=True)
 
 
-# =============================================================================
-# 17. Root card completed after create
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 18. Root card completed after create
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestRootCompleted(unittest.TestCase):
 
     def test_complete_called_on_root(self):
         parsed, fake = _run_handler(
             args={"goal": "complete root", "chains": [[_chain_step()]]},
-            create_ids=["t_root", "t_c0"],
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
         )
-        completes = _calls(fake, "complete_task")
+        completes = _calls_with_verb(fake, "complete")
         self.assertEqual(len(completes), 1)
-        # complete_task(conn, "t_root", ...)
-        self.assertEqual(completes[0][0][1], "t_root")
-        self.assertEqual(completes[0][1]["summary"],
-                         "Chains topology planned; root remains the shared blackboard.")
+        # complete <root_id> --result ...
+        self.assertEqual(completes[0][5], "t_root")
+        self.assertIn("--result", completes[0][5:])
 
 
-# =============================================================================
-# 18. Blackboard comments on root with [swarm:blackboard] prefix
-#     Two kinds now: an optional `swarm_context` (only when blackboard= given)
-#     and an always-present `topology` record (the idempotency mechanism).
-# =============================================================================
-
-def _blackboard_keys_on(fake, task_id):
-    """Return the list of [swarm:blackboard] payload `key`s posted to task_id."""
-    keys = []
-    for (args, _kw) in _calls(fake, "add_comment"):
-        _conn, tid, _author, text = args
-        if tid != task_id or not text.startswith("[swarm:blackboard]"):
-            continue
-        payload = json.loads(text[len("[swarm:blackboard] "):])
-        keys.append(payload.get("key"))
-    return keys
-
+# ═══════════════════════════════════════════════════════════════════════════════
+# 19. Blackboard comment on root with [swarm:blackboard] prefix
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestBlackboardComment(unittest.TestCase):
 
-    def test_swarm_context_and_topology_when_blackboard_provided(self):
+    def test_comment_made_when_blackboard_provided(self):
         parsed, fake = _run_handler(
             args={
                 "goal": "shared ctx",
                 "chains": [[_chain_step()]],
                 "blackboard": {"image_tag": "img:1", "env_facts": "node 20"},
             },
-            create_ids=["t_root", "t_c0"],
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
         )
-        keys = _blackboard_keys_on(fake, "t_root")
-        self.assertIn("swarm_context", keys)
-        self.assertIn("topology", keys)  # topology always recorded for recovery
+        comments = _calls_with_verb(fake, "comment")
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0][5], "t_root")
+        payload_text = comments[0][6]
+        self.assertTrue(payload_text.startswith("[swarm:blackboard]"))
 
-    def test_only_topology_when_no_blackboard(self):
+    def test_no_comment_when_no_blackboard(self):
         parsed, fake = _run_handler(
             args={"goal": "no bb", "chains": [[_chain_step()]]},
-            create_ids=["t_root", "t_c0"],
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
         )
-        keys = _blackboard_keys_on(fake, "t_root")
-        self.assertNotIn("swarm_context", keys)  # no shared-context blackboard
-        self.assertEqual(keys, ["topology"])      # but topology IS recorded
+        comments = _calls_with_verb(fake, "comment")
+        self.assertEqual(comments, [])
 
 
-# =============================================================================
-# 19. Regression: port string coercion (int() fix)
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 20. Regression: base_port as string (verifier-found bug — no type coercion)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class TestPortAllocationStringCoercion(unittest.TestCase):
-    """Regression: base_port/container_port passed as string from LLM caused
-    TypeError at port = base_port + ci. Fix: int() coercion before arithmetic."""
+    """Verifier found: base_port passed as string '18081' causes TypeError at
+    tools.py:166 (port = base_port + i). Fix: int() coercion before arithmetic."""
 
     def test_base_port_string_does_not_crash(self):
         parsed, fake = _run_handler(
@@ -694,12 +704,14 @@ class TestPortAllocationStringCoercion(unittest.TestCase):
                 ],
                 "blackboard": {"image_tag": "img:1", "base_port": "18081"},
             },
-            create_ids=["t_root", "t_c0", "t_c1"],
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}, {"id": "t_c1"}],
         )
         self.assertNotIn("error", parsed, f"Handler crashed on string base_port: {parsed}")
-        creates = _create_calls(fake)
-        self.assertIn("Port: 18081", creates[1]["body"])
-        self.assertIn("Port: 18082", creates[2]["body"])
+        creates = _extract_create_calls(fake)
+        body0 = _arg_value(creates[1], "--body")
+        body1 = _arg_value(creates[2], "--body")
+        self.assertIn("Port: 18081", body0)
+        self.assertIn("Port: 18082", body1)
 
     def test_container_port_string_does_not_crash(self):
         parsed, fake = _run_handler(
@@ -708,14 +720,42 @@ class TestPortAllocationStringCoercion(unittest.TestCase):
                 "chains": [[_chain_step(title="c0")]],
                 "blackboard": {"image_tag": "img:1", "container_port": "3000", "base_port": "18081"},
             },
-            create_ids=["t_root", "t_c0"],
+            create_responses=[{"id": "t_root"}, {"id": "t_c0"}],
         )
         self.assertNotIn("error", parsed, f"Handler crashed on string ports: {parsed}")
 
 
-# =============================================================================
-# Runner
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════════════════
+# 21. Regression: empty-string id guard (verifier-found latent issue)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestEmptyIdGuard(unittest.TestCase):
+    """Verifier found: guard 'not res or "id" not in res' does not catch
+    {"id": ""} — empty-string id slips through. Fix: not res.get("id")."""
+
+    def test_empty_string_id_on_chain_step_returns_error(self):
+        parsed, fake = _run_handler(
+            args={
+                "goal": "empty id test",
+                "chains": [[_chain_step(title="c0")]],
+            },
+            create_responses=[{"id": "t_root"}, {"id": ""}],
+        )
+        self.assertIn("error", parsed)
+        self.assertIn("Failed to create", parsed["error"])
+
+    def test_empty_string_id_on_root_returns_error(self):
+        parsed, fake = _run_handler(
+            args={
+                "goal": "empty root id",
+                "chains": [[_chain_step(title="c0")]],
+            },
+            create_responses=[{"id": ""}],
+        )
+        self.assertIn("error", parsed)
+        self.assertIn("Failed to create root card", parsed["error"])
+
+
 
 if __name__ == "__main__":
     loader = unittest.TestLoader()
@@ -731,16 +771,18 @@ if __name__ == "__main__":
         TestAfterMultipleSteps,       # 7
         TestContainerBlock,           # 8
         TestPortAllocation,           # 9
-        TestBlockSuccess,             # 10
-        TestBlockFailure,             # 11
-        TestValidationErrors,         # 12
-        TestSkillFlag,                # 13
-        TestWorkspaceFlag,            # 14
-        TestPluginRegistration,       # 15
-        TestCompileCheck,             # 16
-        TestRootCompleted,            # 17
-        TestBlackboardComment,        # 18
-        TestPortAllocationStringCoercion,  # 19
+        TestIdempotencyKey,           # 10
+        TestBlockVerification,        # 11
+        TestBlockFailure,             # 12
+        TestValidationErrors,         # 13
+        TestSkillFlag,                # 14
+        TestWorkspaceFlag,            # 15
+        TestPluginRegistration,       # 16
+        TestCompileCheck,             # 17
+        TestRootCompleted,            # 18
+        TestBlackboardComment,        # 19
+        TestPortAllocationStringCoercion,  # 20
+        TestEmptyIdGuard,            # 21
     ]
 
     for cls in test_classes:

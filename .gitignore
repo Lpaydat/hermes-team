@@ -27,6 +27,7 @@
 # ── Re-include: shared plugins source ───────────────────────────
 !startup/plugins/
 !startup/plugins/**
+!startup/plugins/**/plugin.yaml
 
 # ── Re-include: integration tests (parallel-dispatch proof) ────
 !startup/tests/

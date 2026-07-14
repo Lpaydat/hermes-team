@@ -1,4 +1,4 @@
-"""Kanban chains plugin — registration."""
+"""kanban_chains plugin — registration."""
 
 import logging
 
