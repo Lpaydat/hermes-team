@@ -40,6 +40,14 @@ from pathlib import Path
 
 import pytest
 
+# These tests drive the REAL PluginManager.discover_and_load() — they need the
+# full hermes-agent runtime env (hermes_cli + its deps, e.g. PyYAML). Skip
+# gracefully when PyYAML is absent (e.g. bare system python3) so the suite stays
+# green; run with `startup/hermes-agent/venv/bin/python3 -m pytest` to exercise.
+# (Checking the leaf dep `yaml` — no module-level hermes_cli import, which would
+# have import side effects that pollute other tests' isolation.)
+pytest.importorskip("yaml")
+
 # Absolute path to the REAL loop_engine source — the gate-4 symlink target.
 # Resolved from this file's location so the test is cwd-independent.
 REPO_PLUGINS_DIR = Path(__file__).resolve().parent.parent  # .../startup/plugins
