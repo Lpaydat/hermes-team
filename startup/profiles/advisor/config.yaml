@@ -14,6 +14,9 @@ _config_version: 33
 fallback_model: []
 agent:
   api_max_retries: 10
+kanban:
+  max_in_progress_per_profile: 3
+  max_in_progress: 3
 plugins:
   enabled:
   - kanban_chains

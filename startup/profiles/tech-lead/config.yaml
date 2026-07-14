@@ -15,6 +15,7 @@ browser:
   allow_private_urls: true
 kanban:
   max_in_progress_per_profile: 3
+  max_in_progress: 3
   dispatch_stale_timeout_seconds: 14400
 skills:
   disabled:

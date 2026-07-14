@@ -74,3 +74,7 @@ plugins:
 onboarding:
   seen:
     tool_progress_prompt: true
+
+kanban:
+  max_in_progress_per_profile: 3
+  max_in_progress: 3

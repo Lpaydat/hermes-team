@@ -9,6 +9,9 @@ toolsets:
 agent:
   api_max_retries: 10
   reasoning_effort: xhigh
+kanban:
+  max_in_progress_per_profile: 3
+  max_in_progress: 3
 skills:
   disabled:
   - ask-matt

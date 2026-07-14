@@ -89,3 +89,7 @@ plugins:
       allow_tool_override: false
 display:
   skin: dgx-spark
+
+kanban:
+  max_in_progress_per_profile: 3
+  max_in_progress: 3
