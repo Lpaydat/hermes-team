@@ -41,42 +41,37 @@ Key line: \"<the pitch's decisive sentence, quoted verbatim>\""
 
 The `## Source` section is mandatory — every brief cites the exchange it came from.
 
-## 3. Seed the decision tree + create grill-driver card (FAST — do NOT resolve here)
+## 3. Seed + resolve the decision tree (in-session, max 4 initial nodes)
 
-Seed the tree in beads + create a persistent grill-driver card. This step is FAST (~2 min):
-it creates the tree + the card that will drive the grill autonomously. **Do NOT attempt to
-resolve nodes yourself in this intake session** — the grill-driver card handles that.
+You (PO) are the GRILLER; venture-builder is the user-rep (the GRILLEE) — it answers
+decisions over the SAME intercom topic.
 
-**You (PO) are the GRILLER; venture-builder is the user-rep (the GRILLEE).**
+Force-load `grill-with-docs` (grilling + domain-modeling). Drive the grill's decision tree
+in beads to completion IN THIS SESSION:
 
-### 3a. Seed the tree (beads ONLY — do NOT load any grill skill or resolve nodes)
-
-Create the decision-tree beads. **Do NOT load grill-with-docs or decision-tree-grill** —
-loading them triggers the resolve-loop, which belongs in the grill-driver card (step 3b),
-NOT this intake session. This step is FAST: create beads only, then immediately go to step 3b.
+### 3a. Seed (max 4 initial nodes)
 
 `bd create` the root bead (label `decision-tree`, `dt:root`; body = venture name + brief-id).
-For each top-level decision/fact the brief implies, `bd create` a `dt:fact`/`dt:decision` bead,
-then `bd dep <node> --blocks <root>`.
+Seed ONLY the **3-4 most critical** decisions/facts the venture faces — NOT every possible
+question. **Max 4 initial child nodes** (beyond root). Fewer nodes = faster grill = fits the
+session turn budget = consistent completion. `bd dep <node> --blocks <root>` for each.
 
-### 3b. CREATE THE GRILL-DRIVER CARD — MANDATORY (do not skip)
+### 3b. Resolve (walk the frontier)
 
-This card drives the grill to completion in its OWN session (separate from this intake).
-Without it, the grill stalls when this intake session ends. **Create it BEFORE doing anything
-else in this step:**
+Walk the frontier (`bd ready -l decision-tree`): resolve `dt:fact` (lookup) + `dt:decision`
+(pose to VB over intercom, record `bd comment "VB: <answer>"`, close). Dynamic branching:
+if an answer surfaces a new sub-decision, fork (create child bead) — but keep the frontier
+**≤4 open nodes at any time** (fork sparingly). `domain-modeling` writes CONTEXT.md
+(`docs/ventures/<slug>/CONTEXT.md`) as terms resolve.
 
-```bash
-hermes kanban create "[grill-driver] Complete <venture> decision tree (root <root-id>)" \
-  --assignee product-owner --skill decision-tree-grill \
-  --body "Drive root <root-id> to completion. Read bd ready -l decision-tree → resolve
-open dt:fact (lookup) + dt:decision (pose to VB over intercom, record VB: answer, close).
-Write CONTEXT.md (docs/ventures/<slug>/CONTEXT.md). Beads = single source of truth.
-Hard rules: NEVER moot-close. VB owns decisions. CONTEXT.md mandatory before root close."
-```
+### 3c. Complete
 
-The grill-driver card is the **persistent, resumable grill session** — if it crashes, the
-dispatcher re-spawns PO → PO re-reads beads → continues. This step (intake) creates the tree
-+ the card; the card drives the resolution. Done — proceed to step 4.
+When no open `dt:fact`/`dt:decision` remain (frontier empty): verify CONTEXT.md exists (create
+it NOW if not — write the glossary from resolved terms). Close the root. Stamp the brief with
+the root id + CONTEXT.md path.
+
+**Hard rules:** NEVER moot-close a decision (VB owns decisions). Viability doubts → new
+dt:decision to VB. CONTEXT.md is mandatory before root close.
 
 ## 4. Create the venture board + chart card
 
