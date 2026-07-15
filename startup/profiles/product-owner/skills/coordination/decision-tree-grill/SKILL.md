@@ -1,123 +1,161 @@
 ---
 name: decision-tree-grill
-description: "Drive a grill's decision tree to FULL resolution, backed by beads (bd) so it never contends with the kanban dispatcher/execution engine. Creates dt:fact/dt:decision beads wired by bd deps, walks the frontier (bd ready) resolving facts by lookup + decisions by asking the user-rep, forks new branches as answers reshape the tree, and exits only when the frontier is empty — objective confidence (no self-report). Use to run grill-with-docs to completion without fake-confidence. Labels: decision-tree, dt:root, dt:fact, dt:decision."
+description: "Graph substrate that WRAPS the official grilling skill (shared-skills/mattpocock/grilling) as-is. Graph is storage (term nodes replace CONTEXT.md). MANDATORY stateless recovery: graph_pull('<slug>') filtered to type=root is the FIRST action of every activation; rootless graph_tree/graph_stats are forbidden. Objective done-check: GRILL COMPLETE only when graph_frontier() is empty AND every decision carries a recorded 'VB:' answer AND >=1 term node exists. Defers ALL interview mechanics (seed-one-question, walk-each-branch, fork-as-answers-reshape, look-up-facts) to grilling; reinvents none of them. Labels: context_graph, graph node types root/decision/fact/term."
 ---
 
-# decision-tree-grill — drive the grill's decision tree to completion (beads-backed)
+# decision-tree-grill — graph substrate that wraps the grilling skill
 
-`grill-with-docs` runs a `grilling` interview whose mental model is a **decision tree**:
-every plan branches into decisions; decisions depend on each other; an early answer reshapes
-which questions come next. Confidence is real only when the tree is **fully walked** — every
-branch resolved, no dangling dependencies. (mattpocock/skills#132: confidence-building =
-"audit the trail, walk the path" = walk the tree.)
+`grilling` (shared-skills/mattpocock/grilling/SKILL.md) IS the interview. It walks
+the decision tree one question at a time, looks up facts rather than asking them,
+puts each decision to the user-rep and waits, and forks new branches as each
+answer reshapes the tree. **This skill does not reinvent any of that.** It is the
+SUBSTRATE underneath grilling: a durable, queryable store (the `context_graph`),
+a **MANDATORY stateless recovery protocol** so a fresh session never loses the
+tree, and an **objective done-check** so the LLM cannot fake confidence.
 
-This skill drives that tree to completion with an **objective gate** (frontier empty), not a
-self-reported 0–1 score — so the LLM cannot fake confidence. It uses **beads (bd)** as the
-graph store, **not kanban**, so it never contends with the dispatcher or execution engine.
+Load `grilling` for the interview mechanics; load this skill for the storage +
+recovery + the gate. This skill wraps grilling — it never replaces it.
 
-## The model
+## What this skill owns (and explicitly defers)
 
-- **Root bead** = the thing being grilled (the venture, the plan). Open until the tree is done.
-- **Decision/fact beads** = the tree's nodes. Each **blocks the root** (`bd dep <node> --blocks <root>`) — the root can't complete until all its nodes resolve.
-- **Node types** (labels):
-  - `dt:fact` — resolvable by **lookup** (read the brief, codebase, docs, research). AFK.
-  - `dt:decision` — resolvable only by the **user-rep** (VB / the human). HITL.
-- **Frontier** = open `dt:*` beads with no active blockers = `bd ready -l decision-tree`.
-- **Forking** = resolving a node may surface new sub-decisions → create child `dt:*` beads that block the root (the answer reshaped the tree).
-- **Completion** — ALL THREE required (frontier-empty alone is NOT enough; it's gameable by moot-closing):
-  1. no open `dt:fact`/`dt:decision` beads remain (root's blockers all closed); AND
-  2. EVERY `dt:decision` was closed with a recorded **VB answer** (`bd comment` "VB: <verbatim>") — never a PO self-judgment / "moot"; AND
-  3. `CONTEXT.md` exists with ≥1 pinned term (domain-modeling fired — language actually pinned).
-  All three → `bd close` the root. If (1) holds but (2) or (3) don't, the grill was **fake-completed** — re-open the offending nodes and resolve them properly. Confidence = all three met (mechanical).
+This skill owns exactly THREE things:
 
-## Hard rules (anti-fake-completion — learned from round-1)
+1. **Graph as storage** — the grill's decision tree lives in the `context_graph`
+   SQLite DB, not a CONTEXT.md file and not beads.
+2. **MANDATORY stateless recovery** — the FIRST action of every activation
+   (fresh, resumed, or re-spawned after a crash).
+3. **The objective done-check + anti-fake-completion rules.**
 
-- **A `dt:decision` is resolved ONLY by VB's recorded answer.** Never close one by your own judgment, convenience, or "moot." If you can't get VB's answer, `bd human <node>` (escalate, async) and leave it OPEN — never self-close.
-- **Viability is NOT yours to call.** If research suggests the venture is undifferentiated / saturated / weak, that is NOT grounds to close decisions as moot or to kill the venture. It IS grounds to ADD a new `dt:decision` ("research shows N competitors + no clear differentiation — pivot / kill / proceed?") and pose it to VB. Kill, pivot, and viability are the **founder's** (VB's kill-gate) — never the griller's. **You grill; VB decides.**
-- **`CONTEXT.md` is mandatory.** `domain-modeling` writes it as terms resolve. A grill that ends with no `CONTEXT.md` pinned no language — it is incomplete; re-open + re-run.
-- **"Frontier empty" is necessary, not sufficient.** It is gameable (close-as-moot). The real gate is the three-part Completion above.
+It **defers** everything else to grilling. Seed-one-question, walk-each-branch,
+fork-as-answers-reshape, ask-one-at-a-time, look-up-facts — all of that is
+grilling's job. This skill never re-implements a grill loop. If you find yourself
+writing a `while frontier:` walk here, **stop** — that is grilling's mechanic; the
+substrate only stores what grilling resolves and reads it back.
 
-## Loop
+## The model — graph as storage
+
+The tree lives in the shared graph DB (`startup/context_graph.db`), reached via the
+`context_graph` toolset. Nodes + typed edges + multi-topic tags.
+
+- **Root node** (`graph_add_node node_type=root`) = the venture being grilled. Tag
+  it with the venture `<slug>` topic so the whole tree is recoverable via
+  `graph_pull('<slug>')`.
+- **Decision/fact nodes** (`node_type=decision|fact`) each **block the root**:
+  `graph_add_edge(node, root, 'blocks')` — the root can't resolve until all its
+  blockers resolve.
+  - `fact` — resolvable by **lookup** (brief, codebase, docs, research). AFK.
+  - `decision` — resolvable only by the **user-rep** (VB / the human). HITL.
+- **Term nodes** (`node_type=term`) = the pinned ubiquitous language.
+  **Replaces CONTEXT.md.** Each term = one node, `content` = the VB-approved
+  definition, tagged with its topics. Retrieved via `graph_pull('<slug>')` filtered
+  to `type=term`.
+- **Multi-topic tags**: tag every node with ALL topics it touches. A decision
+  about "cache auth tokens in Redis" tagged `['auth','data-store','security']` is
+  retrieved by `graph_pull('auth')`, `graph_pull('data-store')`, AND
+  `graph_pull('security')` — one node, many topics, no duplication, no
+  "which file?" ambiguity.
+- **Frontier** = open `decision`/`fact` nodes with no open blockers =
+  `graph_frontier()`. This is grilling's work queue.
+
+## MANDATORY stateless recovery — the first action of every activation
+
+This is the fix for **R26**: a fresh history=0 PO session lost the `root_id` and
+could not reconstruct the tree (a `graph_tree`-without-root error). The graph is
+the single source of truth, so the root is ALWAYS recoverable — but only if
+recovery runs first.
+
+**On EVERY activation — fresh, resumed, or re-spawned after a crash — run this
+recovery sequence BEFORE anything else:**
 
 ```text
-# 1. Seed the root + first nodes
-bd create --title "dt: <venture>" --labels decision-tree,dt:root --description "<what's grilled + source brief id>"   # = <root>
-for each top-level decision/fact the brief implies:
-    bd create --title "dt:<fact|decision>: <...>" --labels decision-tree,dt:<fact|decision>
-    bd dep <node> --blocks <root>
-
-# 2. Walk the frontier while open dt:fact/dt:decision nodes exist (root excluded — it's the container)
-while (bd list -l decision-tree | grep -qE 'dt:(fact|decision):' ); do
-    pick a frontier bead (bd ready -l decision-tree; decisions can wait on the user-rep; facts resolve now):
-      dt:fact     → resolve by LOOKUP (brief/codebase/research); bd comment <node> "<answer>"; bd close <node>
-      dt:decision → POSE to the user-rep (VB) over the grill channel (intercom topic); WAIT for VB's reply;
-                    bd comment <node> "VB: <verbatim answer>"; (domain-modeling pins any new term to CONTEXT.md + ADR if hard-to-reverse);
-                    bd close <node>. NEVER self-close as "moot"/self-judge — see Hard rules (anti-fake-completion).
-    FORK: if resolving surfaced new sub-decisions:
-        bd create --labels decision-tree,dt:<fact|decision> ... ; bd dep <new> --blocks <root>
-done
-
-# 3. COMPLETE — no open dt:fact/dt:decision (root auto-ready).
-#    BEFORE closing the root: verify CONTEXT.md exists with pinned terms.
-#    If not: create it NOW — write the venture's ubiquitous language (each resolved term
-#    + its VB-approved definition from the decision answers). domain-modeling owns this.
-#    CONTEXT.md is MANDATORY — no root close without it.
-bd close <root>; bd dep tree <root>
-
-# 4. PERSISTENT GRILL — after seeding the tree (step 1), create a PO grill-driver card
-#    that drives the loop (steps 2-3) to completion. This card survives PO session crashes:
-#    the dispatcher re-claims it → PO re-reads beads → continues from the durable tree state.
-#    Without this card, the grill stalls when PO's intercom session ends.
-hermes kanban create "[grill-driver] Complete decision tree (root <root>)" \
-  --assignee product-owner --skill decision-tree-grill \
-  --body "Drive root <root> to completion. Read bd ready -l decision-tree → resolve open
-  dt:fact (lookup) + dt:decision (pose to VB, record VB: answer, close). Write CONTEXT.md.
-  Beads = single source of truth. Hard rules apply (no moot, VB owns decisions)."
+pull     = graph_pull('<slug>')                 # all nodes for this venture
+root     = the node with type=root in pull      # filter type=root (deterministic)
+tree     = graph_tree(root.id)                  # the full resolved + open tree
+frontier = graph_frontier()                     # the work queue (resolve these now)
 ```
 
-grilling's rule holds inside the loop: **facts are looked up, decisions are put to the
-user-rep** — *"If a fact can be found, look it up rather than asking me. The decisions are
-mine."* One decision/fact at a time (a firehose loses the tree structure).
+- **The root is recovered by filtering `graph_pull('<slug>')` to `type=root`** —
+  never from in-session memory (a fresh session has none). There is exactly one
+  root per slug; if `graph_pull` returns no node with `type=root`, the grill has
+  not been seeded yet (seed it via grilling).
+- **Rootless `graph_tree` / `graph_stats` are forbidden.** Never call
+  `graph_tree` or `graph_stats` without first recovering the root via the
+  sequence above. A rootless `graph_tree('<empty>')` IS the R26 error — recovery
+  eliminates it by reconstructing the root from the graph, not from memory.
+- After recovery, continue exactly where the prior session left off: open nodes
+  are re-posed (by grilling), resolved nodes are skipped. The grill is
+  idempotent + resumable by construction — the graph tracks all progress; the
+  session is stateless. A re-spawned PO reads `graph_frontier()` → sees the open
+  frontier → continues. No progress is lost (the graph is durable).
 
-## Anti-fake-confidence (the point)
+## Anti-fake-completion rules (the point)
 
-Confidence is **not** a number the agent invents. It's the **graph state**: the tree is done
-when the frontier is empty. An agent that "feels 0.95" with open beads is simply **not done**
-— `bd ready -l decision-tree` proves it. Each pass must close real beads (recorded answer +
-ADR where due) to advance; no closed beads = no progress = no confidence. This is the
-beads-graph equivalent of dev↔verify's `metric_type=ground_truth`.
+Confidence is **not** a number the agent invents. It is the **graph state**. These
+rules make it un-fakeable:
 
-## Bounded + escalating
+- **A `decision` resolves ONLY with a recorded `VB:` answer** —
+  `graph_resolve_node(decision, content='VB: <verbatim>')`. Never resolve one by
+  your own judgment, convenience, or "moot." If you can't get VB's answer, **leave
+  it OPEN** (`graph_frontier()` then exposes it as a visible gap) — never
+  self-close.
+- **Viability is NOT yours to call.** If research suggests the venture is
+  undifferentiated / saturated / weak, that is NOT grounds to resolve decisions
+  as moot or to kill the venture. It IS grounds to ADD a new `decision` node
+  ("research shows N competitors + no clear differentiation — pivot / kill /
+  proceed?") and pose it to VB. Kill, pivot, and viability are the **founder's**
+  (VB's kill-gate) — never the griller's. **You grill; VB decides.**
+- **≥1 `term` node is mandatory** (replaces CONTEXT.md). `domain-modeling` writes
+  term nodes as decisions resolve. A grill that ends with zero `term` nodes pinned
+  no language — it is incomplete; re-open + re-run.
 
-- **Depth/width caps** (default depth 4, width 12 per node): a fork beyond the cap → stop
-  forking, note the residual on the parent, close it with an `[open: ...]` comment.
-- **Unresolvable node** (user-rep unsure / fact unknowable) → `bd human <node>` (escalate,
-  async) + leave it OPEN; it stays in the frontier as a **visible** gap, never a hidden one.
-  The root can't complete until a human clears it — the tree makes the stall observable, not
-  silently faked.
+## GRILL COMPLETE — the objective done-check
 
-## Why beads, not kanban
+`GRILL COMPLETE` fires ONLY when ALL THREE hold. Frontier-empty alone is NOT
+enough — it is gameable by moot-closing:
 
-The decision tree is a **planning artifact**, not execution work. Keeping it in bd (Dolt)
-means: no kanban cards spawned → no dispatcher claims, no worker contention, no interference
-with the live execution board. Label nodes `decision-tree` (NOT `ready-for-agent`) so the
-beads-watchdog leaves them alone. The grilling agent queries/walks the graph directly via `bd`.
+1. `graph_frontier()` is **empty** (no open decision/fact; the root's blockers are
+   all resolved); AND
+2. EVERY `decision` node (inspect `graph_tree(root)`) is `status=resolved` with
+   `content` starting `VB:` (a recorded verbatim VB answer — never a PO
+   self-judgment / "moot"); AND
+3. **≥1 `term` node exists** (`graph_stats()['by_type'].get('term', 0) >= 1` —
+   language actually pinned).
 
-## Resumability — beads as single source of truth
+All three → `graph_resolve_node(root, content='GRILL COMPLETE: <slug>')`, then send
+`GRILL COMPLETE` over the grill intercom topic (venture-builder is WAITING on this
+signal). If (1) holds but (2) or (3) don't, the grill was **fake-completed** —
+re-open + resolve the offending nodes properly before signalling. **Do not send
+GRILL COMPLETE early.** An agent that "feels 0.95" with a non-empty frontier is
+simply not done — `graph_frontier()` proves it.
 
-The beads tree IS the grill state. PO MUST query it at the **start of every activation** (fresh, resumed, or re-spawned after crash):
-- `bd ready -l decision-tree` = the frontier (what to work now).
-- `bd dep tree <root>` = the full tree (what's resolved, what's open).
-- `bd show <brief-id>` = the venture intent + source.
-- `CONTEXT.md` = the pinned language so far.
+## CONTEXT.md is not produced
 
-**Never rely on in-session memory.** A fresh PO session (after crash, restart, or dispatcher re-spawn) reads the beads state + continues exactly where the prior session left off: open `dt:` beads are re-posed, closed beads are skipped. The grill is **idempotent + resumable by construction** — the beads tree tracks all progress; the session is stateless.
+Terms live as `term` nodes in the graph (retrievable via `graph_pull('<slug>')`
+filtered to `type=term`), NOT in a CONTEXT.md file. This skill never writes a
+CONTEXT.md. The resolved tree (`graph_tree(root)`) + the pinned term nodes ARE the
+shared understanding — hand them to `to-spec`, which synthesises the spec without
+re-interviewing because every decision is already resolved + recorded on its node
+and every term is already defined.
 
-This means: if PO crashes mid-grill, the dispatcher re-spawns PO → PO re-reads the beads tree → sees the open frontier → continues. No progress lost (the beads are durable). No "fresh start" (the tree persists). The only thing lost is the in-flight API call (the question being composed when PO crashed) — and that's re-issued from the still-open bead.
+## No baked-in caps
 
-## Output
+The grill is uncapped by design — it aims for the full tree, however wide grilling
+walks it. Do NOT bake any turn budget, wall-clock, pass count, or node count into
+this skill. If a test run needs a bound, impose it **externally** — via the test
+card body, the worker turn budget, or a monitor that terminates the run at a
+threshold. grilling walks every branch until shared understanding; this skill
+never short-circuits that. An unresolvable node (VB unsure / fact unknowable) is
+left **OPEN** — it stays in the frontier as a visible gap, never a hidden one; the
+root can't complete until a human clears it.
 
-The resolved tree (`bd dep tree <root>`) + the glossary (`CONTEXT.md`) + ADRs produced along
-the way ARE the pinned shared understanding. Hand them to `to-spec` — which synthesises the
-spec from the conversation WITHOUT re-interviewing, because every decision is already
-resolved + recorded on its bead.
+## Why context_graph, not beads / CONTEXT.md
+
+- **Multi-topic** — one decision tagged `auth+data-store+security` retrieved by any
+  of the three via `graph_pull`. A flat CONTEXT.md file could not do this.
+- **Queryable** — `graph_frontier` (work queue), `graph_pull(topic)` (subgraph),
+  `graph_context(node)` (neighborhood), `graph_tree(root)` (full tree). Not grep
+  over a flat file.
+- **Durable** — SQLite on disk; survives PO session crashes. The graph IS the grill
+  state.
+- **No kanban contention** — the graph is a context store, not execution work. No
+  cards spawned, no dispatcher claims, no worker interference.
