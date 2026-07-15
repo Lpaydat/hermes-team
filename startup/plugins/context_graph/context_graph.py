@@ -61,10 +61,15 @@ CREATE INDEX IF NOT EXISTS idx_topics_topic ON node_topics(topic);
 
 
 def _get_db():
-    import os
+    from pathlib import Path
     global DB_PATH
     if DB_PATH is None:
-        DB_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "context_graph.db")
+        # .resolve() follows the per-profile symlink back to the canonical plugin
+        # dir, so DB_PATH is IMPORT-PATH-INDEPENDENT — every profile / every loader
+        # path lands on the same shared DB (startup/context_graph.db). Without
+        # resolve(), importing via the symlink vs the canonical path gave two
+        # different DBs and the graph silently fragmented.
+        DB_PATH = str(Path(__file__).resolve().parent.parent.parent / "context_graph.db")
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
