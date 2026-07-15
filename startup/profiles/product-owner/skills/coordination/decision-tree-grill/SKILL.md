@@ -18,13 +18,18 @@ recovery + the gate. This skill wraps grilling — it never replaces it.
 
 ## What this skill owns (and explicitly defers)
 
-This skill owns exactly THREE things:
+This skill owns the SUBSTRATE (three things) plus the depth/breadth GENERATION
+discipline (what to cover + when to stop):
 
 1. **Graph as storage** — the grill's decision tree lives in the `context_graph`
    SQLite DB, not a CONTEXT.md file and not beads.
 2. **MANDATORY stateless recovery** — the FIRST action of every activation
    (fresh, resumed, or re-spawned after a crash).
 3. **The objective done-check + anti-fake-completion rules.**
+4. **Depth/breadth generation discipline** — WHAT to cover (seven lenses), WHAT
+   each answer implies (per-resolved-node decomposition), and WHEN to stop
+   (loop-until-dry exhaustion gate). Wrapper discipline only — defers HOW to
+   grilling.
 
 It **defers** everything else to grilling. Seed-one-question, walk-each-branch,
 fork-as-answers-reshape, ask-one-at-a-time, look-up-facts — all of that is
@@ -108,10 +113,80 @@ rules make it un-fakeable:
   term nodes as decisions resolve. A grill that ends with zero `term` nodes pinned
   no language — it is incomplete; re-open + re-run.
 
+## Depth/breadth generation discipline (what to cover + when to stop)
+
+`grilling` drives HOW to ask — seed-one-question, walk-each-branch,
+fork-as-answers-reshape, look-up-facts. This discipline adds the layer ABOVE
+that: WHAT must be covered, WHAT each answer implies, and WHEN to stop. Three
+wrapper disciplines, none of which reinvent the interview — they feed grilling's
+walk (by deciding which child nodes to add) and read back from the graph.
+
+### 1. Multi-lens coverage — the breadth guard (WHAT to cover)
+
+Every venture is grilled across **seven lenses** so no whole category is
+silently skipped. grilling decides how to walk each lens; this guard makes sure
+each lens actually appears in the tree. The seven lenses:
+
+1. **Desirability / demand** — is it wanted? who hurts without it, and how badly?
+2. **Viability / monetization** — can it make money? unit economics + pricing model?
+3. **Feasibility / tech** — can it be built? what is hard / unknown / dependent?
+4. **Usability** — can a real human use it? what is the activation / first-run path?
+5. **Differentiation / defensibility** — can it be copied? what is the moat / why now?
+6. **Distribution / GTM** — how does it reach users? what is the channel / loop?
+7. **Risk / kill-switches** — what kills it? what are the kill / pivot / abandon triggers?
+
+**Coverage check:** tag each node with the lens it touches (as a topic). A lens
+with zero resolved nodes is a COVERAGE GAP — seed a decision for it (via
+grilling) before the grill can be called dry. This is breadth, not a ceiling:
+the lens set is the FLOOR of categories to cover, not a limit on how many nodes
+a lens may spawn.
+
+### 2. Per-resolved-node decomposition — the depth guard (WHAT each answer implies)
+
+Each **answered (resolved) decision** is forked into the decisions it implies,
+via four fixed prompts. This is what grows the tree DEEP as answers land:
+
+```text
+This answer (the recorded VB resolution)…
+  (a) makes POSSIBLE  — what new option/branch does it open?   -> child decision
+  (b) makes NECESSARY — what does it now require?               -> child decision
+  (c) makes RISKY     — what risk does it create or expose?     -> child decision/fact
+  (d) ASSUMES         — what is it silently taking for granted? -> child decision/fact
+```
+
+Yields **up to 4 child nodes** per resolved node (each blocking the root, tagged
+with its lens + topics). Skip a prompt only when it genuinely produces nothing —
+but note that you considered it. This is generation SHAPE (four prompts), not a
+global limit: a single resolved node may fork up to 4 children, and each child is
+itself grillable + forkable via the same template.
+
+grilling still owns HOW each child is asked (one at a time, walk-the-branch,
+fork-as-answers-reshape). This template only decides WHICH children to add when a
+decision resolves — it never re-implements the asking.
+
+### 3. Loop-until-dry exhaustion gate — the stop guard (WHEN to stop)
+
+**BEFORE GRILL COMPLETE can fire, run a loop-until-dry exhaustion fork-pass over
+EVERY resolved node.** Re-apply the four decomposition prompts (above) and the
+seven-lens coverage check to the full resolved tree. The grill is dry ONLY when
+the fork-pass yields **zero new nodes** (no uncovered lens, no un-forked
+implication). GRILL COMPLETE must not fire until the exhaustion gate passes —
+early convergence is exactly the failure this gate prevents.
+
+If a fork-pass yields new nodes, the grill is NOT dry: add them (via grilling)
+and fork-pass again. This gate is not a pass-count budget — it runs as many
+fork-passes as the tree demands; it simply refuses completion until a pass yields
+zero new nodes.
+
 ## GRILL COMPLETE — the objective done-check
 
-`GRILL COMPLETE` fires ONLY when ALL THREE hold. Frontier-empty alone is NOT
-enough — it is gameable by moot-closing:
+`GRILL COMPLETE` fires ONLY when the exhaustion gate AND ALL THREE hold.
+Frontier-empty alone is NOT enough — it is gameable by moot-closing:
+
+**0. PREREQUISITE — the loop-until-dry exhaustion gate has passed**: a fork-pass
+   over every resolved node yielded zero new nodes (§Depth/breadth discipline §3).
+   Frontier-empty alone is gameable by moot-closing; the exhaustion gate proves the
+   tree is genuinely exhaustive — no uncovered lens, no un-forked implication.
 
 1. `graph_frontier()` is **empty** (no open decision/fact; the root's blockers are
    all resolved); AND
@@ -121,7 +196,7 @@ enough — it is gameable by moot-closing:
 3. **≥1 `term` node exists** (`graph_stats()['by_type'].get('term', 0) >= 1` —
    language actually pinned).
 
-All three → `graph_resolve_node(root, content='GRILL COMPLETE: <slug>')`, then send
+Prerequisite 0 + all three → `graph_resolve_node(root, content='GRILL COMPLETE: <slug>')`, then send
 `GRILL COMPLETE` over the grill intercom topic (venture-builder is WAITING on this
 signal). If (1) holds but (2) or (3) don't, the grill was **fake-completed** —
 re-open + resolve the offending nodes properly before signalling. **Do not send
