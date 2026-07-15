@@ -57,8 +57,22 @@ while (bd list -l decision-tree | grep -qE 'dt:(fact|decision):' ); do
         bd create --labels decision-tree,dt:<fact|decision> ... ; bd dep <new> --blocks <root>
 done
 
-# 3. COMPLETE — no open dt:fact/dt:decision (root auto-ready). Close it; the resolved tree feeds to-spec.
+# 3. COMPLETE — no open dt:fact/dt:decision (root auto-ready).
+#    BEFORE closing the root: verify CONTEXT.md exists with pinned terms.
+#    If not: create it NOW — write the venture's ubiquitous language (each resolved term
+#    + its VB-approved definition from the decision answers). domain-modeling owns this.
+#    CONTEXT.md is MANDATORY — no root close without it.
 bd close <root>; bd dep tree <root>
+
+# 4. PERSISTENT GRILL — after seeding the tree (step 1), create a PO grill-driver card
+#    that drives the loop (steps 2-3) to completion. This card survives PO session crashes:
+#    the dispatcher re-claims it → PO re-reads beads → continues from the durable tree state.
+#    Without this card, the grill stalls when PO's intercom session ends.
+hermes kanban create "[grill-driver] Complete decision tree (root <root>)" \
+  --assignee product-owner --skill decision-tree-grill \
+  --body "Drive root <root> to completion. Read bd ready -l decision-tree → resolve open
+  dt:fact (lookup) + dt:decision (pose to VB, record VB: answer, close). Write CONTEXT.md.
+  Beads = single source of truth. Hard rules apply (no moot, VB owns decisions)."
 ```
 
 grilling's rule holds inside the loop: **facts are looked up, decisions are put to the
@@ -88,6 +102,18 @@ The decision tree is a **planning artifact**, not execution work. Keeping it in 
 means: no kanban cards spawned → no dispatcher claims, no worker contention, no interference
 with the live execution board. Label nodes `decision-tree` (NOT `ready-for-agent`) so the
 beads-watchdog leaves them alone. The grilling agent queries/walks the graph directly via `bd`.
+
+## Resumability — beads as single source of truth
+
+The beads tree IS the grill state. PO MUST query it at the **start of every activation** (fresh, resumed, or re-spawned after crash):
+- `bd ready -l decision-tree` = the frontier (what to work now).
+- `bd dep tree <root>` = the full tree (what's resolved, what's open).
+- `bd show <brief-id>` = the venture intent + source.
+- `CONTEXT.md` = the pinned language so far.
+
+**Never rely on in-session memory.** A fresh PO session (after crash, restart, or dispatcher re-spawn) reads the beads state + continues exactly where the prior session left off: open `dt:` beads are re-posed, closed beads are skipped. The grill is **idempotent + resumable by construction** — the beads tree tracks all progress; the session is stateless.
+
+This means: if PO crashes mid-grill, the dispatcher re-spawns PO → PO re-reads the beads tree → sees the open frontier → continues. No progress lost (the beads are durable). No "fresh start" (the tree persists). The only thing lost is the in-flight API call (the question being composed when PO crashed) — and that's re-issued from the still-open bead.
 
 ## Output
 
