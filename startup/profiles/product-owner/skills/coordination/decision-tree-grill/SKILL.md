@@ -24,7 +24,18 @@ graph store, **not kanban**, so it never contends with the dispatcher or executi
   - `dt:decision` — resolvable only by the **user-rep** (VB / the human). HITL.
 - **Frontier** = open `dt:*` beads with no active blockers = `bd ready -l decision-tree`.
 - **Forking** = resolving a node may surface new sub-decisions → create child `dt:*` beads that block the root (the answer reshaped the tree).
-- **Completion** = no open `dt:fact`/`dt:decision` beads remain → the root's blockers are all closed → **the root flips to ready**. `bd close` the root. (Don't key on `bd ready` being literally empty — the root itself appears there once unblocked; that flip IS the signal.) Confidence = **root unblocked** (mechanical, computed from the graph).
+- **Completion** — ALL THREE required (frontier-empty alone is NOT enough; it's gameable by moot-closing):
+  1. no open `dt:fact`/`dt:decision` beads remain (root's blockers all closed); AND
+  2. EVERY `dt:decision` was closed with a recorded **VB answer** (`bd comment` "VB: <verbatim>") — never a PO self-judgment / "moot"; AND
+  3. `CONTEXT.md` exists with ≥1 pinned term (domain-modeling fired — language actually pinned).
+  All three → `bd close` the root. If (1) holds but (2) or (3) don't, the grill was **fake-completed** — re-open the offending nodes and resolve them properly. Confidence = all three met (mechanical).
+
+## Hard rules (anti-fake-completion — learned from round-1)
+
+- **A `dt:decision` is resolved ONLY by VB's recorded answer.** Never close one by your own judgment, convenience, or "moot." If you can't get VB's answer, `bd human <node>` (escalate, async) and leave it OPEN — never self-close.
+- **Viability is NOT yours to call.** If research suggests the venture is undifferentiated / saturated / weak, that is NOT grounds to close decisions as moot or to kill the venture. It IS grounds to ADD a new `dt:decision` ("research shows N competitors + no clear differentiation — pivot / kill / proceed?") and pose it to VB. Kill, pivot, and viability are the **founder's** (VB's kill-gate) — never the griller's. **You grill; VB decides.**
+- **`CONTEXT.md` is mandatory.** `domain-modeling` writes it as terms resolve. A grill that ends with no `CONTEXT.md` pinned no language — it is incomplete; re-open + re-run.
+- **"Frontier empty" is necessary, not sufficient.** It is gameable (close-as-moot). The real gate is the three-part Completion above.
 
 ## Loop
 
@@ -39,9 +50,9 @@ for each top-level decision/fact the brief implies:
 while (bd list -l decision-tree | grep -qE 'dt:(fact|decision):' ); do
     pick a frontier bead (bd ready -l decision-tree; decisions can wait on the user-rep; facts resolve now):
       dt:fact     → resolve by LOOKUP (brief/codebase/research); bd comment <node> "<answer>"; bd close <node>
-      dt:decision → POSE to the user-rep over the grill channel (intercom topic); bd comment <node> "<answer>";
-                    if hard-to-reverse + surprising + real-trade-off → write an ADR (domain-modeling) + pin term to CONTEXT.md;
-                    bd close <node>
+      dt:decision → POSE to the user-rep (VB) over the grill channel (intercom topic); WAIT for VB's reply;
+                    bd comment <node> "VB: <verbatim answer>"; (domain-modeling pins any new term to CONTEXT.md + ADR if hard-to-reverse);
+                    bd close <node>. NEVER self-close as "moot"/self-judge — see Hard rules (anti-fake-completion).
     FORK: if resolving surfaced new sub-decisions:
         bd create --labels decision-tree,dt:<fact|decision> ... ; bd dep <new> --blocks <root>
 done
