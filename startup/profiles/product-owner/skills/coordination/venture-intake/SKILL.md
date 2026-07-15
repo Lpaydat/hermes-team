@@ -49,11 +49,15 @@ resolve nodes yourself in this intake session** — the grill-driver card handle
 
 **You (PO) are the GRILLER; venture-builder is the user-rep (the GRILLEE).**
 
-### 3a. Seed the tree
+### 3a. Seed the tree (beads ONLY — do NOT load any grill skill or resolve nodes)
 
-Force-load `grill-with-docs` (grilling + domain-modeling). `bd create` the root bead (label
-`decision-tree`, `dt:root`; body = venture name + brief-id). For each top-level decision/fact
-the brief implies, `bd create` a `dt:fact`/`dt:decision` bead, then `bd dep <node> --blocks <root>`.
+Create the decision-tree beads. **Do NOT load grill-with-docs or decision-tree-grill** —
+loading them triggers the resolve-loop, which belongs in the grill-driver card (step 3b),
+NOT this intake session. This step is FAST: create beads only, then immediately go to step 3b.
+
+`bd create` the root bead (label `decision-tree`, `dt:root`; body = venture name + brief-id).
+For each top-level decision/fact the brief implies, `bd create` a `dt:fact`/`dt:decision` bead,
+then `bd dep <node> --blocks <root>`.
 
 ### 3b. CREATE THE GRILL-DRIVER CARD — MANDATORY (do not skip)
 
