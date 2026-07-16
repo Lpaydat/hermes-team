@@ -35,6 +35,18 @@ def graph_frontier(args: dict, **_kw):
     return json.dumps({"count": len(items), "frontier": items})
 
 
+def graph_remaining(args: dict, **_kw):
+    """Return ALL open decision/fact nodes — the grill backlog (what's left).
+
+    Distinct from graph_frontier: this is the FULL unresolved set (including
+    blocked nodes), so an empty result is the mechanical done-check (grill
+    complete). Handler signature ``def fn(args: dict, **kw) -> str`` returning
+    json.dumps — the registry dispatches ``handler(args, **kwargs)``.
+    """
+    items = cg.graph_remaining()
+    return json.dumps({"count": len(items), "remaining": items})
+
+
 def graph_pull(args: dict, **_kw):
     """Retrieve all nodes + edges for a topic (multi-topic subgraph)."""
     topic = (args.get("topic") or "").strip()

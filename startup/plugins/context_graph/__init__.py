@@ -17,6 +17,7 @@ Tools registered:
   graph_resolve_node — mark resolved + record the answer
   graph_tree         — recursive dependency tree
   graph_stats        — node/edge/topic counts
+  graph_remaining    — ALL open decision/fact nodes (the grill backlog; empty == done)
 """
 
 import logging
@@ -41,6 +42,7 @@ def register(ctx):
         ("graph_resolve_node", schemas.GRAPH_RESOLVE_NODE, tools.graph_resolve_node),
         ("graph_tree",         schemas.GRAPH_TREE,         tools.graph_tree),
         ("graph_stats",        schemas.GRAPH_STATS,        tools.graph_stats),
+        ("graph_remaining",    schemas.GRAPH_REMAINING,    tools.graph_remaining),
     ]
 
     for name, schema, handler in tools_to_register:

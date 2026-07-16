@@ -107,3 +107,9 @@ GRAPH_STATS = {
     "description": "Quick stats: node/edge/topic counts.",
     "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
 }
+
+GRAPH_REMAINING = {
+    "name": "graph_remaining",
+    "description": "Return ALL open decision/fact nodes — the grill backlog (what's left). Empty == grill complete.",
+    "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+}
