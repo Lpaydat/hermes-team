@@ -217,8 +217,64 @@ def _create_next_branch_card(venture_slug, remaining_count):
     return (result.stdout or "").strip() or None
 
 
+def _create_chart_card(venture_slug):
+    """Create the chart kanban card on hermes-hq: the grill->map transition.
+
+    The terminal transition. Fires when a grill session ends with an EMPTY
+    graph_remaining() — the grill is genuinely exhausted — so the venture moves
+    from grilling (deciding) to CHARTING the wayfinding map. The card hands off
+    to the product-owner with BOTH the wayfinding-auto + wayfinder skills: chart
+    the destination, spin the wayfinder:map epic, and break it into child tickets
+    — from the brief AND the pinned graph (term nodes + resolved decisions).
+
+    Sibling of _create_next_branch_card (B3) — same kanban-CLI / pinned-env /
+    fire-and-log discipline (HERMES_HOME -> startup root, HERMES_KANBAN_BOARD ->
+    hermes-hq). Returns the CLI stdout on success, None on failure (the hook
+    ignores the return).
+    """
+    title = f"[chart] {venture_slug}: chart the wayfinding map"
+    body = (
+        "CHART-THE-MAP card. SHARED LANGUAGE: graph_pull('{slug}') returns the "
+        "grill's pinned term nodes (type=term) + resolved decisions. ADRs under "
+        "docs/ventures/{slug}/docs/adr/. Chart from BOTH the brief + the graph. "
+        "DO: name the destination; create the map epic (wayfinder:map); create "
+        "the child tickets. COMPLETE — chart only, resolve nothing."
+    ).format(slug=venture_slug)
+    env = dict(os.environ)
+    env["HERMES_HOME"] = _STARTUP_ROOT
+    env["HERMES_KANBAN_BOARD"] = "hermes-hq"
+    cmd = [
+        "hermes", "kanban", "create", title,
+        "--assignee", "product-owner",
+        "--skill", "wayfinding-auto",
+        "--skill", "wayfinder",
+        "--body", body,
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, env=env, timeout=60
+        )
+    except Exception:
+        logger.error(
+            "context_graph: chart card creation raised for %s",
+            venture_slug, exc_info=True,
+        )
+        return None
+    if result.returncode != 0:
+        logger.error(
+            "context_graph: chart card creation FAILED (rc=%s) for %s: %s",
+            result.returncode, venture_slug, (result.stderr or "").strip(),
+        )
+        return None
+    logger.info(
+        "context_graph: created chart card for %s (grill exhausted -> map): %s",
+        venture_slug, (result.stdout or "").strip(),
+    )
+    return (result.stdout or "").strip() or None
+
+
 def _on_session_end(session_id: str = "", **kw) -> None:
-    """Session-end lifecycle hook (B2 detection + B3 next-branch transition).
+    """Session-end lifecycle hook (B2 detection + B3/B4 transitions).
 
     Detects whether the ended session was a mid-grill session (touched the
     graph AND an open grill root exists). Non-grill sessions are a no-op.
@@ -227,7 +283,11 @@ def _on_session_end(session_id: str = "", **kw) -> None:
     NON-EMPTY (open decision/fact nodes remain), create a next-branch kanban
     card on hermes-hq — a fresh PO session to recover the graph + continue the
     grill on the top open nodes. This is how the grill loops across sessions.
-    The EMPTY-backlog case (B4: GRILL COMPLETE) is NOT handled here.
+
+    B4 transition: if it IS a mid-grill session AND graph_remaining() is EMPTY,
+    the grill is genuinely exhausted — create the chart card instead (the
+    grill->map transition): hand off to the PO with wayfinding-auto + wayfinder
+    to chart the wayfinding map. Terminal.
 
     Hermes fires on_session_end with kwargs {session_id, completed,
     interrupted, model, platform, reason, and sometimes task_id / turn_id /
@@ -242,8 +302,10 @@ def _on_session_end(session_id: str = "", **kw) -> None:
             "open root exists",
             session_id,
         )
-        # B3: non-empty backlog → continue the grill in a fresh PO session.
-        # (EMPTY backlog is B4 — GRILL COMPLETE — not this branch.)
+        # B3/B4 branch on the backlog:
+        #   NON-empty -> B3: continue the grill in a fresh PO session.
+        #   EMPTY     -> B4: the grill is genuinely exhausted -> create the
+        #               chart card (the grill->map transition). Terminal.
         try:
             remaining = cg.graph_remaining()
         except Exception:
@@ -258,6 +320,16 @@ def _on_session_end(session_id: str = "", **kw) -> None:
                 len(remaining), slug or "(unknown venture)",
             )
             _create_next_branch_card(slug, len(remaining))
+        else:
+            # B4: EMPTY backlog -> grill exhausted -> chart the wayfinding map.
+            root = _get_open_root()
+            slug = _venture_slug_from_root(root)
+            logger.info(
+                "context_graph: EMPTY backlog at grill session-end — grill "
+                "exhausted, creating chart card for %s (grill->map transition)",
+                slug or "(unknown venture)",
+            )
+            _create_chart_card(slug)
     else:
         logger.debug(
             "context_graph: session %s not a mid-grill session (touched_graph=%s)",

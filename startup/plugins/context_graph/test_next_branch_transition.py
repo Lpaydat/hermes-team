@@ -126,18 +126,23 @@ class NextBranchTransitionTest(unittest.TestCase):
             cgplugin._on_session_end(session_id="s-done", completed=True)
         mock_subprocess.run.assert_not_called()
 
-    # ── no card when the backlog is EMPTY (B4 territory, not B3) ──────────────
+    # ── no NEXT-BRANCH card when the backlog is EMPTY (B4 territory, not B3) ──
     def test_no_card_when_backlog_empty(self):
         """A grill session (touched graph + open root) but graph_remaining() is
-        EMPTY → B3's non-empty transition does NOT fire (EMPTY is B4: GRILL
-        COMPLETE). No next-branch card created here."""
+        EMPTY → B3's non-empty transition does NOT fire. (EMPTY is B4: the chart
+        transition — _create_chart_card is mocked here to isolate B3; B4's own
+        tests cover the chart card.) No next-branch card created here."""
         cg.add_node("root", "venture: TestVenture", topics=["testventure"])
         # an already-resolved decision → NOT in graph_remaining → backlog empty
         resolved = cg.add_node("decision", "resolved decision")
         cg.resolve_node(resolved)
         cgplugin._on_post_tool_call(tool_name="graph_frontier", session_id="s-empty")
 
-        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+        # mock the chart helper so B4's subprocess call is swallowed here — this
+        # test asserts ONLY that B3's next-branch path (the kanban subprocess)
+        # is not taken on an empty backlog.
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess, \
+             mock.patch.object(cgplugin, "_create_chart_card"):
             cgplugin._on_session_end(session_id="s-empty", completed=True)
         mock_subprocess.run.assert_not_called()
 
