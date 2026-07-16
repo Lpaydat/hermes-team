@@ -199,6 +199,26 @@ def graph_remaining():
     return [dict(r) for r in rows]
 
 
+def has_open_root():
+    """Return True if an OPEN grill root exists (a grill in progress).
+
+    A grill is anchored by a single ``root`` node. While the grill is in
+    progress the root is ``status='open'``; when the grill is GRILL COMPLETE
+    the root is resolved (``status='resolved'``). So "open root exists" is
+    the mechanical signal that a grill is mid-flight — the grill-detection
+    check used by the on_session_end hook (ticket B2).
+
+    Returns:
+        bool — True iff at least one row matches type='root' AND status='open'.
+    """
+    conn = _get_db()
+    row = conn.execute(
+        "SELECT 1 FROM graph_nodes WHERE type = 'root' AND status = 'open' LIMIT 1"
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
 def pull(topic):
     """Retrieve all nodes tagged with a topic + their edges (topic subgraph).
 
