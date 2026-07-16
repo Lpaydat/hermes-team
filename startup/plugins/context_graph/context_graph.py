@@ -171,6 +171,34 @@ def frontier():
     return [dict(r) for r in rows]
 
 
+def graph_remaining():
+    """Return ALL open decision/fact nodes — the grill backlog (what's left).
+
+    This is the full set of unresolved decision/fact nodes, INCLUDING ones that
+    are blocked. It is the mechanical done-check (empty == grill complete) and
+    the branch-selection source.
+
+    Contrast with frontier(): frontier = open decision/fact with NO open
+    blockers (the actionable work queue). graph_remaining = ALL open
+    decision/fact (the full backlog). A blocked node is NOT in the frontier
+    (can't act on it yet) but IS in graph_remaining (still unresolved — the
+    grill is not done). Empty graph_remaining ⇒ nothing left to grill.
+
+    Returns:
+        list of dicts (id, type, title, content, source, status) — same shape
+        as frontier(), just without the no-open-blocker exclusion.
+    """
+    conn = _get_db()
+    rows = conn.execute("""
+        SELECT n.id, n.type, n.title, n.content, n.source, n.status
+        FROM graph_nodes n
+        WHERE n.status = 'open' AND n.type IN ('decision', 'fact')
+        ORDER BY n.created_at
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def pull(topic):
     """Retrieve all nodes tagged with a topic + their edges (topic subgraph).
 
