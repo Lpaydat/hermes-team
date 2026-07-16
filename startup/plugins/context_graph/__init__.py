@@ -51,4 +51,19 @@ def register(ctx):
             handler=handler,
         )
 
+    ctx.register_hook("on_session_end", _on_session_end)
+
     logger.info("context_graph plugin registered (%d tools)", len(tools_to_register))
+
+
+def _on_session_end(**kw) -> None:
+    """Session-end lifecycle hook (B1 scaffolding).
+
+    Registered so grill-session detection + state transitions (tickets B2/B3/B4)
+    have a firing point. For B1 this is intentionally a no-op: it must be
+    registered, callable, and crash-proof — nothing more. Accepts arbitrary
+    kwargs (Hermes passes session_id/profile_name/etc. at session-end) and
+    returns None.
+    """
+    logger.debug("context_graph on_session_end fired (kwargs=%s)", sorted(kw))
+    return None
