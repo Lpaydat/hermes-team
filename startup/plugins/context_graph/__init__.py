@@ -21,11 +21,22 @@ Tools registered:
 """
 
 import logging
+import os
+import subprocess
 
 from . import schemas, tools
 from . import context_graph as cg
 
 logger = logging.getLogger(__name__)
+
+# The deployment startup root — the HERMES_HOME the kanban CLI must target. The
+# kanban CLI inherits the hook process's env; without an explicit HERMES_HOME it
+# can silently fall back to a stale ~/.hermes default and the card lands in the
+# wrong team (the misroute that broke offline delivery when the intercom broker
+# lost this env var — see _shared/intercom/broker/spawner.py). Resolved from
+# this file's realpath so it follows the per-profile symlink back to the
+# canonical plugin dir — same resolve() discipline as cg.DB_PATH.
+_STARTUP_ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 # Sessions that touched the context_graph toolset during their lifetime.
 # Populated by the post_tool_call hook (_on_post_tool_call) on every graph_*
@@ -100,13 +111,123 @@ def is_grill_session(session_id: str) -> bool:
         return False
 
 
+def _get_open_root():
+    """Return the open grill root node (type='root', status='open'), or None.
+
+    is_grill_session already confirmed an open root exists (via has_open_root);
+    this fetches the row so the next-branch transition can derive the venture
+    slug for the continuation card. Reads via cg._get_db() — the graph module's
+    connection factory (package-internal, same unit).
+    """
+    try:
+        conn = cg._get_db()
+        row = conn.execute(
+            "SELECT id, type, status, title, content FROM graph_nodes "
+            "WHERE type='root' AND status='open' ORDER BY created_at LIMIT 1"
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+    except Exception:
+        logger.debug("open-root lookup failed", exc_info=True)
+        return None
+
+
+def _venture_slug_from_root(root):
+    """Derive the venture slug from an open grill root node.
+
+    Per decision-tree-grill: the root is tagged with the venture <slug> as a
+    topic (so the whole tree recovers via graph_pull('<slug>')). Prefer the
+    root's first topic; fall back to its content. Returns '' if neither yields
+    a slug (the card still fires; recovery is best-effort).
+    """
+    if not root:
+        return ""
+    try:
+        conn = cg._get_db()
+        topics = [
+            r["topic"]
+            for r in conn.execute(
+                "SELECT topic FROM node_topics WHERE node_id=? ORDER BY topic",
+                (root["id"],),
+            ).fetchall()
+        ]
+        conn.close()
+    except Exception:
+        logger.debug("root topic lookup failed", exc_info=True)
+        topics = []
+    if topics:
+        return topics[0]
+    return (root.get("content") or "").strip()
+
+
+def _create_next_branch_card(venture_slug, remaining_count):
+    """Create a next-branch kanban card on hermes-hq: a fresh PO session to
+    continue the grill (recover the graph + grill the top open nodes). Shared by
+    B3 (non-empty backlog) and B4 (the empty-backlog transition).
+
+    Shells out to the hermes kanban CLI (subprocess.run), mirroring the intercom
+    broker's spawner pattern. HERMES_HOME is pinned to the startup root and
+    HERMES_KANBAN_BOARD to hermes-hq — the persisted current-board could be
+    anything (a smoke board, a venture board), so pinning is the deterministic,
+    anti-misroute choice (same philosophy as the broker's _resolve_hermes_home).
+
+    Fire-and-log: a session-end hook must not crash on a card-creation failure,
+    so exceptions / non-zero exit are logged, not raised. Returns the CLI stdout
+    on success, None on failure (the hook ignores the return).
+    """
+    title = (
+        f"[grill-loop] {venture_slug}: continue grill — "
+        f"{remaining_count} open nodes remain"
+    )
+    body = (
+        f"Recover the graph FIRST (graph_pull('{venture_slug}') -> type=root -> "
+        "graph_tree(root) -> graph_frontier()), then grill VB over intercom on the "
+        "TOP open decision nodes — do NOT re-do resolved nodes. End when the branch "
+        "is done; the plugin continues."
+    )
+    env = dict(os.environ)
+    env["HERMES_HOME"] = _STARTUP_ROOT
+    env["HERMES_KANBAN_BOARD"] = "hermes-hq"
+    cmd = [
+        "hermes", "kanban", "create", title,
+        "--assignee", "product-owner",
+        "--skill", "decision-tree-grill",
+        "--body", body,
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, env=env, timeout=60
+        )
+    except Exception:
+        logger.error(
+            "context_graph: next-branch card creation raised for %s",
+            venture_slug, exc_info=True,
+        )
+        return None
+    if result.returncode != 0:
+        logger.error(
+            "context_graph: next-branch card creation FAILED (rc=%s) for %s: %s",
+            result.returncode, venture_slug, (result.stderr or "").strip(),
+        )
+        return None
+    logger.info(
+        "context_graph: created next-branch card for %s (%d open nodes remain): %s",
+        venture_slug, remaining_count, (result.stdout or "").strip(),
+    )
+    return (result.stdout or "").strip() or None
+
+
 def _on_session_end(session_id: str = "", **kw) -> None:
-    """Session-end lifecycle hook (B2: grill-session detection).
+    """Session-end lifecycle hook (B2 detection + B3 next-branch transition).
 
     Detects whether the ended session was a mid-grill session (touched the
     graph AND an open grill root exists). Non-grill sessions are a no-op.
-    DETECTION ONLY — B3/B4 will act on a detected grill session (transitions /
-    card creation); this hook decides grill-or-not, logs it, and returns None.
+
+    B3 transition: if it IS a mid-grill session AND graph_remaining() is
+    NON-EMPTY (open decision/fact nodes remain), create a next-branch kanban
+    card on hermes-hq — a fresh PO session to recover the graph + continue the
+    grill on the top open nodes. This is how the grill loops across sessions.
+    The EMPTY-backlog case (B4: GRILL COMPLETE) is NOT handled here.
 
     Hermes fires on_session_end with kwargs {session_id, completed,
     interrupted, model, platform, reason, and sometimes task_id / turn_id /
@@ -121,6 +242,22 @@ def _on_session_end(session_id: str = "", **kw) -> None:
             "open root exists",
             session_id,
         )
+        # B3: non-empty backlog → continue the grill in a fresh PO session.
+        # (EMPTY backlog is B4 — GRILL COMPLETE — not this branch.)
+        try:
+            remaining = cg.graph_remaining()
+        except Exception:
+            logger.debug("graph_remaining query failed", exc_info=True)
+            remaining = []
+        if remaining:
+            root = _get_open_root()
+            slug = _venture_slug_from_root(root)
+            logger.info(
+                "context_graph: non-empty backlog (%d open nodes) at grill "
+                "session-end — creating next-branch card for %s",
+                len(remaining), slug or "(unknown venture)",
+            )
+            _create_next_branch_card(slug, len(remaining))
     else:
         logger.debug(
             "context_graph: session %s not a mid-grill session (touched_graph=%s)",
