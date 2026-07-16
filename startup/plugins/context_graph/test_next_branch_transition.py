@@ -30,6 +30,17 @@ import context_graph as cgplugin  # noqa: E402  (package: hook + transition)
 from context_graph import context_graph as cg  # noqa: E402  (core graph module)
 
 
+def _create_calls(run_mock):
+    """The unittest ``call`` objects for every ``kanban ... create`` invocation
+    on the mocked subprocess.
+
+    The serialize guard (B3/B4 follow-up) issues a ``kanban list`` call BEFORE
+    any create, so create-path tests assert on create calls specifically rather
+    than on overall call count.
+    """
+    return [c for c in run_mock.call_args_list if "create" in c.args[0]]
+
+
 class NextBranchTransitionTest(unittest.TestCase):
     """B3: grill session-end with a non-empty backlog → next-branch card."""
 
@@ -66,10 +77,13 @@ class NextBranchTransitionTest(unittest.TestCase):
         self.assertIsNone(result)
         self.assertNotIn("s-grill", cgplugin._GRAPH_TOUCHED_SESSIONS)
 
-        # the kanban CLI was invoked exactly once
-        mock_subprocess.run.assert_called_once()
-        cmd = mock_subprocess.run.call_args.args[0]
-        env = mock_subprocess.run.call_args.kwargs["env"]
+        # SERIALIZE GUARD: the guard's `kanban list` fires first (the mocked
+        # board returns no running [grill-loop] card → empty-ish stdout → guard
+        # passes), THEN exactly one create fires.
+        create_calls = _create_calls(mock_subprocess.run)
+        self.assertEqual(len(create_calls), 1)
+        cmd = create_calls[0].args[0]
+        env = create_calls[0].kwargs["env"]
 
         # cmd shape: hermes kanban create <title> --assignee ... --skill ... --body ...
         self.assertEqual(cmd[0], "hermes")
@@ -156,14 +170,135 @@ class NextBranchTransitionTest(unittest.TestCase):
             )
             cgplugin._create_next_branch_card("acme", 7)
 
-        mock_subprocess.run.assert_called_once()
-        cmd = mock_subprocess.run.call_args.args[0]
-        env = mock_subprocess.run.call_args.kwargs["env"]
+        # guard lists first (no running card), then exactly one create
+        create_calls = _create_calls(mock_subprocess.run)
+        self.assertEqual(len(create_calls), 1)
+        cmd = create_calls[0].args[0]
+        env = create_calls[0].kwargs["env"]
         title = cmd[cmd.index("create") + 1]
         self.assertIn("acme", title)
         self.assertIn("7 open nodes remain", title)
         self.assertEqual(env["HERMES_KANBAN_BOARD"], "hermes-hq")
         self.assertTrue(env["HERMES_HOME"].endswith("startup"))
+
+    # ── SERIALIZE GUARD (B3/B4 follow-up): one grill-loop per venture ────────
+    #
+    # Root cause this fixes: every grill session-end created a [grill-loop]
+    # card, so CONCURRENT session-ends spawned MULTIPLE [grill-loop] cards that
+    # collided on the same VB (intercom contention) → decisions never resolved
+    # → infinite loop. Fix: SERIALIZE — before creating, check hermes-hq for a
+    # RUNNING card of the same type+venture; if one exists, SKIP.
+
+    def test_has_running_card_true_when_running_marker_and_slug_match(self):
+        """_has_running_card returns True when a RUNNING line carries the marker
+        AND the venture slug. A running line carries BOTH the '●' icon and the
+        literal status word 'running' (see kanban._fmt_task_line)."""
+        running_line = (
+            "● t_abc123  running   product-owner        "
+            "[grill-loop] acme: continue grill — 9 open nodes remain"
+        )
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = mock.MagicMock(
+                returncode=0, stdout=running_line, stderr=""
+            )
+            self.assertTrue(cgplugin._has_running_card("[grill-loop]", "acme"))
+
+    def test_has_running_card_false_when_no_matching_card(self):
+        """Empty board (or no card of this type+venture) → False → create."""
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = mock.MagicMock(
+                returncode=0, stdout="", stderr=""
+            )
+            self.assertFalse(cgplugin._has_running_card("[grill-loop]", "acme"))
+
+    def test_has_running_card_false_when_card_done_not_running(self):
+        """A DONE card (✓ done) carrying the marker+slug does NOT count — only
+        RUNNING cards block, so a finished grill-loop never blocks the next."""
+        done_line = (
+            "✓ t_abc123  done     product-owner        "
+            "[grill-loop] acme: continue grill — 9 open nodes remain"
+        )
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = mock.MagicMock(
+                returncode=0, stdout=done_line, stderr=""
+            )
+            self.assertFalse(cgplugin._has_running_card("[grill-loop]", "acme"))
+
+    def test_has_running_card_false_for_different_venture_slug(self):
+        """A running [grill-loop] card for a DIFFERENT venture does not block —
+        serialization is per-venture, so concurrent grills on distinct ventures
+        may each keep looping."""
+        running_line = (
+            "● t_abc123  running   product-owner        "
+            "[grill-loop] otherco: continue grill — 2 open nodes remain"
+        )
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = mock.MagicMock(
+                returncode=0, stdout=running_line, stderr=""
+            )
+            self.assertFalse(cgplugin._has_running_card("[grill-loop]", "acme"))
+
+    def test_has_running_card_false_on_subprocess_error(self):
+        """Fire-and-log: if the kanban-list subprocess raises, the guard returns
+        False (treat as 'no running card') so the transition is never blocked."""
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.side_effect = OSError("kanban CLI blew up")
+            self.assertFalse(cgplugin._has_running_card("[grill-loop]", "acme"))
+
+    def test_next_branch_card_skipped_when_grill_loop_already_running(self):
+        """SERIALIZE: when a RUNNING [grill-loop] card for the same venture
+        already exists on hermes-hq, _create_next_branch_card SKIPS — it issues
+        the guard's `list` call but does NOT issue any `create` call."""
+        running_line = (
+            "● t_abc123  running   product-owner        "
+            "[grill-loop] acme: continue grill — 9 open nodes remain"
+        )
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = mock.MagicMock(
+                returncode=0, stdout=running_line, stderr=""
+            )
+            result = cgplugin._create_next_branch_card("acme", 5)
+
+        self.assertIsNone(result)  # skipped → no card created
+        # the guard's list call fired, but NO create call
+        self.assertEqual(
+            len(_create_calls(mock_subprocess.run)), 0,
+            "must not create a duplicate [grill-loop] card when one is running",
+        )
+
+    def test_next_branch_card_created_when_no_running_duplicate(self):
+        """SERIALIZE happy path: no running [grill-loop] for the venture → the
+        guard's list fires, THEN exactly one create fires (the card is made)."""
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = mock.MagicMock(
+                returncode=0, stdout="", stderr=""
+            )
+            cgplugin._create_next_branch_card("acme", 3)
+
+        self.assertEqual(len(_create_calls(mock_subprocess.run)), 1)
+
+    def test_no_duplicate_grill_loop_card_via_session_end(self):
+        """The full on_session_end transition respects the guard: a mid-grill
+        session with a non-empty backlog creates a [grill-loop] card ONLY if no
+        running one exists for the venture. Here one is running → no create."""
+        cg.add_node("root", "venture: Acme", topics=["acme"])
+        cg.add_node("decision", "an open decision")  # non-empty backlog
+        cgplugin._on_post_tool_call(tool_name="graph_frontier", session_id="s-grill")
+
+        running_line = (
+            "● t_abc123  running   product-owner        "
+            "[grill-loop] acme: continue grill — 9 open nodes remain"
+        )
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = mock.MagicMock(
+                returncode=0, stdout=running_line, stderr=""
+            )
+            cgplugin._on_session_end(session_id="s-grill", completed=True)
+
+        self.assertEqual(
+            len(_create_calls(mock_subprocess.run)), 0,
+            "session-end must not spawn a duplicate grill-loop",
+        )
 
 
 if __name__ == "__main__":

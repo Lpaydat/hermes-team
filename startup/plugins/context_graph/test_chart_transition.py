@@ -42,6 +42,17 @@ def _skill_values(cmd):
     ]
 
 
+def _create_calls(run_mock):
+    """The unittest ``call`` objects for every ``kanban ... create`` invocation
+    on the mocked subprocess.
+
+    The serialize guard (B3/B4 follow-up) issues a ``kanban list`` call BEFORE
+    any create, so create-path tests assert on create calls specifically rather
+    than on overall call count.
+    """
+    return [c for c in run_mock.call_args_list if "create" in c.args[0]]
+
+
 class ChartTransitionTest(unittest.TestCase):
     """B4: grill session-end with an EMPTY backlog -> chart card."""
 
@@ -84,10 +95,13 @@ class ChartTransitionTest(unittest.TestCase):
         self.assertIsNone(result)
         self.assertNotIn("s-chart", cgplugin._GRAPH_TOUCHED_SESSIONS)
 
-        # the kanban CLI was invoked exactly once (the chart card)
-        mock_subprocess.run.assert_called_once()
-        cmd = mock_subprocess.run.call_args.args[0]
-        env = mock_subprocess.run.call_args.kwargs["env"]
+        # SERIALIZE GUARD: the guard's `kanban list` fires first (no running
+        # [chart] card on the mocked board → empty-ish stdout → guard passes),
+        # THEN exactly one create fires (the chart card).
+        create_calls = _create_calls(mock_subprocess.run)
+        self.assertEqual(len(create_calls), 1)
+        cmd = create_calls[0].args[0]
+        env = create_calls[0].kwargs["env"]
 
         # cmd shape: hermes kanban create <title> --assignee ... --skill ... --body ...
         self.assertEqual(cmd[0], "hermes")
@@ -140,9 +154,11 @@ class ChartTransitionTest(unittest.TestCase):
             )
             cgplugin._on_session_end(session_id="s-grill", completed=True)
 
-        # exactly one card (B3's next-branch) and it is NOT a chart card
-        mock_subprocess.run.assert_called_once()
-        cmd = mock_subprocess.run.call_args.args[0]
+        # exactly one create (B3's next-branch, guarded by the serialize list)
+        # and it is NOT a chart card
+        create_calls = _create_calls(mock_subprocess.run)
+        self.assertEqual(len(create_calls), 1)
+        cmd = create_calls[0].args[0]
         title = cmd[cmd.index("create") + 1]
         self.assertIn("[grill-loop]", title)
         self.assertNotIn("[chart]", title)
@@ -199,9 +215,11 @@ class ChartTransitionTest(unittest.TestCase):
             )
             cgplugin._create_chart_card("acme")
 
-        mock_subprocess.run.assert_called_once()
-        cmd = mock_subprocess.run.call_args.args[0]
-        env = mock_subprocess.run.call_args.kwargs["env"]
+        # guard lists first (no running card), then exactly one create
+        create_calls = _create_calls(mock_subprocess.run)
+        self.assertEqual(len(create_calls), 1)
+        cmd = create_calls[0].args[0]
+        env = create_calls[0].kwargs["env"]
         title = cmd[cmd.index("create") + 1]
         self.assertIn("[chart]", title)
         self.assertIn("acme", title)
@@ -209,6 +227,64 @@ class ChartTransitionTest(unittest.TestCase):
         self.assertEqual(_skill_values(cmd), ["wayfinding-auto", "wayfinder"])
         self.assertEqual(env["HERMES_KANBAN_BOARD"], "hermes-hq")
         self.assertTrue(env["HERMES_HOME"].endswith("startup"))
+
+    # ── SERIALIZE GUARD (B3/B4 follow-up): one chart card per venture ────────
+    #
+    # Sibling of the grill-loop guard. Without it, concurrent grill session-ends
+    # that each exhaust the backlog would each spawn a [chart] card → parallel
+    # wayfinding-map sessions collide on the same venture. Fix: SERIALIZE —
+    # before creating a [chart] card, check hermes-hq for a RUNNING one for the
+    # same venture; if one exists, SKIP.
+
+    def test_chart_card_skipped_when_chart_already_running(self):
+        """SERIALIZE: when a RUNNING [chart] card for the same venture already
+        exists on hermes-hq, _create_chart_card SKIPS — guard list fires, NO
+        create call."""
+        running_line = (
+            "● t_chart1  running   product-owner        "
+            "[chart] acme: chart the wayfinding map"
+        )
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = mock.MagicMock(
+                returncode=0, stdout=running_line, stderr=""
+            )
+            result = cgplugin._create_chart_card("acme")
+
+        self.assertIsNone(result)  # skipped → no card created
+        self.assertEqual(
+            len(_create_calls(mock_subprocess.run)), 0,
+            "must not create a duplicate [chart] card when one is running",
+        )
+
+    def test_chart_card_created_when_no_running_duplicate(self):
+        """SERIALIZE happy path: no running [chart] for the venture → the
+        guard's list fires, THEN exactly one create fires (the card is made)."""
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = mock.MagicMock(
+                returncode=0, stdout="", stderr=""
+            )
+            cgplugin._create_chart_card("acme")
+
+        self.assertEqual(len(_create_calls(mock_subprocess.run)), 1)
+
+    def test_no_duplicate_chart_card_via_session_end(self):
+        """The full on_session_end chart transition respects the guard: an empty
+        backlog with a running [chart] card for the venture → no create."""
+        self._empty_backlog_grill(session_id="s-chart")
+        running_line = (
+            "● t_chart1  running   product-owner        "
+            "[chart] testventure: chart the wayfinding map"
+        )
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = mock.MagicMock(
+                returncode=0, stdout=running_line, stderr=""
+            )
+            cgplugin._on_session_end(session_id="s-chart", completed=True)
+
+        self.assertEqual(
+            len(_create_calls(mock_subprocess.run)), 0,
+            "session-end must not spawn a duplicate chart card",
+        )
 
 
 if __name__ == "__main__":

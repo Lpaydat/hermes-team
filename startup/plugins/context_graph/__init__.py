@@ -160,6 +160,66 @@ def _venture_slug_from_root(root):
     return (root.get("content") or "").strip()
 
 
+def _has_running_card(card_marker, venture_slug):
+    """SERIALIZE GUARD: is there ALREADY a RUNNING kanban card of the matching
+    type + venture on hermes-hq?
+
+    Root cause this fixes (B3/B4 follow-up): every grill session-end created a
+    [grill-loop] / [chart] card, so CONCURRENT session-ends spawned MULTIPLE
+    cards for the SAME venture → they collided on the same VB (intercom
+    contention) → decisions never resolved → infinite loop. This guard makes
+    card creation idempotent per venture: before creating, we check the board
+    for a RUNNING card carrying ``card_marker`` (e.g. '[grill-loop]') AND
+    ``venture_slug``. If one exists → the caller SKIPS (log + return) instead
+    of spawning a duplicate. Only ONE grill-loop (and ONE chart) per venture
+    at a time → no parallel collision.
+
+    Shells out to ``hermes kanban list`` (subprocess.run) with the SAME pinned
+    env as the create helpers (HERMES_HOME -> startup root,
+    HERMES_KANBAN_BOARD -> hermes-hq — the ``--board`` flag and the env var
+    resolve identically; the env pin mirrors the existing create helpers). A
+    running card line looks like (see kanban._fmt_task_line):
+
+        ● t_xxx  running  product-owner  [grill-loop] gitpulse: ...
+
+    so a running line carries BOTH the '●' icon and the literal status word
+    'running'. A line matches iff it is RUNNING (contains '●' OR 'running')
+    AND contains ``card_marker`` AND contains ``venture_slug``. Done/blocked
+    cards do NOT match → a finished loop never blocks the next.
+
+    Fire-and-log: any subprocess failure (raise or non-zero exit) is swallowed
+    and treated as 'no running card' → the caller proceeds to create. A
+    transient kanban-list failure must not block the grill->map transition.
+    Returns True if a matching RUNNING card exists, False otherwise.
+    """
+    env = dict(os.environ)
+    env["HERMES_HOME"] = _STARTUP_ROOT
+    env["HERMES_KANBAN_BOARD"] = "hermes-hq"
+    cmd = ["hermes", "kanban", "list"]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, env=env, timeout=60
+        )
+    except Exception:
+        logger.debug(
+            "context_graph: running-card list raised for %s %s",
+            card_marker, venture_slug, exc_info=True,
+        )
+        return False
+    if result.returncode != 0:
+        logger.debug(
+            "context_graph: running-card list FAILED (rc=%s) for %s %s: %s",
+            result.returncode, card_marker, venture_slug,
+            (result.stderr or "").strip(),
+        )
+        return False
+    for line in (result.stdout or "").splitlines():
+        is_running = ("●" in line) or ("running" in line)
+        if is_running and (card_marker in line) and (venture_slug in line):
+            return True
+    return False
+
+
 def _create_next_branch_card(venture_slug, remaining_count):
     """Create a next-branch kanban card on hermes-hq: a fresh PO session to
     continue the grill (recover the graph + grill the top open nodes). Shared by
@@ -174,7 +234,19 @@ def _create_next_branch_card(venture_slug, remaining_count):
     Fire-and-log: a session-end hook must not crash on a card-creation failure,
     so exceptions / non-zero exit are logged, not raised. Returns the CLI stdout
     on success, None on failure (the hook ignores the return).
+
+    SERIALIZE GUARD (B3/B4 follow-up): a [grill-loop] card is created ONLY if no
+    RUNNING [grill-loop] card already exists for this venture. Concurrent grill
+    session-ends used to each spawn one → parallel cards collided on the same VB
+    (intercom contention) → decisions never resolved → infinite loop. See
+    _has_running_card. Guard first; on a running duplicate, log + return None.
     """
+    if _has_running_card("[grill-loop]", venture_slug):
+        logger.info(
+            "context_graph: grill-loop already running for %s, skipping duplicate",
+            venture_slug or "(unknown venture)",
+        )
+        return None
     title = (
         f"[grill-loop] {venture_slug}: continue grill — "
         f"{remaining_count} open nodes remain"
@@ -231,7 +303,19 @@ def _create_chart_card(venture_slug):
     fire-and-log discipline (HERMES_HOME -> startup root, HERMES_KANBAN_BOARD ->
     hermes-hq). Returns the CLI stdout on success, None on failure (the hook
     ignores the return).
+
+    SERIALIZE GUARD (B3/B4 follow-up): a [chart] card is created ONLY if no
+    RUNNING [chart] card already exists for this venture — same parallelism fix
+    as the grill-loop guard, so concurrent exhausted-backlog session-ends don't
+    each spawn a chart card and collide on the same venture. See
+    _has_running_card. Guard first; on a running duplicate, log + return None.
     """
+    if _has_running_card("[chart]", venture_slug):
+        logger.info(
+            "context_graph: chart already running for %s, skipping duplicate",
+            venture_slug or "(unknown venture)",
+        )
+        return None
     title = f"[chart] {venture_slug}: chart the wayfinding map"
     body = (
         "CHART-THE-MAP card. SHARED LANGUAGE: graph_pull('{slug}') returns the "
