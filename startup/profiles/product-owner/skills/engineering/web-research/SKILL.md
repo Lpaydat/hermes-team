@@ -79,8 +79,25 @@ curl -sL "https://r.jina.ai/https://{article-url}"
 ```
 
 This produces clean Markdown with title, publish date, and body text.
-Useful for reading blog posts, documentation pages, and news articles
-that would otherwise require JS rendering.
+Useful for reading blog posts, static/SSR documentation pages (e.g.
+readthedocs, MkDocs, Sphinx, GitHub READMEs), and news articles.
+
+**CRITICAL CAVEAT — client-side-rendered (CSR) docs frameworks defeat jina.ai.**
+Sites built with Docusaurus (`docs.slack.dev`, many Vercel-hosted docs),
+Nextra, Next.js docs, Gatsby, or VuePress fetch their content via JS
+*after* the HTML shell loads. jina.ai returns HTTP 200 + clean-looking
+Markdown, but the body is **only the navigation sidebar / header boilerplate**
+— the actual article text is missing. Worse, this output is identical across
+every page on the site, so you can mistake it for a thin/empty article when
+really the extraction silently failed.
+
+**Detection heuristic — a jina.ai fetch on a docs page is CSR-failed when:**
+- The Markdown is much shorter than the page title promises, AND
+- It's mostly a flat list of section/anchor links (the sidebar), AND
+- Two different URLs on the same domain return near-identical content.
+When you see this, do NOT retry jina.ai on the same URL. Skip straight to
+`browser_navigate` + `browser_console` extraction (technique #5 below),
+which runs the JS and renders the real content.
 
 ### 4. Direct API Access (Domain-Specific)
 
@@ -92,7 +109,7 @@ For high-trust primary sources, prefer direct API access:
 | GitHub | `api.github.com` | Search code, issues, repos |
 | HN Algolia | `hn.algolia.com/api/v1/` | Hacker News search |
 | Wikipedia | `en.wikipedia.org/w/api.php` | Structured content |
-| Reddit | `www.reddit.com/r/{sub}/.json` | Append `.json` to any URL |
+| Reddit | ~~`www.reddit.com/r/{sub}/.json`~~ | **BLOCKED** — see Reddit pitfall below. Use DuckDuckGo `site:reddit.com` via jina.ai instead. |
 
 ### 5. Direct Navigation + In-Page JS Extraction (browser fallback)
 
@@ -158,6 +175,16 @@ with `substring(N, N+8000)` offsets if you need a long article in full.
   browser stack is slow and overkill for XML/JSON/Markdown. Use curl.
 - **jina.ai reader is not anonymous.** It fetches on your behalf.
   Do not use it for sensitive queries.
+- **jina.ai silently fails on client-rendered (CSR) docs sites.**
+  Docusaurus, Nextra, Next.js/Vercel docs, Gatsby, VuePress — these load
+  article content via JS after the HTML shell. jina.ai returns HTTP 200
+  with clean-looking Markdown that is **only the nav sidebar**, and the
+  output is near-identical across every URL on the domain. This looks
+  like a real (if thin) result, so it's easy to trust. Don't. If the
+  content is suspiciously short / mostly anchor links / identical across
+  pages, the page is CSR — skip directly to `browser_navigate` +
+  `browser_console` extraction (#5). Confirmed against `docs.slack.dev`
+  (Docusaurus) in 2026-07.
 - **arXiv truncates summaries** at ~500 chars when served via API.
   Fetch individual paper pages for full abstracts.
 - **DuckDuckGo HTML `uddg=` links are redirects.** The actual URL is
@@ -173,9 +200,69 @@ with `substring(N, N+8000)` offsets if you need a long article in full.
   the article you intended. Re-navigate to the real URL before retrying.
   Don't loop the same expression: it means the page, not the query,
   is wrong.
+- **Guessed docs URLs that 404 → extract the live sidebar hrefs.** Docs
+  sites rename/restructure sections constantly (e.g. Slack renamed
+  "App Directory" → "Slack Marketplace" and moved all sub-pages).
+  Guessing `/submission-process` or `/review-process` returns 404s and
+  wastes turns. Instead, navigate to the section's overview/landing
+  page (the one URL you DO know), then dump the rendered sidebar's real
+  links in one call:
+  ```
+  browser_console → expression:
+    (() => JSON.stringify(
+      Array.from(document.querySelectorAll('a'))
+        .map(a => ({text: a.innerText.trim(), href: a.href}))
+        .filter(x => x.text)
+    ))()
+  ```
+  The actual current URLs are in that list — navigate to the right one
+  directly. This is faster and more reliable than guessing slugs, and
+  it works on any Docusaurus/MkDocs/Sphinx site with a nav sidebar.
+  (Wrap in an IIFE per the shared-JS-context pitfall above.)
+- **`browser_console` reuses one shared JS context — wrap multi-step
+  extraction in an IIFE.** Each `browser_console` call evaluates in the
+  SAME page context as the previous call on that loaded page, so top-level
+  `const`/`let` declarations persist across calls. A second expression
+  like `const main = document...` throws
+  `SyntaxError: Identifier 'main' has already been declared` and returns
+  no data. Fix: wrap every extraction expression in an immediately-invoked
+  function —
+  `(() => { const m = document.querySelector('article'); return m ? m.innerText.substring(0, 6000) : 'NOT FOUND'; })()`
+  — so declarations are scoped to the call and never collide. Use this
+  IIFE form by default for all but the very first extraction on a freshly
+  navigated page.
 - **Parallelize batched queries.** arxiv and jina.ai both support
   concurrent requests — send independent queries in the same turn.
   Direct navigations to independent pages can also be batched.
+- **Overly specific search terms understate the competitive landscape.**
+  Searching `"git standup weekly summary engineering team"` returns 4
+  results with 0-5 stars. Searching `"git standup"` surfaces the 7.8k-star
+  tool. Start with BROAD terms (1-2 words), then narrow. Prior research
+  rounds that claimed "17+ tools with 0-2 stars" were wrong because the
+  queries were too specific. Same applies to GitHub API search and
+  DuckDuckGo queries.
+- **For competitive landscape work, mine competitor comparison pages.**
+  Most SaaS tools list their own competitors on "Compare" / "X Alternative"
+  pages. One such page gives you the full competitive set in one click —
+  faster and more complete than searching for each competitor individually.
+  See `references/competitive-landscape-research.md` for the full pattern.
+- **Reddit `.json` endpoints are BLOCKED for programmatic access.**
+  Both `www.reddit.com/*.json` and `old.reddit.com/*.json` return
+  "You've been blocked by network security" pages (HTTP 403) regardless
+  of User-Agent string. This includes search endpoints, post endpoints,
+  and comment endpoints. Reddit tightened bot detection in 2024-2025.
+  **Working alternative:** use DuckDuckGo to find Reddit threads, then
+  read individual threads via jina.ai:
+  ```
+  # Step 1: find Reddit threads via DuckDuckGo
+  curl -sL "https://r.jina.ai/https://duckduckgo.com/html/?q=site:reddit.com+{search+terms}"
+  
+  # Step 2: read a specific Reddit thread via jina.ai
+  curl -sL "https://r.jina.ai/https://www.reddit.com/r/{sub}/comments/{id}/{slug}/"
+  ```
+  Note: jina.ai can read Reddit post content even though direct `.json`
+  access is blocked — the reader proxy fetches the rendered page.
+  You will get the post body and top comments in Markdown.
 
 ## Related Reference Files
 
@@ -198,5 +285,49 @@ Check these before starting a new research task in the same domain:
   static pre-execution check, shift-left = validate the task before
   acting, continuous verification = eval-gated rollouts + monitoring).
   Companion to the AI-side terminology reference above.
+- **`references/demand-validation-research.md`** — Pattern for
+  validating product/venture ideas: a 4-channel search strategy (HN
+  Algolia for stories+comments, DuckDuckGo for blog/forum discovery,
+  GitHub API for competitive tool landscape, jina.ai for deep reads),
+  an evidence quality framework, competitive density assessment
+  method, and red flags to watch for in idea briefs. Use when
+  researching "does this pain exist?" or "who already solves this?"
+- **`references/competitive-landscape-research.md`** — Pattern for
+  systematic competitive landscape cataloging: 5 discovery methods
+  (GitHub topic pages, GitHub search, competitor comparison-page
+  mining, SaaS pricing-page extraction, direct repo-page verification),
+  a tier-based cataloging structure (CLI / SaaS / Enterprise / Native),
+  and a differentiation assessment method with explicit verdicts.
+  Includes when to use browser vs curl/jina.ai for each subtask.
+  Use when researching "what existing tools solve or overlap this?"
+- **`references/slack-api-doc-verification.md`** — Canonical
+  `docs.slack.dev` URL structure (including the dotted `message.*` URL
+  pitfall), the load-bearing scope-vs-subscription-type distinction,
+  the bot-event vs workspace-event nuance, and a table of verified
+  scope mappings (`reaction_added`→`reactions:read`,
+  `message.channels`→`channels:history`, etc.). Load when verifying
+  any Slack API claim (OAuth scopes, event payloads, method params).
+- **`references/slack-app-distribution-verification.md`** — Verified
+  facts on app *distribution & approval* (distinct from the API
+  surface above): the 3 distribution states (undistributed / unlisted
+  / Marketplace-listed), the "App Directory → Slack Marketplace" rename,
+  external install via direct OAuth URL WITHOUT Marketplace approval,
+  no workspace cap for unlisted apps, the ~10-week Marketplace review
+  timeline (10 business days preliminary + up to 10 weeks functional),
+  the ≥5-active-workspace submission prerequisite, and the
+  admin-managed-workspace caveat. Load when verifying claims about
+  "can external users install this?", "do we need App Directory
+  approval?", MVP launch timing, or Add to Slack button mechanics.
 
 To view a reference, call `skill_view(name='web-research', file_path='references/<filename>')`.
+
+## When to Load This Skill (Even Unprompted)
+
+If you are dispatched as a kanban worker and your task involves ANY
+research (competitive landscape, demand validation, technology
+evaluation, source-finding), **load this skill immediately** even if
+it wasn't in the card's `skills` field. The curl/jina.ai patterns here
+are significantly faster than browser navigation for many research
+subtasks, and the reference files capture techniques that prevent
+repeating prior research mistakes (e.g., overly specific search terms
+understating the competitive landscape).

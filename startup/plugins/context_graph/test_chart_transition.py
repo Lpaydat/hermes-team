@@ -139,6 +139,47 @@ class ChartTransitionTest(unittest.TestCase):
         )
         self.assertEqual(env["HERMES_KANBAN_BOARD"], "hermes-hq")
 
+    # ── B4 is TERMINAL: resolving the grill root (open -> resolved) ───────────
+    def test_chart_transition_resolves_grill_root_on_success(self):
+        """B4 is terminal: a successful chart-card creation must resolve the
+        grill root (status open -> resolved). After the transition,
+        has_open_root() flips False -> is_grill_session() is False -> B4 cannot
+        re-fire on a later exhausted-backlog session-end. Without this, the root
+        stays open and the chart transition is re-triggerable (the bug)."""
+        self._empty_backlog_grill(session_id="s-chart")
+        self.assertTrue(cg.has_open_root(), "fixture: grill root starts open")
+
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.return_value = mock.MagicMock(
+                returncode=0, stdout="created t_chart1", stderr=""
+            )
+            cgplugin._on_session_end(session_id="s-chart", completed=True)
+
+        self.assertFalse(
+            cg.has_open_root(),
+            "B4 must resolve the grill root on a successful chart transition; "
+            "an open root lets B4 re-fire (not terminal).",
+        )
+
+    def test_chart_transition_leaves_root_open_on_create_failure(self):
+        """Regression guard: a chart-card create FAILURE must NOT resolve the
+        grill root. _create_chart_card returns None on failure (or on a
+        serialize-guard skip); the root stays open so a later exhausted-backlog
+        session-end can retry the transition — the grill is not handed off
+        until a chart card actually exists."""
+        self._empty_backlog_grill(session_id="s-chart")
+        self.assertTrue(cg.has_open_root(), "fixture: grill root starts open")
+
+        with mock.patch.object(cgplugin, "subprocess") as mock_subprocess:
+            mock_subprocess.run.side_effect = OSError("kanban CLI blew up")
+            cgplugin._on_session_end(session_id="s-chart", completed=True)
+
+        self.assertTrue(
+            cg.has_open_root(),
+            "a failed chart-card create must leave the root open for retry; "
+            "resolve only on a successful create.",
+        )
+
     # ── no chart card when the backlog is NON-empty (B3 fires instead) ────────
     def test_no_chart_card_when_backlog_non_empty(self):
         """A grill session with a NON-empty backlog -> B3's next-branch card

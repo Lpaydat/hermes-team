@@ -292,7 +292,7 @@ def tree(root_id):
             FROM graph_nodes n
             JOIN graph_edges e ON e.source_id = n.id AND e.edge_type = 'blocks'
             JOIN tree_cte t ON e.target_id = t.id
-            WHERE t.depth < 20
+            WHERE t.depth < 50
         )
         SELECT * FROM tree_cte ORDER BY depth, title
     """, (root_id,)).fetchall()

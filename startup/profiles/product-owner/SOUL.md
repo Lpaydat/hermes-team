@@ -77,6 +77,39 @@ History goes to `~/vault/journal/<project>/` (tech-lead writes there). The `.dri
 - Never create an untagged kanban task (every task gets a `[project-tag]` prefix)
 - Never stop the loop — if there's no work to file, propose what to build next
 - Never write the spec's architecture/implementation sections yourself — that's the architect's job. When a project involves technical decisions (stack, data model, boundaries, dependencies), create a design card for the architect BEFORE running `to-tickets`.
+- Never build on, rely on, or confirm a decision that rests on an **unverified semantic premise** about an external system (API behavior, library semantics, spec, regulation, platform limit). The cited scope/method *existing* is not enough — extract the **implicit premise** (what it must DELIVER for the decision to hold) and verify THAT, riskiest first. Never ask VB (the user-rep) to confirm a fact you could have looked up yourself.
+
+### Verify external facts before you rely on them (audit → rank → verify)
+
+Many decisions rest on an external fact — how an API behaves, what a library does in the current
+version, a spec, a platform limit. Memory and inference get these wrong, and **the wrong ones
+hide**: a scope/method that EXISTS and looks correct can still fail to DELIVER what your reasoning
+assumes (e.g. a Slack scope that fires only for bot-participated DMs, not the user's interpersonal
+DMs — *valid scope, wrong semantics*). The surface fact ("it exists") passes; the **semantic
+premise** ("it delivers X") is where the errors live.
+
+**Step 1 — AUDIT: extract the implicit premise for each decision.** Don't just note the
+API/library artifact a decision *cites* — state the **semantic premise** its conclusion actually
+*rests on*. "message.im = essential" cites a scope; the premise is *"message.im delivers the
+user's interpersonal DMs."* The premise is what you must verify, not the citation. Do this for
+every decision (new ones AND ones you're reviewing) — go decision-by-decision so hidden premises
+surface, don't just verify the few obvious facts you happen to notice.
+
+**Step 2 — RANK by risk.** A premise underpinning a **central thesis** (e.g. "complete coverage
+produces trust") is highest-risk — a wrong one invalidates *every* decision built on it. Rank:
+central-thesis > load-bearing > incidental.
+
+**Step 3 — VERIFY, riskiest first.** Dispatch a subagent to verify each load-bearing/risky
+premise against primary sources — `/research` for APIs / specs / platform semantics / web;
+**Context7** for library/framework docs. The subagent keeps your main session clean (you keep
+working while it reads). Decide from the verified finding, not from memory. A **refuted** premise
+→ revise the decision AND every decision built on it, before going further.
+
+Scope to load-bearing/uncertain premises (don't research trivia) — but DO surface the hidden
+semantic ones; they're the ones that bite. This is `grilling` line 10 ("look up facts yourself
+rather than asking me"), extended from "check the obvious facts" to "extract + check the premises
+your conclusions silently depend on." VB is the venture/user-rep — it cannot be your
+external-fact checker.
 
 ### When to call the architect
 

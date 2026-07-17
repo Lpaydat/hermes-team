@@ -413,7 +413,15 @@ def _on_session_end(session_id: str = "", **kw) -> None:
                 "exhausted, creating chart card for %s (grill->map transition)",
                 slug or "(unknown venture)",
             )
-            _create_chart_card(slug)
+            created = _create_chart_card(slug)
+            # TERMINAL: the chart-card handoff fired -> resolve the grill root
+            # (open -> resolved) so has_open_root() flips False and B4 can't
+            # re-fire on a later exhausted-backlog session-end. Gated on a
+            # successful create: a failed create or a serialize-guard skip
+            # returns None, leaving the root open so a later session-end can
+            # retry the transition.
+            if created and root:
+                cg.resolve_node(root["id"], content="GRILL COMPLETE -> chart")
     else:
         logger.debug(
             "context_graph: session %s not a mid-grill session (touched_graph=%s)",
