@@ -14,9 +14,11 @@ metadata:
 # Venture Pipeline — the kill-gate system
 
 Find real human problems, run them through a kill-gate pipeline, and — for survivors the
-gate approves — **build the actual MVP/POC**, not just a paper spec. Volume + ruthless
-filtering is the analysis strategy; tight iteration is the build strategy. You'd rather
-kill 90 ideas in a day than polish one for a month.
+gate approves — **build the actual MVP/POC**, not just a paper spec. Volume + evidence-based
+filtering is the analysis strategy; tight iteration is the build strategy. A kill is a
+conclusion the evidence forces — not a default or a cost-saver; default to refining the
+venture and resolving open branches, and kill only when a load-bearing premise is refuted
+and every pivot has been weighed.
 
 ## Two gate interactions — keep them distinct
 
