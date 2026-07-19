@@ -13,7 +13,7 @@ The leading word is _tracer-bullet_: each bead is a thin end-to-end slice (code 
 
 ### 1. Discuss with the other party
 
-The other party may be a human or an agent. Ask one question at a time with a recommended answer attached. Goal: extract enough context to write a PRD — problem, audience, constraints, success criteria.
+The other party may be a human or an agent. Force-load `grill-with-docs` (`grilling` + `domain-modeling`) and interview them to extract enough context to write a PRD — problem, audience, constraints, success criteria.
 
 **Completion criterion:** you can state the problem, the user, and what "done" looks like in 2-3 sentences.
 

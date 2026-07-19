@@ -23,8 +23,25 @@ document. Use `templates/project-spec.md` as the required template.
 - Validation/kill metric (threshold defined before building).
 - Pivot/kill criteria (pre-committed).
 
-## Confidence labels
+## Confidence labels — and the gate they enforce
 
 Every claim in the spec must be labeled per the spine's confidence rule
 ([Analysis] / [Judgment] / [Speculation]) — see "Confidence & honesty" in
 [SKILL.md](../SKILL.md). The labels calibrate the gate's trust.
+
+**Spec-gate rule (enforced).** Before authoring the build-ready spec, the **riskiest
+assumption** must be labeled **[Analysis]** — i.e. backed by demand-side evidence (organic
+complaints, negative-feature reviews, interview quotes, willingness-to-pay signal), not
+[Judgment] or [Speculation]. A spec whose core assumption is still [Judgment] is a paper
+spec on top of an untested inference; do not author it. Instead, run the cheapest demand pass
+that converts the label (targeted community-scan for gap language, negative-feature reviews on
+the comp set's G2/Capterra pages, or a single ICP interview) and either promote the label to
+[Analysis] or kill the idea. OnCallDigest (grilllive13) was killed at exactly this gate by
+product-owner: the brief's gap was [Judgment], a spec was authored anyway, and the demand pass
+landed zero organic complaints + an incumbent already shipping the thesis for free. Do not
+repeat that loop — if the core assumption is [Judgment], run the pass yourself before the spec
+reaches product-owner's queue.
+
+The spec-gate rule only constrains the **riskiest** assumption. Secondary assumptions may
+remain [Judgment] or [Speculation] and be tested later via the experiment design — that is
+what the MVP is for.
