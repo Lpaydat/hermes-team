@@ -10,7 +10,11 @@ from . import (
     _extract_call,
     extract_open_questions,
     find_context_md,
+    parse_scan_output,
+    spawn_async_chain,
     _venture_name_from_title,
+    maybe_canonicalize_context_md,
+    _canonical_target,
 )
 
 
@@ -123,6 +127,51 @@ def test_extract_open_questions_none_path():
     assert extract_open_questions(None) == ""
 
 
+# --- broadened open-section detection (parser-miss fix) -----------------
+# PO records open items under semantically-rich headers (hypotheses, gates,
+# assumptions, TBD) per grill-with-docs' convention — NOT always "Open
+# questions". The old parser matched only ^## Open and terminated the loop on
+# a parser miss (grilllive42: 2 unmeasured hypotheses + 4 unpassed gates, all
+# "ASSERTIONS, not measured data", yet extract returned "" -> loop died at 2
+# iter). Broaden to recognize open-bearing sections.
+
+
+def test_extract_open_questions_matches_hypotheses_section(tmp_path):
+    ctx = tmp_path / "CONTEXT.md"
+    ctx.write_text("# V\n\n## Market hypotheses (two axes, to be tested)\n- H1: x (unmeasured)\n- H2: y\n\n## Resolved\n- done\n")
+    out = extract_open_questions(str(ctx))
+    assert "H1" in out and "H2" in out
+    assert "done" not in out  # block ends at the next ##
+
+
+def test_extract_open_questions_matches_gates_section(tmp_path):
+    ctx = tmp_path / "CONTEXT.md"
+    ctx.write_text("# V\n\n## The four-gate risk structure\n1. Classifier gate (untested)\n2. Problem-frequency gate\n\n## Other\n")
+    out = extract_open_questions(str(ctx))
+    assert "Classifier gate" in out
+
+
+def test_extract_open_questions_matches_assumptions_tbd_risk(tmp_path):
+    ctx = tmp_path / "CONTEXT.md"
+    ctx.write_text("# V\n\n## Assumptions\n- A1\n\n## TBD\n- t1\n\n## Risks to verify\n- r1\n\n## Done\n")
+    out = extract_open_questions(str(ctx))
+    assert "A1" in out and "t1" in out and "r1" in out
+
+
+def test_extract_open_questions_bold_form_broadened(tmp_path):
+    ctx = tmp_path / "CONTEXT.md"
+    ctx.write_text("# V\n\n**Open hypotheses (parked):**\n- H1\n\nbody\n")
+    out = extract_open_questions(str(ctx))
+    assert "H1" in out
+
+
+def test_extract_open_questions_still_matches_open_header(tmp_path):
+    # regression: the original ## Open form must still work
+    ctx = tmp_path / "CONTEXT.md"
+    ctx.write_text("## Open questions\n- Q1\n")
+    assert "Q1" in extract_open_questions(str(ctx))
+
+
 # --- find_context_md ----------------------------------------------------
 
 def test_find_context_md_by_venture_name(tmp_path, monkeypatch):
@@ -175,6 +224,176 @@ def test_find_context_md_under_profile_scoped_hermes_home(tmp_path, monkeypatch)
     assert p.endswith("testventure/CONTEXT.md")
 
 
+def test_find_context_md_in_venture_builder_home(tmp_path, monkeypatch):
+    """Canonical home (absolute-path fix): venture-grill writes CONTEXT.md to
+    ~/.venture-builder/<slug>/CONTEXT.md — absolute, survives the scratch
+    rmtree that destroyed ~10% of grill outputs. find_context_md must search
+    there (and first, since it's the new canonical location)."""
+    import grill_followup
+    monkeypatch.setenv("HOME", str(tmp_path))  # expanduser("~") -> tmp_path
+    vb_dir = tmp_path / ".venture-builder" / "grilllive99"
+    vb_dir.mkdir(parents=True)
+    (vb_dir / "CONTEXT.md").write_text("## Open questions\n- Q1: x\n")
+    # isolate from real repo/vault so ONLY the venture-builder home can match
+    monkeypatch.setattr(grill_followup, "_REPO_ROOT", str(tmp_path / "norepo"))
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "nohome"))
+    p = find_context_md("[grill] AnyVenture", "Grill topic: venture-pitch/grilllive99")
+    assert p is not None
+    assert ".venture-builder" in p
+    assert "grilllive99" in p
+
+
+# --- maybe_canonicalize_context_md (tool-level CONTEXT.md rescue) -------
+
+
+def test_canonical_target_path():
+    p = _canonical_target("grilllive99")
+    assert p.endswith(".venture-builder/grilllive99/CONTEXT.md")
+
+
+def test_canonicalize_copies_write_file_of_context_md(tmp_path, monkeypatch):
+    """The fix: PO writes CONTEXT.md somewhere (here a throwaway src); the
+    post_tool_call hook copies it to ~/.venture-builder/<slug>/ so it survives
+    the scratch rmtree. Fires AT WRITE TIME, before kanban_complete cleanup."""
+    import grill_followup
+    monkeypatch.setenv("HOME", str(tmp_path))  # ~ -> tmp_path
+    src = tmp_path / "scratch_workdir" / "docs" / "ventures" / "grilllive99" / "CONTEXT.md"
+    src.parent.mkdir(parents=True)
+    src.write_text("# Grilllive99\n## Open questions\n- Q1\n")
+    target = maybe_canonicalize_context_md(
+        "write_file", {"path": str(src)}, "Grill topic: venture-pitch/grilllive99"
+    )
+    assert target is not None
+    assert target == str(tmp_path / ".venture-builder" / "grilllive99" / "CONTEXT.md")
+    assert (tmp_path / ".venture-builder" / "grilllive99" / "CONTEXT.md").read_text().startswith("# Grilllive99")
+
+
+def test_canonicalize_copies_patch_of_context_md(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    src = tmp_path / "ctx" / "CONTEXT.md"
+    src.parent.mkdir(parents=True)
+    src.write_text("updated")
+    target = maybe_canonicalize_context_md(
+        "patch", {"path": str(src)}, "Grill topic: venture-pitch/grilllive42"
+    )
+    assert target is not None and "grilllive42" in target
+
+
+def test_canonicalize_ignores_read_only_tools(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    src = tmp_path / "CONTEXT.md"; src.write_text("x")
+    # read_file / search_files must NOT trigger a copy
+    assert maybe_canonicalize_context_md(
+        "read_file", {"path": str(src)}, "Grill topic: venture-pitch/grilllive99"
+    ) is None
+    assert not (tmp_path / ".venture-builder").exists()
+
+
+def test_canonicalize_ignores_non_context_md_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    src = tmp_path / "notes.md"; src.write_text("x")
+    assert maybe_canonicalize_context_md(
+        "write_file", {"path": str(src)}, "Grill topic: venture-pitch/grilllive99"
+    ) is None
+
+
+def test_canonicalize_no_slug_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    src = tmp_path / "CONTEXT.md"; src.write_text("x")
+    # body has no venture-pitch/<slug> -> can't key the canonical dir
+    assert maybe_canonicalize_context_md("write_file", {"path": str(src)}, "no slug here") is None
+
+
+# --- parse_scan_output (scanner-driven follow-up) -----------------------
+# The follow-up is now an LLM scanner (grill skill, read-only over CONTEXT.md)
+# that outputs NEXT:<question> or CONVERGED:<reason>. These test the pure
+# output parser; the subprocess itself is integration (validated end-to-end).
+
+
+def test_parse_scan_output_next():
+    status, q = parse_scan_output("NEXT: Is X universal? — no evidence — 5 calls")
+    assert status == "next"
+    assert "Is X universal?" in q
+
+
+def test_parse_scan_output_converged():
+    status, q = parse_scan_output("CONVERGED: every claim has a cited source")
+    assert status == "converged"
+    assert q is None
+
+
+def test_parse_scan_output_unclear_on_empty_or_garbage():
+    assert parse_scan_output("")[0] == "unclear"
+    assert parse_scan_output("blah blah no marker")[0] == "unclear"
+
+
+def test_parse_scan_output_finds_next_in_wrapped_output():
+    # the scanner subprocess wraps output in chat-UI boxes; the NEXT line lands
+    # somewhere in stdout — find it regardless of surrounding noise.
+    raw = ("Initializing agent...\n...box...\n"
+           "NEXT: the real next question — why — evidence\n"
+           "Resume this session...")
+    status, q = parse_scan_output(raw)
+    assert status == "next"
+    assert "the real next question" in q
+
+
+def test_parse_scan_output_skips_prompt_template_echo():
+    # the scan prompt's own "NEXT: <single most...>" format-spec line gets echoed
+    # in stdout before the real answer. Must skip placeholder lines + take the
+    # filled answer (this was the grilllive44 root bug: iter2 got an empty slot).
+    raw = ("NEXT: <single most important unanswered question> — <why unanswered> — <evidence>\n"
+           "scanner reasons...\n"
+           "NEXT: Is the bookkeeper universal at $240-480/report — no evidence — 5 calls\n")
+    status, q = parse_scan_output(raw)
+    assert status == "next"
+    assert "bookkeeper" in q
+    assert "<" not in q
+
+
+def test_parse_scan_output_takes_last_next_line():
+    raw = "NEXT: first attempt\nNEXT: the final answer\n"
+    status, q = parse_scan_output(raw)
+    assert status == "next"
+    assert q == "the final answer"
+
+
+def test_decide_carryover_converged_forces_deeper(monkeypatch):
+    # experiment mode: scanner CONVERGED no longer terminates the loop — it
+    # forces one more drill so we can observe what a non-terminating grill does.
+    import grill_followup
+    monkeypatch.setattr(grill_followup, "scan_for_next_question", lambda slug: "CONVERGED: all claims evidenced")
+    out = grill_followup.decide_carryover("[grill] X", "Grill topic: venture-pitch/grilllive99")
+    assert out  # non-empty — loop continues, does not terminate
+    assert "deeper" in out.lower() or "drill" in out.lower()
+
+
+def test_decide_carryover_next_returns_the_question(monkeypatch):
+    import grill_followup
+    monkeypatch.setattr(grill_followup, "scan_for_next_question",
+                        lambda slug: "NEXT: Is X universal? — no evidence — 5 calls")
+    out = grill_followup.decide_carryover("[grill] X", "Grill topic: venture-pitch/grilllive99")
+    assert "Is X universal?" in out
+
+
+def test_spawn_async_chain_detaches_nonblocking(monkeypatch):
+    # the hook must NOT block on the scan — detach async_chain.py so the worker
+    # exits immediately + the scan/create run after (survives max-runtime).
+    import grill_followup
+    captured = {}
+
+    class FakePopen:
+        def __init__(self, cmd, **kw):
+            captured["cmd"] = cmd
+            captured["kw"] = kw
+
+    monkeypatch.setattr(grill_followup.subprocess, "Popen", FakePopen)
+    spawn_async_chain("[grill] X", "Grill topic: venture-pitch/grilllive99")
+    assert captured["kw"].get("start_new_session") is True  # detached
+    assert captured["kw"]["env"]["HERMES_ASYNC_SLUG"] == "grilllive99"
+    assert any("async_chain.py" in str(c) for c in captured["cmd"])
+
+
 # --- build_next_spec ----------------------------------------------------
 
 def test_next_spec_clean_title_no_iteration_marker():
@@ -217,6 +436,20 @@ def test_next_spec_injects_open_questions():
     )
     assert "## Open questions" in spec["body"]
     assert "Q1" in spec["body"]
+
+
+def test_next_spec_iter2_framing_tells_po_to_grill_not_dedup_close():
+    # PO self-closes iter2 cards as "duplicate re-fire" when it sees the prior
+    # done [grill] card. The injected body must frame: MUST intercom VB on THIS
+    # question; prior card done != this answered; don't dedup-close.
+    spec = build_next_spec(
+        task_title="[grill] X",
+        task_body="brief...",
+        open_questions="Is X universal? — no evidence — 5 calls",
+    )
+    assert "ITERATION" in spec["body"]
+    assert "intercom" in spec["body"].lower()
+    assert "Is X universal?" in spec["body"]
 
 
 def test_next_spec_no_injection_when_open_empty():

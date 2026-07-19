@@ -16,6 +16,9 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
+import sys
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -100,6 +103,16 @@ def find_context_md(task_title: str, task_body) -> Optional[str]:
     #   3. ~/vault/ventures/<name>/             (venture-pipeline vault convention)
     # Search all three + the worker's cwd + HERMES_HOME.
     names = [n for n in (venture, slug) if n]
+    # Canonical home (absolute-path fix): venture-grill writes CONTEXT.md to
+    # ~/.venture-builder/<slug>/CONTEXT.md — absolute, so it survives the
+    # scratch-workspace rmtree that destroyed ~10% of grill outputs. Searched
+    # first (new canonical); the repo/vault roots below remain as fallbacks for
+    # priors written before the fix.
+    vb_home = os.path.expanduser("~/.venture-builder")
+    for name in names:
+        p = os.path.join(vb_home, name, "CONTEXT.md")
+        if os.path.isfile(p):
+            return p
     bases = []
     if _REPO_ROOT:
         bases.append(_REPO_ROOT)
@@ -125,15 +138,81 @@ def find_context_md(task_title: str, task_body) -> Optional[str]:
     return None
 
 
-def extract_open_questions(context_path: Optional[str]) -> str:
-    """Extract the open-questions block from CONTEXT.md (the unresolved items).
+# --- CONTEXT.md canonicalization (tool-level rescue) --------------------
+# PO follows matt's grill-with-docs convention for WHERE to write CONTEXT.md,
+# which a skill prompt cannot reliably override (directive #3). The convention
+# may land the file in the worker's ephemeral scratch workspace, which is
+# shutil.rmtree'd on kanban_complete (the ~10% loss). This post_tool_call hook
+# fires AT WRITE TIME — before cleanup — so we copy every write_file/patch of a
+# *CONTEXT.md to the canonical ~/.venture-builder/<slug>/ home. find_context_md
+# (above) searches that root first, so the iteration loop + collection resolve
+# to the surviving canonical copy regardless of where PO originally wrote.
+_WRITE_TOOLS = frozenset({"write_file", "patch"})
 
-    PO records these two ways, both matched (case-insensitive on "Open"):
-      - a heading: ``## Open questions`` / ``## Open grill branches`` — block runs
-        to the next ``## `` heading.
-      - a bold line: ``**Open questions (parked...):**`` — block runs to the next
-        blank line or heading/bold opener (the list ends there).
-    Returns the block (opener + items), stripped; '' if missing or no open block.
+
+def _canonical_target(slug: str) -> str:
+    """expanduser at call time so tests can monkeypatch HOME."""
+    return os.path.join(os.path.expanduser("~/.venture-builder"), slug, "CONTEXT.md")
+
+
+def maybe_canonicalize_context_md(function_name, function_args, task_body) -> Optional[str]:
+    """If this is a write_file/patch of a *CONTEXT.md, mirror it to the canonical
+    ~/.venture-builder/<slug>/CONTEXT.md so it survives the scratch rmtree.
+    Returns the target path on copy, else None. Fail-safe (never breaks worker)."""
+    if function_name not in _WRITE_TOOLS:
+        return None
+    args = function_args
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except Exception:
+            return None
+    if not isinstance(args, dict):
+        return None
+    path = args.get("path")
+    if not isinstance(path, str) or not path.rstrip("/").endswith("CONTEXT.md"):
+        return None
+    if not os.path.isfile(path):
+        return None
+    slug = _extract_slug(task_body)
+    if not slug:
+        return None
+    target = _canonical_target(slug)
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copy2(path, target)
+        return target
+    except Exception as exc:
+        logger.warning("grill_followup: canonicalize CONTEXT.md failed: %s", exc)
+        return None
+
+
+_OPEN_HEADING_RE = re.compile(
+    r"^##.*(?:"
+    r"\bopen|hypoth|gate|kill|assumption|tbd|todo|"
+    r"to[\s-]*be[\s-]*test|to[\s-]*test|to[\s-]*verif|"
+    r"unverif|unresolved|next\s+step|follow[\s-]*up|parked|defer|risk"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def extract_open_questions(context_path: Optional[str]) -> str:
+    """Extract unresolved items from CONTEXT.md so the grill loop can carry
+    them into the next iteration.
+
+    PO records open items under semantically-rich headers per grill-with-docs'
+    convention — NOT always a literal "Open questions" section. grilllive42
+    terminated at 2 iter with 2 unmeasured hypotheses + 4 unpassed gates on
+    disk, because the old parser only matched ``## Open`` and thus injected
+    nothing. This recognizes any open-bearing section (hypotheses, gates,
+    assumptions, TBD, risks, to-test, unresolved, next-steps, parked, deferred,
+    follow-up) + the ``**Open ...`` bold form, and collects ALL such sections
+    (not just the first).
+
+    Heading-form sections run to the next ``## ``; a new ``##`` that is itself an
+    open section continues the collection. Bold-form runs to a blank line or new
+    heading/bold opener. Returns the concatenated block, stripped; '' if none.
     """
     if not context_path:
         return ""
@@ -147,21 +226,158 @@ def extract_open_questions(context_path: Optional[str]) -> str:
     bold = False
     for line in lines:
         if not in_section:
-            if re.match(r"^##\s*Open", line, re.IGNORECASE):
+            if _OPEN_HEADING_RE.match(line):
                 in_section, bold = True, False
                 section.append(line)
             elif re.match(r"^\*\*Open", line, re.IGNORECASE):
                 in_section, bold = True, True
                 section.append(line)
         else:
-            # heading form ends at the next ## ; bold form ends at a blank line
-            # or any new heading/bold opener.
-            if re.match(r"^##\s", line) or (bold and (line.strip() == "" or re.match(r"^\*\*", line))):
-                break
-            section.append(line)
+            if re.match(r"^##\s", line):
+                # heading form ends here; if the new ## is itself open, keep collecting
+                in_section = False
+                if _OPEN_HEADING_RE.match(line):
+                    in_section, bold = True, False
+                    section.append(line)
+            elif bold and (line.strip() == "" or re.match(r"^\*\*", line)):
+                in_section = False
+            else:
+                section.append(line)
     while section and not section[-1].strip():
         section.pop()
     return "".join(section).strip()
+
+
+_SCAN_TIMEOUT = 150  # seconds — scanner reads CONTEXT.md + reasons (~40s typical)
+
+
+def parse_scan_output(raw: str) -> tuple[str, Optional[str]]:
+    """Parse the scanner's output. Returns (status, question):
+    - 'next'      -> question is the next grill focus (carry it forward)
+    - 'converged' -> scanner declared the grill done (terminate the loop)
+    - 'unclear'   -> malformed/empty -> caller falls back to mechanical extract
+
+    The scan prompt's own format-spec lines ('NEXT: <single most...>') echo
+    into stdout BEFORE the real answer. Skip placeholder lines (containing '<')
+    and take the LAST NEXT:/CONVERGED: match (the scanner's final answer)."""
+    if not raw:
+        return ("unclear", None)
+    last_next: Optional[str] = None
+    last_converged = False
+    for line in raw.splitlines():
+        s = line.strip()
+        if "<" in s:  # echoed prompt placeholder, not a real answer
+            continue
+        m = re.match(r"^NEXT:\s*(.+)$", s, re.IGNORECASE)
+        if m:
+            last_next = m.group(1).strip()
+            continue
+        if re.match(r"^CONVERGED:", s, re.IGNORECASE):
+            last_converged = True
+    if last_next:
+        return ("next", last_next)
+    if last_converged:
+        return ("converged", None)
+    return ("unclear", None)
+
+
+def scan_for_next_question(slug: str) -> str:
+    """Spawn a read-only grill-skill scanner (hermes chat, toolset=file so it
+    cannot grill VB) over the venture's CONTEXT.md. Returns raw stdout (the
+    NEXT:/CONVERGED: line lives somewhere in it). Fail-safe: '' on any error or
+    timeout (caller falls back to the mechanical extract). Separation of
+    incentives: PO-the-griller converges; this scanner's only job is to FIND the
+    next gap, so it diverges where PO would stop."""
+    import subprocess
+    ctx_path = os.path.join(os.path.expanduser("~/.venture-builder"), slug, "CONTEXT.md")
+    prompt = (
+        "GRILL SCANNER (read-only — do NOT use intercom, do NOT grill anyone, "
+        "do NOT write files).\n\n"
+        f"Read: {ctx_path}\n\n"
+        "This venture was just grilled for another iteration. Your ONLY job: "
+        "decide whether the grill is GENUINELY done or whether there is a next "
+        "unanswered question.\n\n"
+        "Be RELENTLESS — default to finding a gap. Output CONVERGED only if "
+        "EVERY load-bearing claim in CONTEXT.md is backed by actual evidence "
+        "(not assertion, hypothesis, TBD, to-be-tested, or pending). An item "
+        "that is defined-but-unverified is NOT resolved.\n\n"
+        "Output EXACTLY one line, nothing else:\n"
+        "  NEXT: <single most important unanswered question> — <why unanswered> "
+        "— <evidence that would resolve it>\n"
+        "  CONVERGED: <one sentence citing the evidence backing every "
+        "load-bearing claim>"
+    )
+    try:
+        env = dict(os.environ)
+        if _REPO_ROOT:
+            env["HERMES_HOME"] = os.path.join(_REPO_ROOT, "startup")
+        proc = subprocess.run(
+            ["hermes", "-p", "product-owner", "--accept-hooks",
+             "--toolsets", "file", "--skills", "venture-grill",
+             "chat", "-q", prompt],
+            cwd=_REPO_ROOT or None, capture_output=True, text=True,
+            timeout=_SCAN_TIMEOUT, env=env,
+        )
+        return proc.stdout or ""
+    except Exception as exc:
+        logger.warning("grill_followup: scan failed: %s", exc)
+        return ""
+
+
+_FORCE_DEEPER = (
+    "EXPERIMENT MODE — the scanner judged this venture CONVERGED (claims "
+    "evidence-backed), but the loop keeps drilling to observe behavior. Pick the "
+    "single most important claim that is ASSUMED-but-not-independently-verified, "
+    "OR the next risk without a pre-committed falsification test, and grill VB on "
+    "it — push ONE layer deeper than the last iteration. Do NOT converge or "
+    "declare done; surface the next falsifiable assumption."
+)
+
+
+def decide_carryover(task_title: str, task_body) -> str:
+    """Decide the next-iteration carryover for a venture grill. Run the scanner
+    (judgment over CONTEXT.md); on NEXT return the question. EXPERIMENT MODE: on
+    CONVERGED (or unclear/no-gap) do NOT terminate — force a 'drill one layer
+    deeper' question so the loop keeps going for observation. Unbounded — stop
+    manually by completing/blocking the venture's grill cards."""
+    slug = _extract_slug(task_body)
+    if slug:
+        status, question = parse_scan_output(scan_for_next_question(slug))
+        if status == "next" and question:
+            return question
+        # 'converged' or 'unclear' -> do NOT terminate (experiment) -> fall through
+    ctx_path = find_context_md(task_title, task_body)
+    mech = extract_open_questions(ctx_path)
+    if mech:
+        return mech
+    return _FORCE_DEEPER
+
+
+def spawn_async_chain(task_title: str, task_body: str) -> None:
+    """Detach async_chain.py (scan CONTEXT.md -> decide -> create next [grill]
+    card). Non-blocking: fires after the worker exits, so the scanner's latency
+    under ZAI quota load can't stall kanban_complete or hit max-runtime (the
+    synchronous-in-hook failure that prevented iter-3+). Fail-safe."""
+    slug = _extract_slug(task_body)
+    if not slug:
+        return
+    env = dict(os.environ)
+    env["HERMES_ASYNC_TITLE"] = str(task_title or "")
+    env["HERMES_ASYNC_BODY"] = str(task_body or "")
+    env["HERMES_ASYNC_SLUG"] = slug
+    script = os.path.join(os.path.dirname(_PLUGIN_FILE), "async_chain.py")
+    try:
+        subprocess.Popen(
+            [sys.executable, script],
+            env=env,
+            start_new_session=True,  # detach — survives the worker exiting
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except Exception as exc:
+        logger.warning("grill_followup: spawn_async_chain failed: %s", exc)
 
 
 def build_next_spec(
@@ -177,7 +393,16 @@ def build_next_spec(
     slug = _extract_slug(task_body)
     body = str(task_body or "")
     if open_questions:
-        body = body.rstrip() + "\n\n" + open_questions + "\n"
+        prefix = (
+            "**ITERATION 2+ grill card.** A scanner found the question below still "
+            "OPEN after the prior iteration. You MUST `intercom action=ask "
+            "to=venture-builder` VB on it — the prior [grill] card being 'done' "
+            "does NOT mean this question is answered, so do NOT `kanban_show` "
+            "prior cards and close this as a duplicate re-fire. Grill the question, "
+            "record the answer + its evidence status in CONTEXT.md, then "
+            "kanban_complete.\n\n**NEXT QUESTION to grill VB on:**\n"
+        )
+        body = body.rstrip() + "\n\n" + prefix + open_questions + "\n"
     return {
         "title": title,
         "body": body,
@@ -218,6 +443,12 @@ def _on_post_tool_call(**kw) -> None:
         if "venture-grill" not in (task.skills or []):
             return
 
+        # Tool-level CONTEXT.md rescue (directive #3): canonicalize every
+        # write_file/patch of *CONTEXT.md to ~/.venture-builder/<slug>/ so it
+        # survives the scratch rmtree that destroys ~10% of grill outputs.
+        if function_name in _WRITE_TOOLS:
+            maybe_canonicalize_context_md(function_name, function_args, task.body)
+
         # Track: did this session grill VB?
         if is_grill_intercom(function_name, function_args):
             _session_grilled_vb = True
@@ -225,35 +456,12 @@ def _on_post_tool_call(**kw) -> None:
 
         # On kanban_complete: if the session grilled VB, carry the grill forward.
         if function_name == "kanban_complete" and _session_grilled_vb:
-            ctx_path = find_context_md(task.title, task.body)
-            open_qs = extract_open_questions(ctx_path)
-            spec = build_next_spec(
-                task_title=task.title,
-                task_body=task.body,
-                open_questions=open_qs,
-            )
-            conn = kb.connect()
-            try:
-                kb.create_task(
-                    conn,
-                    title=spec["title"],
-                    body=spec["body"],
-                    assignee=spec["assignee"],
-                    skills=spec["skills"],
-                    created_by="grill_followup-plugin",
-                    idempotency_key=spec["idempotency_key"],
-                )
-                logger.info(
-                    "grill_followup: spawned next grill card for %s (open questions injected: %s)",
-                    task_id,
-                    bool(open_qs),
-                )
-            finally:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
+            # async: detach the scan+decide+create so its latency under ZAI load
+            # can't stall kanban_complete or hit max-runtime before the next card
+            # is created (the synchronous-in-hook failure that blocked iter-3+).
+            spawn_async_chain(task.title, task.body)
             _session_grilled_vb = False
+            return
     except Exception as exc:
         # never break the worker over a follow-up card
         logger.warning("grill_followup: hook failed: %s", exc, exc_info=True)
