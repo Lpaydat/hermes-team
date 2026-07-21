@@ -124,6 +124,25 @@ A productive grill session reaches 8-15 questions per PO session and locks 10-14
 
 If PO is asking shallow questions or repeating resolved ground, the session may have lost context (check SESSION.key) or needs a fresh launch (outer loop).
 
+## Next migration: graph_* as state store (replaces CONTEXT.md)
+
+CONTEXT.md bloats — 14 decisions produced a 12KB file. The graph_* tools (already in PO's context_graph toolset) solve this structurally:
+
+| Grill concept | Graph tool |
+|---------------|------------|
+| Grill anchor (open=in progress) | `graph_add_node(type="root", title="grill-{slug}")` |
+| Lock a decision | `graph_add_node(type="decision", title="D5: Generation", content="deterministic templates", topics=["grill-{slug}"])` |
+| Open a question | `graph_add_node(type="fact", title="Q3: What voice?", content="", topics=["grill-{slug}"])` |
+| Resolve a question | `graph_resolve_node(node_id, content="Deadpan-absurdist")` |
+| Done check (empty=complete) | `graph_remaining()` — returns ALL open decision/fact nodes |
+| Export at end | `graph_pull(topic="grill-{slug}")` → write SUMMARY.md |
+| Focused context | `graph_context(node_id)` — node + 1-hop neighbors |
+| Link decisions | `graph_add_edge(source_id, target_id, "supersedes")` |
+
+Key advantage: `graph_remaining()` returns ONLY open items — no resolved clutter. A fresh PO session sees what's left without parsing a giant file. Done-check becomes mechanical (empty list = done) instead of PO's subjective DONE.flag.
+
+When migrating: PO prompt changes from "write CONTEXT.md" to "use graph_add_node / graph_resolve_node". Orchestrator checks `graph_remaining()` instead of DONE.flag. No new tools needed — raw graph_* covers it.
+
 ## Related skills
 
 - `self-grill` — the user-invoked launcher (shared, global, pinned). Defines the two-loop architecture.
