@@ -1,7 +1,7 @@
 ---
 name: grill-rpc-ops
 description: "Operational playbook for running grill RPC sessions (builder↔PO design interviews via file-based RPC). Covers timeout management, session-key capture, and recovery from PO behavioral glitches. Load when running or debugging a self-grill or peer-grill-rpc session."
-version: 2.0.0
+version: 1.0.0
 metadata:
   hermes:
     tags: [coordination, grill, rpc, debugging, operations]
@@ -10,136 +10,122 @@ metadata:
 
 # Grill RPC Ops — running grill sessions that don't fall over
 
-The grill skills (`self-grill`, `peer-grill-rpc`) define the architecture. This skill covers what actually happens when you run a full grill end-to-end: the timeouts you need, the session-key capture step, and the PO behavioral glitches you'll hit every session.
+The grill skills (`self-grill`, `peer-grill-rpc`) define the architecture. This skill covers what actually happens when you run a full grill end-to-end: the timeouts you need, the session-key capture step that's missing from the skills, and the PO behavioral glitches you'll hit every session.
 
-Load this BEFORE launching a grill.
-
-## What changed in v2 (graph-backed)
-
-v1 used CONTEXT.md for decision state — PO wrote decisions to a file that grew to 12KB+. v2 replaces CONTEXT.md with the graph DB:
-
-- **Decisions** are graph nodes (created by answer.sh extracting `<LOCK>` tags)
-- **State** is queried via `graph_state.py status` — returns one-liner: `[STATE: LOCKED(N): ... | OPEN(M): ...]`
-- **Done check** is `graph_state.py is-done` — mechanical, not subjective
-- **Export** is `graph_state.py export` — dumps all decisions for SUMMARY.md
-- PO never writes files. PO outputs tags. The wrapper handles state.
+Load this BEFORE launching a grill. The architecture skills tell you what to build; this tells you how to operate it without losing turns to preventable failures.
 
 ## Pre-flight checklist
 
-1. **State dir:** `/tmp/grill-<slug>/` with `answer.sh` + `graph_state.py` copied in and chmod +x
-2. **TOPIC file:** `echo "grill-<slug>" > $STATE_DIR/TOPIC`
-3. **Graph init:** `python3 graph_state.py init <topic> "<idea>"`
-4. **Timeout plan:** Every `answer.sh` call runs in background with timeout=300+
+Before launching PO, prepare:
 
-## The session-key capture step
+1. **State dir:** `/tmp/grill-<slug>/` with `answer.sh` copied in and chmod +x
+2. **Clear old state:** `rm -f SESSION.key DONE.flag SUMMARY.md CONTEXT.md` (no QUESTION.md — questions live in PO's output now)
+3. **Timeout plan:** Every `answer.sh` call will run in background mode with timeout=900. Foreground terminal maxes at 600s — not enough for some turns.
 
-**This is the #1 cause of silent grill degradation.** PO cannot reliably self-report its session key.
+## The session-key capture step (MISSING from the grill skills)
 
-After launching PO:
+**This is the #1 cause of silent grill degradation.** PO cannot reliably self-report its hermes session key. It writes `SESSION_ID: 1` (a made-up number) instead of the real key (`20260721_060823_6334fd`). Every `answer.sh` call then resumes a non-existent session, creating a fresh disconnected PO session with zero accumulated context.
+
+**Fix (do this immediately after launching PO):**
+
 ```bash
-hermes -p product-owner sessions list | grep "cli" | head -1 | awk '{print $NF}'
-# Save it:
-echo "<session-id>" > "$STATE_DIR/SESSION.key"
+# Launch PO (writes Q1, exits)
+HERMES_GRILL_STATE_DIR="$STATE_DIR" hermes -p product-owner \
+  --skills grill-with-docs \
+  -z "Grill prompt here..." --cli
+
+# Capture the real session key from the most recent CLI session
+hermes -p product-owner sessions list | head -2
+# Output: ...cli    20260721_060823_6334fd
+
+# Write it to SESSION.key
+echo "20260721_060823_6334fd" > "$STATE_DIR/SESSION.key"
 ```
+
+The patched `answer.sh` (in `shared-skills/self-grill/scripts/answer.sh`) reads SESSION.key before resuming PO.
 
 ## Per-turn operation pattern
 
-Each answer cycle:
+Each answer-to-PO cycle uses `<Q>` tag extraction — no more QUESTION.md file:
 
 ```
-1. Read extracted question (answer.sh stdout from previous turn)
-2. Compose answer
+1. PO wraps question in <Q>...</Q> tags. answer.sh extracts the inner text.
+2. Compose answer (reason as a real builder would)
 3. Launch answer.sh in background:
    terminal(background=true, command="answer.sh '...' 2>&1",
-            notify_on_complete=true, timeout=300)
-4. Poll: process(action="wait", timeout=60) — repeat until exited
-5. answer.sh stdout = next extracted question
-   - Empty stdout → check graph_state.py is-done
-   - answer.sh exit 1 → PO forgot <Q> tags, read stderr for raw output
+            notify_on_complete=true, timeout=900)
+4. Poll: process(action="wait", session_id=..., timeout=60)
+   - Repeat wait calls until status=exited
+5. answer.sh stdout = the extracted question (clean, no PO reasoning).
+   - Empty stdout + DONE.flag exists → session complete.
+   - answer.sh stderr warning → PO forgot <Q> tags, read raw output from stderr.
 ```
 
-answer.sh does three things per turn:
-1. Injects `[STATE: LOCKED(N): ... | OPEN(M): ...]` prefix before your answer
-2. Captures PO output, extracts `<Q>`, `<LOCK>`, `<DONE>` tags
-3. Writes LOCKs to graph DB automatically
-
-**Never use 120s timeout** — PO takes 60-200s per turn.
-
-## Checking grill state
-
-```bash
-# What's locked and open (one-liner)
-python3 graph_state.py status <topic>
-
-# Is the grill done?
-python3 graph_state.py is-done <topic> && echo "DONE" || echo "still open"
-
-# Full export for SUMMARY.md
-python3 graph_state.py export <topic> > SUMMARY.md
-```
+**Never use 120s timeout** — PO takes 60-200s per turn and 120s kills it mid-response.
 
 ## PO behavioral glitches and recovery
 
-### Missing `<Q>` tags (~40% of turns)
+### Missing `<Q>` tags (was inline-question glitch, ~40% of turns)
 
-PO forgets to wrap its question in `<Q>...</Q>`. answer.sh exits 1 with raw output on stderr.
+PO sometimes forgets to wrap its question in `<Q>...</Q>` tags. answer.sh prints a warning to stderr and exits 1. The raw output goes to stderr too.
 
-**Recovery:** Read question from stderr. Include in next answer: "Wrap your next question in `<Q>` tags."
-
-### Re-asking resolved decisions
-
-The `[STATE]` prefix shows what's locked. If PO still re-asks:
-
+**Recovery:** Read the question from stderr manually. Include in your next answer:
 ```
-"Already locked — see [STATE] above. D5 is resolved. Ask something new."
+"Wrap your next question in <Q> tags so I get the clean version."
 ```
 
-### Early surrender
+### Re-asking resolved decisions (~1-2 times per session)
 
-PO writes `<DONE>` after 1-2 questions. The grill is not actually done.
+PO re-opens a decision already locked in CONTEXT.md. In testing, D5 was asked twice and D2 was re-asked.
 
-**Recovery:** Don't run `graph_state.py done`. Instead check: are there open questions? Is decision coverage complete across categories? If not, launch a fresh PO session (outer loop) instead of accepting the surrender.
+**Recovery:** Do NOT re-answer from scratch. Push back firmly:
+```
+"Already answered — see D5. Stop re-asking resolved questions.
+Lock D5 and ask something genuinely open."
+```
+Reference the locked decision ID and demand PO move forward.
 
-### Missing `<LOCK>` tags
+### Early surrender (anti-surrender failure)
 
-PO makes a decision but doesn't wrap it in `<LOCK>` tags. The decision doesn't get written to the graph.
+PO declares the grill done after 1-2 questions, says "green light, ship it." This is the grill not working, not the design being resolved.
 
-**Recovery:** Manually lock it:
-```bash
-python3 graph_state.py lock <topic> "D5: Generation method" "deterministic templates"
+**Recovery:** Resume PO and say:
+```
+"No — you're surrendering. The grill says 50+ questions is normal
+and you stopped after one. Push through to the next real question."
 ```
 
 ## Provider performance notes
 
-PO uses `glm-5.2` via `zai` provider. Turn times vary wildly:
-- **Fast session**: launch ~20s, resume ~60-200s
-- **Slow session**: resume >12 min. Provider congestion.
+PO uses `glm-5.2` via `zai` provider (product-owner default). Turn times vary wildly:
+- **Fast session**: launch ~20s, resume ~60-200s. 8 questions in 45 min.
+- **Slow session**: resume >12 min without finishing. Provider congestion suspected.
 
-If a resume takes >10 min, kill and retry.
+If a resume takes >10 min, kill and retry — it's a provider issue, not a skill issue. Consider switching PO to a faster provider (deepseek) for speed.
 
 ## Answering with --file for long answers
 
+Multi-paragraph answers with template examples should use the `--file` flag to avoid shell escaping issues:
+
 ```bash
-answer.sh --file /dev/stdin << 'ANSWER'
-Multi-paragraph answer...
+/tmp/grill-<slug>/answer.sh --file /dev/stdin << 'ANSWER'
+Your multi-paragraph answer here...
+With quotes, $variables, and backticks safely.
 ANSWER
 ```
 
 ## Expected depth
 
-A productive grill reaches 8-15 questions per session, locking 10-14 decisions. Categories that should have at least one locked decision before declaring done:
+A productive grill session reaches 8-15 questions per PO session and locks 10-14 decisions. PO should:
+- Find contradictions in locked decisions (and force revisions)
+- Verify technical claims against live data
+- Push past the builder's first concession
+- Cover: product form, user, data pipeline, edge cases, deployment, sharing, rate limiting
 
-1. Product form — what is it
-2. User — who's it for
-3. Core mechanism — how does it work
-4. Data/inputs — what goes in
-5. Edge cases — what breaks
-6. Output/share — what comes out
-7. Deployment — where does it run
-8. Constraints — rate limits, cost, scale
+If PO is asking shallow questions or repeating resolved ground, the session may have lost context (check SESSION.key) or needs a fresh launch (outer loop).
 
 ## Related skills
 
-- `self-grill` — the launcher skill (shared, global, pinned)
-- `peer-grill-rpc` — architecture reference for builder↔PO RPC
-- `multi-agent-test-isolation` — clean-slate setup for testing
+- `self-grill` — the user-invoked launcher (shared, global, pinned). Defines the two-loop architecture.
+- `peer-grill-rpc` — the detailed architecture reference (builder profile, pinned). Covers the RPC design, anti-surrender rule, and launch recipes.
+- `multi-agent-test-isolation` — clean-slate setup for testing cross-agent interactions (pinned).
