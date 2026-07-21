@@ -47,18 +47,31 @@ ACTIVE_FILE=$(ls "$CONTEXT_DIR"/??-"${ACTIVE_BRANCH}".md 2>/dev/null | head -1)
 
 # --- 1. Extract LOCK decisions from builder's answer ---
 # Format: Lock D{n}: {title} = {content}
-LOCKS=$(echo "$ANSWER" | grep -oiE '^Lock D[0-9]+: .*$' || true)
+# Use grep -E with multiline-aware pattern (grep processes line-by-line)
+LOCKS=$(echo "$ANSWER" | grep -iE 'Lock D[0-9]+:' || true)
 if [[ -n "$LOCKS" ]]; then
-    # Remove "(none yet)" placeholder if present
-    sed -i 's/^(none yet)$//' "$ACTIVE_FILE" 2>/dev/null || true
+    # Write LOCKs under the Decisions section (before Questions section)
+    _tmp=$(mktemp)
+    _lock_written=0
     while IFS= read -r line; do
-        [[ -n "$line" ]] && echo "$line" >> "$ACTIVE_FILE"
-    done <<< "$LOCKS"
+        echo "$line" >> "$_tmp"
+        if echo "$line" | grep -q '^## Decisions'; then
+            echo "$LOCKS" >> "$_tmp"
+            _lock_written=1
+        fi
+    done < "$ACTIVE_FILE"
+    if [[ "$_lock_written" -eq 0 ]]; then
+        echo "" >> "$_tmp"
+        echo "## Decisions" >> "$_tmp"
+        echo "$LOCKS" >> "$_tmp"
+    fi
+    cp "$_tmp" "$ACTIVE_FILE"
+    rm -f "$_tmp"
 fi
 
 # --- 2. Build state prefix ---
 STATE_TABLE=$(sed -n '/^| #/,/^$/p' "$STATE_FILE")
-BRANCH_DECISIONS=$(grep '^D[0-9]' "$ACTIVE_FILE" 2>/dev/null || echo "(none yet)")
+BRANCH_DECISIONS=$(grep -iE '^Lock D[0-9]|^D[0-9]' "$ACTIVE_FILE" 2>/dev/null || echo "(none yet)")
 BRANCH_QUESTIONS=$(grep '^Q[0-9]' "$ACTIVE_FILE" 2>/dev/null || echo "(none yet)")
 
 PREFIX="[GRILL STATE
@@ -108,7 +121,7 @@ update_state() {
     [[ -f "$bfile" ]] || bfile=$(ls "$CONTEXT_DIR"/??-"${branch_name}".md 2>/dev/null | head -1)
     if [[ -f "$bfile" ]]; then
         local count
-        count=$(grep -c '^D[0-9]' "$bfile" 2>/dev/null || echo "0")
+        count=$(grep -ic '^Lock D[0-9]\|^D[0-9]' "$bfile" 2>/dev/null || echo "0")
         count=${count:-0}
         sed -i "s/| ${branch_num} | ${branch_name} | \([a-z]*\) | [0-9]* |/| ${branch_num} | ${branch_name} | \1 | ${count} |/" "$STATE_FILE" 2>/dev/null || true
     fi
