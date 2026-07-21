@@ -83,8 +83,9 @@ ${ANSWER}" --cli 2>&1) || true
 QUESTION=$(echo "$RAW_OUTPUT" | perl -0777 -ne 'if (/<Q>\s*(.*?)\s*<\/Q>/s) { print $1 }' || true)
 
 # Always log the exchange (even without <Q> tags, PO asked something)
-LOG_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-Q_NUM=$(grep -c "^Q[0-9]" "$ACTIVE_FILE" 2>/dev/null || echo "0")
+LOG_TIMESTAMP=$(LC_ALL=C date -u +%Y-%m-%dT%H:%M:%SZ)
+Q_NUM=$(grep -c "^Q[0-9]" "$ACTIVE_FILE" 2>/dev/null || true)
+Q_NUM=${Q_NUM:-0}
 Q_NUM=$((Q_NUM + 1))
 
 # Append Q&A to branch file
@@ -99,9 +100,7 @@ Q_NUM=$((Q_NUM + 1))
     fi
 } >> "$ACTIVE_FILE"
 
-# Update "Questions asked" count in _state.md
-TOTAL_Q=$(grep -c "^Q[0-9]" "$CONTEXT_DIR"/*.md 2>/dev/null || echo "0")
-sed -i "s/^## Questions asked.*/## Questions asked (all branches)\n${TOTAL_Q}/" "$STATE_FILE" 2>/dev/null || true
+# Note: _state.md total question count is informational only, updated by orchestrator
 
 # --- 4. Extract and print question ---
 if [[ -n "$QUESTION" ]]; then
