@@ -6,27 +6,45 @@ disable-model-invocation: true
 
 # Self-grill
 
-Launch PO to grill you on an idea. Each PO session brings fresh eyes on the accumulated design — it reads CONTEXT.md, skips resolved questions, and finds new angles. When a fresh PO session can't find anything worth asking, the design is done.
+Launch PO to grill you on an idea. PO asks questions, you answer, PO locks decisions via `<LOCK>` tags. The wrapper (`answer.sh`) extracts decisions and writes them to a graph DB — no CONTEXT.md file. PO sees current state via a `[STATE: ...]` prefix injected before each answer.
 
-The completion criterion is PO's, not yours: `test -f "$STATE_DIR/DONE.flag"`. When you feel done — tired, conceding, wanting to build — that is the grill working. Answer the feeling as a data point for PO to push through. The valuable questions come after the point where you wanted to stop.
+The grill is done when PO writes `<DONE>` or when you (the orchestrator) decide the design is complete.
 
 ## How it works
 
-PO outputs questions wrapped in `<Q>...</Q>` tags. `answer.sh` captures PO's full output, extracts ONLY the question, and prints it. PO's verbose reasoning stays in the wrapper — never enters your context. You see just the question, clean and minimal.
+```
+answer.sh flow (per turn):
+1. Read [STATE] from graph DB → prepend to answer
+2. Resume PO with "[STATE: LOCKED(N): ... | OPEN(M): ...]\n\n<your answer>"
+3. Capture PO output
+4. Extract <LOCK> tags → write decisions to graph DB
+5. Extract <Q> tag → print clean question to stdout
+6. If <DONE> tag → mark grill root resolved
+```
 
-Three files in the state dir:
-- **SESSION.key** — the real hermes session key (captured on launch, read by answer.sh)
-- **CONTEXT.md** — shared decision log, read by every fresh PO session (the bridge)
-- **DONE.flag** — written by PO when the design is resolved or dead
+PO never writes files. PO never calls graph tools. PO just outputs structured tags and the wrapper handles everything.
+
+Three files in state dir:
+- **SESSION.key** — real hermes session key (captured on launch)
+- **TOPIC** — graph topic tag for this grill (e.g. `grill-github-sentence`)
+- **answer.sh** + **graph_state.py** — the scripts (copied from shared-skills)
+
+No CONTEXT.md. No DONE.flag. The graph DB is the single source of truth.
 
 ## Setup
 
 ```bash
 STATE_DIR="/tmp/grill-<slug>"
+TOPIC="grill-<slug>"
 mkdir -p "$STATE_DIR"
-rm -f "$STATE_DIR/SESSION.key" "$STATE_DIR/DONE.flag" "$STATE_DIR/SUMMARY.md" "$STATE_DIR/CONTEXT.md"
+rm -f "$STATE_DIR/SESSION.key" "$STATE_DIR/TOPIC"
 cp "$HOME/.hermes-teams/shared-skills/self-grill/scripts/answer.sh" "$STATE_DIR/answer.sh"
+cp "$HOME/.hermes-teams/shared-skills/self-grill/scripts/graph_state.py" "$STATE_DIR/graph_state.py"
 chmod +x "$STATE_DIR/answer.sh"
+echo "$TOPIC" > "$STATE_DIR/TOPIC"
+
+# Initialize grill root in graph DB
+python3 "$STATE_DIR/graph_state.py" init "$TOPIC" "<your idea>"
 ```
 
 ## The grill — two nested loops
@@ -36,71 +54,98 @@ chmod +x "$STATE_DIR/answer.sh"
 Repeat until a session produces too few or low-value questions:
 
 1. Launch a fresh PO session (command below).
-2. Run the inner loop (Q&A) until that session writes `DONE.flag`.
-3. Assess: did this session add meaningful new questions and lock new decisions in CONTEXT.md?
+2. Run the inner loop (Q&A) until PO writes `<DONE>`.
+3. Assess: did this session add meaningful new questions and lock new decisions?
    - **Yes** → start another PO session. Fresh eyes on the accumulated design.
-   - **No — few questions, or the questions rehash resolved ground** → the design is done. Stop.
-
-Leave `CONTEXT.md` across sessions — it's the bridge. Each fresh PO session reads it, skips resolved questions, and probes what previous sessions missed.
+   - **No** → the design is done. Stop.
+4. To assess, check the graph state:
+   ```bash
+   python3 "$STATE_DIR/graph_state.py" status "$TOPIC"
+   python3 "$STATE_DIR/graph_state.py" is-done "$TOPIC" && echo "DONE" || echo "still open"
+   ```
 
 ### Launch a PO session
 
-IMPORTANT: You must capture the session key after launching. The session key appears in the output or you can get it from `hermes -p product-owner sessions list`.
-
 ```bash
-# Launch PO
-HERMES_GRILL_STATE_DIR="$STATE_DIR" hermes -p product-owner \
+HERMES_GRILL_STATE_DIR="$STATE_DIR" \
+HERMES_GRILL_TOPIC="$TOPIC" \
+hermes -p product-owner \
   --skills grill-with-docs \
   -z "Grill the builder on this idea via file-based RPC.
-      Read \$HERMES_GRILL_STATE_DIR/CONTEXT.md first if it exists.
-      Wrap EVERY question in <Q> tags like: <Q>Your question here</Q>
-      Update CONTEXT.md when decisions lock.
-      Write DONE.flag + SUMMARY.md when the design is resolved or dead.
+      You will see a [STATE: ...] prefix before each answer showing what's LOCKED and OPEN.
+      Do NOT re-ask anything in LOCKED.
+      Wrap EVERY question in <Q> tags: <Q>Your question here</Q>
+      Wrap EVERY locked decision in <LOCK> tags: <LOCK title=\"D1: Product form\">Disposable generator</LOCK>
+      Write <DONE> when the design is fully resolved (all categories covered, no open questions).
       Do NOT stop at the builder's first concession — push through it. 50+ questions is normal.
-      Before asking any question, check CONTEXT.md — do NOT re-ask anything already locked.
       Idea: <your idea>" \
   --cli
 
 # After PO exits, capture its session key
-hermes -p product-owner sessions list | head -2
-# Copy the ID (e.g. 20260721_060823_6334fd) and save it:
+hermes -p product-owner sessions list | grep "cli" | head -1 | awk '{print $NF}'
+# Save it:
 echo "<session-id>" > "$STATE_DIR/SESSION.key"
 ```
-
-Every session uses the same command — first or subsequent. The `-z` prompt always says "Read CONTEXT.md first if it exists." On the first run there's no CONTEXT.md; on later runs there is. PO handles both.
 
 ### Inner loop: Q&A within one session
 
 After PO outputs Q1 and exits, iterate:
 
-1. Send your answer: `"$STATE_DIR/answer.sh" "<your answer>"` — this blocks until PO finishes (60-200s typical).
-   - Use background mode with 300s+ timeout: `terminal(background=true, notify_on_complete=true, timeout=300)`
-   - Poll with `process(action='wait', timeout=60)` until it exits.
-2. **answer.sh output = the extracted question** (clean, no PO reasoning). If output is empty, check `$STATE_DIR/DONE.flag`.
-3. Think about the question. Reason, push back, concede honestly — answer as a real builder would.
-4. Go to step 1 with your next answer.
+1. Read the extracted question (from answer.sh stdout).
+2. Think about it. Reason, push back, concede honestly.
+3. Send your answer:
+   ```bash
+   HERMES_GRILL_STATE_DIR="$STATE_DIR" \
+   HERMES_GRILL_TOPIC="$TOPIC" \
+   "$STATE_DIR/answer.sh" "<your answer>"
+   ```
+   Use background mode with 300s+ timeout:
+   ```
+   terminal(background=true, notify_on_complete=true, timeout=300)
+   process(action='wait', timeout=60)  # repeat until exited
+   ```
+4. answer.sh stdout = the next extracted question. If empty → check `is-done`.
+5. Go to step 1.
 
-The inner loop only ends when this session's PO writes `DONE.flag` (answer.sh returns empty). Then assess whether to start another session (outer loop).
+## Tag format reference
+
+PO uses these tags (wrapper extracts them, PO never writes files):
+
+| Tag | Format | Extracted by | Purpose |
+|-----|--------|-------------|---------|
+| `<Q>` | `<Q>question text</Q>` | answer.sh → stdout | The next question (clean, no reasoning) |
+| `<LOCK>` | `<LOCK title="D1: Title">content</LOCK>` | answer.sh → graph DB | A locked decision |
+| `<DONE>` | `<DONE>` | answer.sh → graph root resolved | Grill complete signal |
+
+## When the grill is done
+
+```bash
+# Verify completion
+python3 "$STATE_DIR/graph_state.py" is-done "$TOPIC" && echo "COMPLETE"
+
+# Export to SUMMARY.md
+python3 "$STATE_DIR/graph_state.py" export "$TOPIC" > "$STATE_DIR/SUMMARY.md"
+
+# View all decisions
+python3 "$STATE_DIR/graph_state.py" status "$TOPIC"
+```
 
 ## Timeout guidance
 
-PO takes 60-200s per turn. Never use foreground terminal with 120s timeout — it kills the process mid-response.
+PO takes 60-200s per turn. Never use foreground terminal with 120s timeout.
 
-Correct pattern for each answer:
+Correct pattern:
 ```python
-# Launch in background with generous timeout
 terminal(background=true, notify_on_complete=true, timeout=300,
-         command=f'"{STATE_DIR}/answer.sh" "{answer}"')
-
-# Poll until done
+         command=f'HERMES_GRILL_STATE_DIR="{STATE_DIR}" HERMES_GRILL_TOPIC="{TOPIC}" "{STATE_DIR}/answer.sh" "{answer}"')
 process(action='wait', session_id=<id>, timeout=60)
-# Repeat wait if still running — PO needs time
+# Repeat wait if still running
 ```
 
 ## Known issues
 
-1. **PO sometimes forgets to check CONTEXT.md before asking** — it may re-ask a resolved question. When this happens, answer briefly: "Already locked — see D{N} in CONTEXT.md. Ask something new." Don't engage with the re-asked question.
+1. **PO sometimes ignores tags** — if answer.sh exits 1 with "no <Q> tags", read stderr for the raw output. Extract the question manually and continue.
 
-2. **answer.sh fallback** — if PO doesn't use `<Q>` tags, answer.sh prints a warning to stderr and exits 1. The raw output goes to stderr too. Read it manually, extract the question, and continue. Then nudge PO in your next answer to use the tags.
+2. **PO re-asks resolved decisions** — the [STATE] prefix shows what's locked. If PO still re-asks, answer briefly: "Already locked — see [STATE]. Ask something new."
 
-3. **Session key capture** — after launching PO, you MUST save the session key to SESSION.key. Without it, answer.sh can't resume and the grill fragments across disconnected sessions.
+3. **Session key capture** — after launching PO, you MUST save the session key to SESSION.key. Without it, answer.sh can't resume.
