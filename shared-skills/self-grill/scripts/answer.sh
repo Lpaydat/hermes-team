@@ -82,10 +82,22 @@ Questions already asked: ${BRANCH_QUESTIONS}
 Do NOT re-ask these questions.]"
 
 # --- 3. Send answer to PO ---
-RAW_OUTPUT=$(hermes -p product-owner --resume "$SESSION_ID" \
+# Wrap in timeout to prevent infinite hang if the model stalls or the API drops.
+# 600s (10m) default — generous for slower models like glm-5.2.
+# The || true catches the timeout's 124 exit code.
+GRILL_TIMEOUT="${HERMES_GRILL_TIMEOUT:-600}"
+RAW_OUTPUT=$(timeout "$GRILL_TIMEOUT" hermes -p product-owner --resume "$SESSION_ID" \
     -z "${PREFIX}
 
 ${ANSWER}" --cli 2>&1) || true
+
+# Detect timeout: if RAW_OUTPUT is empty after a hermes call, the most likely
+# cause is timeout killing the process (exit 124) or an API connection drop.
+if [[ -z "$RAW_OUTPUT" ]]; then
+    echo "ERROR: hermes --resume produced no output — likely timed out after ${GRILL_TIMEOUT}s or API dropped." >&2
+    echo "Fix: increase HERMES_GRILL_TIMEOUT env var, or check that the model/provider is responding." >&2
+    exit 1
+fi
 
 # --- 4. Extract question ---
 # Try <Q> tags first
