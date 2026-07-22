@@ -115,4 +115,4 @@ ln -s ~/.hermes-teams/shared-skills/<name> ~/.hermes-teams/startup/profiles/buil
 ## Reference Files
 
 See `references/` for dated findings from past sessions:
-- PO timeout patterns, vision provider findings, dynamic branch E2E tests, anti-rationalization gate, build-queue pipeline architecture, three-door model, config cache findings.
+- PO timeout patterns, vision provider findings, dynamic branch E2E tests, anti-rationalization gate, build-queue pipeline architecture, four-door model (Problem/Opportunity/Copycat/User), config cache findings, fact-verification patterns.

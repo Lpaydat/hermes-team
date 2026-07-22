@@ -46,6 +46,9 @@ PHASE 4: GRILL           — REQUIRED. PO attacks design, builder answers as FOU
 PHASE 5: RANK AND PICK   — sort by score, take top 10 unbuilt
 PHASE 6: QUEUE BUILDS    — kanban tasks chained SEQUENTIALLY via kanban_link
 PHASE 7: REVIEW QUEUE    — move completed builds to "Awaiting Review" in portfolio.md
+PHASE 8: FEEDBACK LOOP   — process user feedback on prototypes (load prototype-iteration skill):
+                           execution → just build | design → re-grill the change |
+                           new idea → Door D | promote → tech-lead | shelve → done
 ```
 
 **The interactive loop (when you build directly):**

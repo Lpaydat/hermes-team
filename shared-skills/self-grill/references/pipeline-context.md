@@ -17,9 +17,12 @@ PHASE 2: SCORE           — score /25 with evidence, origin modifiers (copycat 
 PHASE 3: BUILD DOSSIERS  — full venture analysis per idea using template
 PHASE 3.5: FACT-VERIFY   — independent subagent checks every claim
 PHASE 4: GRILL           — REQUIRED: self-grill, builder answers PO as founder
-PHASE 5: RANK AND PICK   — sort by score, take top 10 unbuilt
+PHASE 5: RANK AND PICK   — sort by score, take top 10 unbuilt (Door D always included, first in chain)
 PHASE 6: QUEUE BUILDS    — kanban tasks chained SEQUENTIALLY (one at a time)
 PHASE 7: REVIEW QUEUE    — move completed builds to "Awaiting Review"
+PHASE 8: FEEDBACK LOOP   — process user feedback (prototype-iteration skill):
+                           execution → just build | design → re-grill |
+                           new → Door D | promote → tech-lead | shelve → done
 ```
 
 ## Artifacts
