@@ -58,6 +58,19 @@ Many SaaS pricing pages (Taplio, SparkToro) render prices client-side, so the br
 JSON.stringify(Array.from(document.querySelectorAll('h2,h3,h4,span,div,p,b,strong')).map(el => el.textContent.trim()).filter(t => /\$\d/.test(t) && t.length < 80).filter((v,i,a) => a.indexOf(v) === i))
 ```
 
+### Vendor comparison / buyer-guide pages as a competitive-intel shortcut
+
+When researching a **nascent or emerging market** (one where 5+ tools exist but the space is <2 years old), a vendor in that space has often already compiled the competitive landscape for you. Search HN and the web for comparison/buyer-guide pages like "Best X Tools in 2026: N Tools Compared" — these are usually published by a vendor in the space (e.g., Trakkr.ai published "Best AI Visibility Tools in 2026: 12 Tools Compared" for the AI-visibility/GEO category).
+
+**How to use them:**
+1. Extract the full comparison table (tool names, starting prices, engine/feature coverage, free trial).
+2. **Independently verify** the top 3–5 competitors' pricing and claims by curling their live sites. Vendor comparisons are biased (they rank themselves first).
+3. Cite the comparison page for breadth (landscape size, number of competitors) and cite live-verified pages for specifics (exact pricing, feature claims). Note where you relied on the comparison vs. verified directly.
+
+**Why this works:** A vendor that built a comparison tool has already done the OSINT legwork (tracking 50k+ brands, 1M+ citations, etc.). Their data is more current and comprehensive than anything you'll reconstruct by hand in a single session. The bias is manageable because you're using them for *breadth*, not *recommendations*.
+
+**Also: VC essays as category-legitimization signals.** For emerging-market dossiers, a16z/Sequoia essays declaring a market "real" (e.g., a16z's "How GEO Rewrites the Rules of Search," May 2025, which declared the "$80B+ SEO market just cracked") are gold for the Why Now / Enabling Shift section. Search for `site:a16z.com <keyword>` or `site:sequoiacap.com <keyword>` and fetch via curl.
+
 ### Epoch for "last 2 years" filter
 
 `numericFilters=created_at_i%3E<epoch>`. For mid-2024 onward, use `1719792000` (2024-07-01). Compute others as needed.
@@ -70,6 +83,7 @@ JSON.stringify(Array.from(document.querySelectorAll('h2,h3,h4,span,div,p,b,stron
 - **URL-encode the operators in `numericFilters`.** `>` must be `%3E`, not the raw character, or Algolia ignores the filter.
 - **Verify URLs with spacing.** Rapid batch-curling HN URLs triggers 429 rate-limiting. The URLs are valid — add `sleep 2` between checks or verify a sample with delays.
 - **The "200 dead startups" signal** (or similar graveyard framing) is often concretely findable as a startup-graveyard product (e.g., loot-drop.io: "1,209 dead startups, $40B+ burned"). Search for these — they're stronger evidence than paraphrasing.
+- **Next.js/React SSR pricing pages contain JSON-RPC hydration data that creates false-positive price matches.** When you curl a Next.js pricing page (e.g., PilotCite, Sitefire) and regex for `\$\d`, the matches include dollar amounts buried in the `self.__next_f.push([1,...])` serialization blobs — these are framework-internal (className hashes, component IDs), not real prices. To get clean prices: strip `<script>` tags before extracting, or restrict your regex to text *outside* script blocks. The `clean=re.sub(r'<script[^>]*>.*?</script>',' ',html,flags=re.S|re.I)` pattern (strip scripts first, then strip tags) avoids this. Confirmed 2026-07-23 on pilotcite.com (genuine tiers: Core $20/mo, Growth $50/mo, Scale $100/mo, Signature $500/mo — but raw regex found 12+ false matches from hydration JSON).
 
 ## House style (from existing dossiers)
 
@@ -85,3 +99,4 @@ JSON.stringify(Array.from(document.querySelectorAll('h2,h3,h4,span,div,p,b,stron
 - [`references/verified-competitor-pricing.md`](references/verified-competitor-pricing.md) — live-verified pricing for SparkToro, Buffer, Hootsuite, Taplio, Hypefury, BuzzSumo (2026-07-23). Reusable for distribution/marketing/community-tool dossiers. Re-verify if citing months later.
 - [`references/verified-competitor-pricing-ai-interview.md`](references/verified-competitor-pricing-ai-interview.md) — live-verified pricing for CodeSignal, CoderPad, HackerRank, Karat, Final Round AI + company funding facts (2026-07-23). Reusable for any AI-interview / engineering-assessment / hiring-tool dossier.
 - [`references/hn-signal-library-distribution.md`](references/hn-signal-library-distribution.md) — verified HN thread IDs for founder-distribution pain (the "build/distribute inversion" cluster). Reusable across indie-builder/SaaS-founder idea dossiers.
+- [`references/verified-competitor-pricing-ai-visibility.md`](references/verified-competitor-pricing-ai-visibility.md) — live-verified pricing for 12+ AI-visibility/GEO/AEO tools (PilotCite, Sitefire, Lagotto Meter, Trakkr, Profound, Otterly, RankScale, Ahrefs Brand Radar, Semrush, etc.) + enabling-shift timeline + key pain signals (2026-07-23). Reusable for any AI-discovery, AI-visibility, GEO, AEO, or "SEO for AI" dossier.
