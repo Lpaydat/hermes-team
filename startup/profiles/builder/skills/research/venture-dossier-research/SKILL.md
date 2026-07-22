@@ -28,7 +28,7 @@ Every quote, URL, price, and stat in a dossier must trace to a **live-verified s
 
 4. **Write all sections.** The template has 13 sections (Origin through Source References). Fill every one. Pain points need evidence quotes; the scoring must cite the evidence; features map back to pain points.
 
-5. **Verify all URLs resolve.** Before completing, batch-curl every URL in the Source References table. Flag any that don't return 200.
+5. **Verify all URLs resolve — but check content, not just status codes.** Before completing, batch-curl every URL in the Source References table. **HTTP 200 ≠ accessible content.** Reddit specifically returns 200 with a tiny "Please wait for verification" challenge page (~8 KB), not a 403 — so a status-code-only check gives a false positive and you'll think a thread is live when it isn't. For Reddit URLs, additionally check the `<title>` (a real thread has the post title; a block page says "Please wait for verification") or the body size (a real thread is >50 KB; a block page is <10 KB). Confirmed 2026-07-23: `reddit.com/r/SaaS/comments/1v29zgb/` returned HTTP 200 but the body was a bot wall. HN, Wikipedia, and most competitor pricing pages return honest 200s. Flag any URL that fails the content check as "could not re-verify live this session."
 
 ## Research techniques
 
@@ -65,6 +65,7 @@ JSON.stringify(Array.from(document.querySelectorAll('h2,h3,h4,span,div,p,b,stron
 ## Pitfalls
 
 - **Reddit access is unreliable from curl/browser.** It returns 403/429 for JSON, RSS, and even headless browser. Do NOT spend more than 2 attempts. Pivot to HN Algolia (reliable) and note in the dossier that Reddit signals came from the spec but couldn't be re-verified live.
+- **Reddit can fail *silently*: HTTP 200 with a bot-wall body.** Reddit returns status 200 with an ~8 KB "Please wait for verification" challenge page, not a 403 — so a `curl -w "%{http_code}"` check reports success on a blocked URL. Always also check the page `<title>` or body size for Reddit URLs (see workflow step 5). When the live thread is unreachable, fall back to the pipeline's own `signals/daily-scan.md` / `killgate-*.md` scan captures, which hold the verbatim quote + source ID from the original run — cite with the capture date and flag "could not re-fetch live this session" (this is how the AI-Interview-SaaS dossier, 2026-07-23, sourced its r/SaaS `1v29zgb` quote).
 - **Don't put `hitsPerPage` inside `numericFilters`.** It's a separate top-level query param. Mixing them silently returns zero results.
 - **URL-encode the operators in `numericFilters`.** `>` must be `%3E`, not the raw character, or Algolia ignores the filter.
 - **Verify URLs with spacing.** Rapid batch-curling HN URLs triggers 429 rate-limiting. The URLs are valid — add `sleep 2` between checks or verify a sample with delays.
@@ -81,5 +82,6 @@ JSON.stringify(Array.from(document.querySelectorAll('h2,h3,h4,span,div,p,b,stron
 
 ## Reusable reference data
 
-- [`references/verified-competitor-pricing.md`](references/verified-competitor-pricing.md) — live-verified pricing for SparkToro, Buffer, Hootsuite, Taplio, Hypefury, BuzzSumo (2026-07-23). Re-verify if citing months later.
+- [`references/verified-competitor-pricing.md`](references/verified-competitor-pricing.md) — live-verified pricing for SparkToro, Buffer, Hootsuite, Taplio, Hypefury, BuzzSumo (2026-07-23). Reusable for distribution/marketing/community-tool dossiers. Re-verify if citing months later.
+- [`references/verified-competitor-pricing-ai-interview.md`](references/verified-competitor-pricing-ai-interview.md) — live-verified pricing for CodeSignal, CoderPad, HackerRank, Karat, Final Round AI + company funding facts (2026-07-23). Reusable for any AI-interview / engineering-assessment / hiring-tool dossier.
 - [`references/hn-signal-library-distribution.md`](references/hn-signal-library-distribution.md) — verified HN thread IDs for founder-distribution pain (the "build/distribute inversion" cluster). Reusable across indie-builder/SaaS-founder idea dossiers.

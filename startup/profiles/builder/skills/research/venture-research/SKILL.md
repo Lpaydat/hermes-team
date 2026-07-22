@@ -101,6 +101,46 @@ for m in re.finditer(r'\$\d[,\d]*\s*/?\s*(?:mo|month|year|user|seat|yr)?', text,
     print(text[max(0,m.start()-60):m.end()+80])
 ```
 
+### ✅ arXiv API (PRIMARY for research-paper / enabling-shift signals)
+
+When an idea originates from or references an academic paper, technical report,
+or "enabling shift" (new capability published in research), the arXiv API is
+how you find and verify it. Works reliably from a headless environment, no auth,
+returns Atom XML. This was essential for the Dockerless CI Verification
+dossier, whose signal sources were explicitly "ByteDance Dockerless paper +
+Mehta study" — both found and verified via arXiv.
+
+**Search by title keyword** (most precise):
+```
+curl -sL "http://export.arxiv.org/api/query?search_query=ti:dockerless&max_results=5" -o results.xml
+```
+
+**Search by all fields** (broader — catches abstract/body matches):
+```
+curl -sL "http://export.arxiv.org/api/query?search_query=all:dockerless+CI+build&max_results=5" -o results.xml
+```
+
+**Fetch by known arXiv ID** (when you have the ID, e.g. from idea-bank notes):
+```
+curl -sL "http://export.arxiv.org/api/query?id_list=2606.28436" -o paper.xml
+```
+
+**Query operators:** `ti:` (title), `au:` (author), `abs:` (abstract), `all:`
+(any field), `AND` / `OR` / `ANDNOT` (uppercase, join field queries). Multiple
+terms within a field are OR'd; separate fields with `+AND+` / `+OR+`.
+
+Response is Atom XML: each `<entry>` has `<title>`, `<id>` (the arXiv URL),
+`<summary>` (abstract — gold for §6 Core Idea / §2 Evidence), `<published>`,
+and `<author><name>` blocks. Parse with the same regex approach as Reddit XML.
+
+**Gotcha:** `id_list` fetch returns the exact paper; `search_query` may return
+unexpected results if the query is too broad (e.g., `au:Mehta+AND+all:build`
+returned building-construction papers, not CI). Start with title search
+(`ti:KEYWORD`), then broaden to `all:` only if title search misses.
+
+See [`references/arxiv-api.md`](references/arxiv-api.md) for the full query
+reference, parsing patterns, and the Dockerless/Atlassian paper examples.
+
 ### ✅ Wikipedia (via curl)
 
 Wikipedia article HTML is reliably accessible. Useful for company revenue,
@@ -120,6 +160,25 @@ assuming it's blocked, rather than citing this list as a permanent refusal.
 When a source genuinely won't load, fall back to the alternatives above and
 flag any un-re-verifiable claim in the dossier rather than inventing a
 substitute.
+
+**Reddit can also fail *silently*: a 200 status with a bot-wall body.**
+Confirmed 2026-07-23: `reddit.com/r/SaaS/comments/1v29zgb/` returned HTTP 200
+but the body was an 8 KB "Please wait for verification" challenge page, not
+the thread. A naive `curl -w "%{http_code}"` reports 200 and you'll think the
+thread is live when it isn't. When verifying Reddit URLs, also check the page
+`<title>` (a block page says "Please wait for verification"; a real thread has
+the post title) or body size (block page <10 KB; real thread >50 KB). The same
+advisory applies to RSS/JSON endpoints, which return 0 bytes rather than an
+error code when blocked.
+
+**Fallback when Reddit live access fails: use the pipeline's own signal
+captures.** The scan outputs in `signals/daily-scan.md` and
+`signals/killgate-*.md` already contain the verbatim quote + source ID +
+engagement from the original capture run. These are a legitimate primary
+source for the dossier — cite them with the original capture date and flag
+"could not re-fetch live thread this session." This is exactly how the
+AI-Interview-SaaS dossier (2026-07-23) sourced its `$10k MRR` r/SaaS `1v29zgb`
+quote when both RSS and HTML were blocked.
 
 ### ⚠️ Browser tool — limited utility for research
 
@@ -171,6 +230,7 @@ The user's explicit standard:
    - **Reddit RSS**: pull the target subreddits' top/year + keyword search → extract verbatim pain/complaint quotes (PRIMARY for SMB/consumer ideas). See `references/reddit-rss.md`.
    - **HN Algolia**: search the topic keyword → top stories; fetch full threads for the most relevant → extract quotes; search each competitor name → their HN presence; fetch Launch HN / Show HN threads for direct competitor evidence. See `references/hn-algolia-api.md`.
    - **Competitor pricing**: curl their pricing pages directly, extract $ amounts. If a vendor site blocks scrapers, fall back to a competitor's comparison page (which often lists the rival's price).
+   - **arXiv API**: if the idea references a paper, study, or enabling shift (common for tech/devtools/infra ideas), search arXiv by title keyword and/or author. The `<summary>` field gives you citable abstracts for §2 Evidence and §6 Core Idea. See `references/arxiv-api.md`.
    - **Market data**: Wikipedia infoboxes for revenue/users/employees.
 5. **Competitor pricing**: curl their pricing pages directly, extract $ amounts
 6. **Determine Door A (Problem) vs Door B (Opportunity)**:
@@ -195,5 +255,7 @@ Origin modifiers:
 ## References
 
 - `references/reddit-rss.md` — Reddit `.rss` endpoints, Atom parsing script, the thread-ID gotcha, verification recipe
+- `references/arxiv-api.md` — arXiv API query reference, field operators, parsing patterns, and real paper examples (Dockerless + Atlassian CI study)
 - `references/hn-algolia-api.md` — API endpoint reference and parsing patterns
 - `references/osint-competitor-pricing.md` — Real OSINT competitor pricing data captured 2026-07-23
+- `references/whatsapp-bsp-competitor-pricing.md` — WhatsApp BSP/shared-inbox competitor pricing + WA Business API economics, captured 2026-07-23. Reusable for any WA-messaging, shared-inbox, or DTC-support dossier.

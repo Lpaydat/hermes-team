@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 Launch PO to grill you on an idea. Branches are created dynamically as the grill reveals what design categories matter for THIS specific idea — no hardcoded list. PO identifies what needs interrogation, you add branches, the grill progresses.
 
-> **Pipeline context** — the grill is Phase 4 of a 7-phase build-queue pipeline. See [`references/pipeline-context.md`](references/pipeline-context.md) for the full pipeline architecture, artifact paths, and cron job details.
+> **Pipeline context** — the grill is Phase 4 of an 8-phase build-queue pipeline. See [`references/pipeline-context.md`](references/pipeline-context.md) for the full pipeline architecture, artifact paths, and cron job details.
 >
 > **Web evidence** — for gathering real quotes/URLs/competitor data for dossiers, see [`references/web-evidence-gathering.md`](references/web-evidence-gathering.md).
 >
@@ -72,6 +72,8 @@ All grill RPC operations — setup, PO launch, answer pattern, branch management
 ## Dossier delegation pattern
 
 When building dossiers at scale, delegate research to subagents via `delegate_task` with `role='leaf'`. If a subagent hits the tool-call limit before writing the file, the content is preserved in the delegation summary at `~/.hermes-teams/startup/profiles/builder/cache/delegation/subagent-summary-*.txt` — extract and write locally.
+
+**Budget awareness:** check `delegation.max_iterations` in `~/.hermes-teams/startup/config.yaml` before dispatching. A rich 13-section dossier with web research needs 80-150 tool calls (search + fetch + write). If the budget is low (e.g., 50), the subagent will exhaust it before writing the file. The content survives in the summary — extract and write locally as fallback.
 
 ## Known issues
 
