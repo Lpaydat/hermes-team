@@ -3,7 +3,7 @@
     {
       "id": "9493ebf6c4e2",
       "name": "Daily Demand Signal Scan",
-      "prompt": "You are the builder running a daily demand signal scan. This is Stage 1 of your demand-signal pipeline.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:ALREADY_SCANNED, exit immediately. Return \"Already scanned for [DATE].\" and stop.\n- If STATUS:NEEDS_SCANNING, run the full scan workflow below.\n\n== SCAN WORKFLOW ==\n\nQuickly scan key communities for fresh complaints, unmet needs, and willingness-to-pay signals. This is a LIGHT pass - 10-15 minutes of targeted searching, not an exhaustive deep dive. Append findings to the signal buffer.\n\nScan these sources via web_search and browser tools:\n- Reddit: r/SideProject, r/Entrepreneur, r/SaaS, r/smallbusiness, r/startups, r/IndieBusiness\n- Hacker News: front page + \"Ask HN\" posts from the last 24h\n- Product Hunt: recent launches and their comment sections\n\nFor each signal found, capture: source URL, quote (exact words), platform, topic/category, pain type.\n\nAppend all findings to ~/vault/ventures/signals/daily-scan.md. Do NOT score or filter - just capture raw signals.\n\nQuality over quantity. Aim for 5-15 new signals per day. If zero actionable signals, append \"No significant signals today.\" and finish.\n\n== COMPLETION ==\n\nAfter appending findings, update the guard marker by writing today's date to ~/vault/ventures/.last-scan\n\nDo not deliver any output. This runs silent.",
+      "prompt": "You are the builder running a daily discovery scan. This is Stage 1 of your pipeline.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:ALREADY_SCANNED, exit immediately. Return \"Already scanned for [DATE].\" and stop.\n- If STATUS:NEEDS_SCANNING, run the full scan workflow below.\n\n== THREE-DOOR DISCOVERY SCAN ==\n\nIdeas enter through three doors. Scan all three each cycle:\n\nDOOR A \u2014 PROBLEM SCAN (pain-driven)\nFind complaints, frustration, and unmet needs. People suffering from something.\nScan:\n- Reddit: r/SideProject, r/Entrepreneur, r/SaaS, r/smallbusiness, r/startups, r/IndieBusiness\n- Hacker News: \"Ask HN\" posts + comment threads about pain\nFor each: capture exact quote, URL, date, engagement (upvotes/comments), pain type, who's hurting.\n\nDOOR B \u2014 OPPORTUNITY SCAN (shift-driven)\nFind enabling shifts \u2014 new APIs, tech crossings, regulatory changes, market moves that just made something newly possible. Nobody is complaining yet because the solution didn't exist yesterday.\nScan:\n- Hacker News: front page (new launches, API releases, tech announcements)\n- Product Hunt: latest launches (what just became possible?)\n- GitHub trending: new tools/frameworks that enable new products\n- Tech news: The Verge, Ars Technica AI sections (regulatory shifts, market moves)\nFor each: capture what changed, why it enables new products, URL, date.\n\nDOOR C \u2014 COPYCAT SCAN (success-driven)\nFind products that are already making money but are broken, sloppy, or missing something. Success is proof of market \u2014 we copy the core mechanic and fix what's wrong.\nScan:\n- Product Hunt: top launches (traction + comment sections with complaints)\n- Indie Hackers / X: revenue milestones, MRR reports\n- App store rankings: trending paid/SaaS apps\n- Funding announcements: recently funded startups in spaces we could enter\nFor each: capture product name, URL, what they do, revenue/traction evidence, what's broken, what users complain about.\n\n== OUTPUT FORMAT ==\n\nFor each signal found, write a structured entry to ~/vault/ventures/signals/daily-scan.md:\n\n```\n---\n### [DOOR: A/B/C] \u2014 [date]\n- **Signal:** [short label]\n- **Door:** Problem / Opportunity / Copycat\n- **Quote/Snapshot:** \"exact words or description\"  \n- **Source:** [URL]\n- **Platform:** [Reddit / HN / PH / X / etc.]\n- **Date:** YYYY-MM-DD\n- **Engagement:** [upvotes, comments, MRR, users \u2014 whatever's relevant]\n- **Who:** [who is this person/user? what role?]\n- **Pain type:** [efficiency loss / revenue loss / frustration / manual work / cost / etc.]\n- **Copycat target:** [if Door C: product name + URL + revenue/traction]\n- **What's broken:** [if Door C: what users complain about]\n---\n```\n\nAppend all findings. Do NOT score or filter \u2014 just capture raw signals.\n\nQuality over quantity. Aim for 5-15 new signals per day across all three doors. If zero actionable signals, append \"No significant signals today.\" and finish.\n\n== COMPLETION ==\n\nAfter appending findings, update the guard marker by writing today's date to ~/vault/ventures/.last-scan\n\nDo not deliver any output. This runs silent.",
       "skills": [],
       "skill": null,
       "model": null,
@@ -22,17 +22,17 @@
       "schedule_display": "30 */3 * * *",
       "repeat": {
         "times": null,
-        "completed": 144
+        "completed": 149
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T13:08:22.790689+07:00",
-      "next_run_at": "2026-07-22T15:30:00+07:00",
-      "last_run_at": "2026-07-22T15:01:17.211197+07:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: Skipped to prevent unintended spend: global inference config drifted since this job was created (provider 'zai' -> 'deepseek'; model 'glm-5.2' -> 'deepseek-v4-pro'), and this job is unpinned. No inference call was made. To run on the new config, pin it explicitly: `cronjob action=update job_id=9493ebf6c4e2 provider=<provider> model=<model>` (or pin the original values to keep them). See #44585.",
+      "next_run_at": "2026-07-23T06:30:00+07:00",
+      "last_run_at": "2026-07-23T03:30:34.369718+07:00",
+      "last_status": "ok",
+      "last_error": null,
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
@@ -89,7 +89,7 @@
     {
       "id": "7872dbc93ab1",
       "name": "Pipeline + Build Cycle",
-      "prompt": "You are the builder running the pipeline + build cycle.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:RECENT, CHECK URGENT conditions first. If none, skip.\n- If STATUS:DUE, run the full pipeline cycle below.\n\n== URGENT CONDITIONS (override the cooldown) ==\n\nEven if the pipeline ran recently, you MUST run if either is true:\n1. Any completed build tasks on the kanban board (product-owner/tech-lead finished work that needs review)\n2. Any gate feedback comments on your tasks (the human responded to a product review)\n\nIf no urgent conditions and STATUS:RECENT, exit with \"Pipeline ran [N]d ago, no urgent work. Skipping.\" and stop.\n\n== FULL PIPELINE CYCLE (when DUE) ==\n\nPHASE 1: INGEST SIGNALS - Read ~/vault/ventures/signals/daily-scan.md and requesthunt dumps.\nPHASE 2: FILTER AND RANK - Score signals, cut weak ones, record kills in ~/vault/ventures/killed-ideas.md.\nPHASE 3: DEEP DIVE SURVIVORS - Lean canvas, assumption map, experiment design for survivors.\nPHASE 4: BUILD - Design specs, create kanban tasks for product-owner/tech-lead. Check existing builds.\nPHASE 5: GATE NOTIFICATION - Only deliver output when a product is ready for review or you need human input.\n\n== COMPLETION ==\n\nAfter running the full cycle, update the guard marker by writing current timestamp to ~/vault/ventures/.last-pipeline\n\n== RULES ==\n- Build first, then show the product. Never deliver a pre-build digest.\n- Never show raw ideas or unfinished work. Only built products or blockers.\n- Never spin silently - surface blockers.\n- Keep ~/vault/ventures/portfolio.md updated.",
+      "prompt": "You are the builder running the pipeline + build cycle.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:RECENT, CHECK URGENT conditions first. If none, skip.\n- If STATUS:DUE, run the full pipeline cycle below.\n\n== URGENT CONDITIONS (override the cooldown) ==\n\nEven if the pipeline ran recently, you MUST run if either is true:\n1. Any completed build tasks on the kanban board (product-owner/tech-lead finished work that needs review)\n2. Any gate feedback comments on your tasks (the human responded to a product review)\n\nIf no urgent conditions and STATUS:RECENT, exit with \"Pipeline ran [N]d ago, no urgent work. Skipping.\" and stop.\n\n== FULL PIPELINE CYCLE (when DUE) ==\n\nThis pipeline is a BUILD QUEUE. Nothing is killed. Ideas enter through 3 doors, get scored, become full dossiers, get fact-verified by an independent verifier, get grilled, and flow into a sequential build queue. The human decides promotion.\n\nPHASE 1: INGEST SIGNALS \u2014 Read ~/vault/ventures/signals/daily-scan.md. New signals arrive tagged with door (A=Problem, B=Opportunity, C=Copycat).\n\nPHASE 2: SCORE NEW SIGNALS \u2014 Score /25 with evidence-based rubric. Origin modifiers: Copycat +1 (market proven). Opportunity weights WhyNow higher.\n\nPHASE 3: BUILD DOSSIERS \u2014 For each scored idea, create a FULL dossier using ~/vault/ventures/templates/idea-dossier-template.md. Write to ~/vault/ventures/ideas/<slug>.md. All 13 sections required. Use signal data AND web research. NOT one-liners.\n\nPHASE 3.5: FACT-VERIFY (REQUIRED \u2014 independent of dossier writer) \u2014 For each new dossier, dispatch a fact-verification subagent using delegate_task:\n  - The verifier MUST be independent \u2014 it did NOT write the dossier and has no investment in it being right.\n  - Verifier's job: every factual claim is false until proven true. Check every URL, every competitor stat, every market figure, every quote.\n  - Verifier writes report to ~/vault/ventures/ideas/<slug>-verification.md using ~/vault/ventures/templates/fact-verification-template.md.\n  - Verdict: PASS (>=90% verified), CONDITIONAL (70-89%), FAIL (<70% or critical claim disproven).\n  - If FAIL: fix the disputed claims in the dossier before proceeding to grill. If a critical claim is fabricated, kill the dossier (not the idea \u2014 it can be re-researched).\n  - If CONDITIONAL: fix disputed claims, note unverifiable ones, then proceed.\n  - If PASS: proceed to grill.\n  Use this delegate_task prompt for the verifier:\n    \"Fact-verify the dossier at [path]. You did NOT write this dossier. Every claim is false until you verify it independently. Check: (1) every source URL \u2014 does it load and say what's claimed? (2) every competitor stat \u2014 revenue, pricing, employees. (3) every market statistic. (4) every quote \u2014 is it real and accurate? Output VERIFIED/DISPUTED/UNVERIFIABLE for each claim with evidence. Write report to [path]-verification.md with PASS/CONDITIONAL/FAIL verdict. Do NOT fabricate verification.\"\n\nPHASE 4: GRILL (REQUIRED \u2014 NOT OPTIONAL) \u2014 For each VERIFIED dossier in the top 10, run self-grill:\n  1. Read the dossier + verification report. You are the FOUNDER \u2014 conviction, evidence, not a neutral observer.\n  2. Load self-grill skill, launch PO with the venture brief from the dossier.\n  3. ANSWER AS FOUNDER: cite verified evidence, defend with conviction, concede honestly when wrong.\n  4. Lock decisions, export grill summary to dossier.\n\nPHASE 5: RANK AND PICK \u2014 Rank grilled dossiers by score. Take top 10 unbuilt. Update idea-bank.md.\n\nPHASE 6: QUEUE BUILDS (SEQUENTIAL) \u2014 Create kanban tasks for tech-lead, chained via kanban_link. One at a time. Max 10 per cycle.\n\nPHASE 7: REVIEW QUEUE \u2014 Move completed builds to \"Awaiting Review\" in portfolio.md and idea-bank.md.\n\n== COMPLETION ==\n\nUpdate guard marker: write epoch timestamp to ~/vault/ventures/.last-pipeline\n\n== RULES ==\n- NEVER kill ideas. Score and rank only.\n- NEVER skip fact-verification. Every dossier is verified by an independent subagent before grilling.\n- NEVER skip the grill. Every build goes through self-grill first. Answer PO as the founder.\n- NEVER create parallel build tasks. Chain sequentially via kanban_link.\n- NEVER write a one-line idea entry. Every scored idea gets a full dossier.\n- Never spin silently \u2014 surface blockers immediately.\n- Max 10 new builds queued per cycle.",
       "skills": [],
       "skill": null,
       "model": null,
@@ -108,17 +108,17 @@
       "schedule_display": "0 2,8,14,20 * * *",
       "repeat": {
         "times": null,
-        "completed": 74
+        "completed": 76
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T13:08:28.935656+07:00",
-      "next_run_at": "2026-07-22T20:00:00+07:00",
-      "last_run_at": "2026-07-22T15:01:17.237867+07:00",
-      "last_status": "error",
-      "last_error": "RuntimeError: Skipped to prevent unintended spend: global inference config drifted since this job was created (provider 'zai' -> 'deepseek'; model 'glm-5.2' -> 'deepseek-v4-pro'), and this job is unpinned. No inference call was made. To run on the new config, pin it explicitly: `cronjob action=update job_id=7872dbc93ab1 provider=<provider> model=<model>` (or pin the original values to keep them). See #44585.",
+      "next_run_at": "2026-07-23T08:00:00+07:00",
+      "last_run_at": "2026-07-23T02:00:22.857101+07:00",
+      "last_status": "ok",
+      "last_error": null,
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
@@ -133,5 +133,5 @@
       "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-22T15:01:17.238169+07:00"
+  "updated_at": "2026-07-23T03:30:34.370143+07:00"
 }
