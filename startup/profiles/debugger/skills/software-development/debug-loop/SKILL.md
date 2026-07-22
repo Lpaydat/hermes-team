@@ -331,7 +331,7 @@ broken. The mapping:
   each before setting `dod_met`.
 - **No-repro path**: when the verifier escalates, `loop_engine` sticky-blocks
   your card (`needs_input`) — that IS the §6.1 HITL blocked card. Do not fire
-  intercom. Comment the bead `human`, mint `bead-human-<bug-id>`, leave blocked.
+  kanban. Comment the bead `human`, mint `bead-human-<bug-id>`, leave blocked.
 
 #### Phase 1 — Hypothesise + fix + falsify  (`max_iterations`: 5, the main loop)
 This is the converge loop. Each iteration = one ranked hypothesis.
@@ -441,9 +441,9 @@ When exit B fires:
 
 ## The three refinements (mechanics)
 
-### HITL = a blocked card, not intercom (§6.1)
+### HITL = a blocked card, not a blocking call (§6.1)
 When the repro cannot be built (no env access, no logs, no artifacts), you do
-**not** fire an `intercom` ask. `loop_engine`'s escalation path
+**not** create a blocked card ask. `loop_engine`'s escalation path
 sticky-blocks your card (`kind=needs_input`) — that IS the durable HITL card.
 Augment it: tag the bead `human`, write an `ESCALATE:`-style comment naming
 *exactly* what is needed (env / logs / access / repro steps), mint the
@@ -512,7 +512,7 @@ the human owes. Unblock → resume.
 ## Hard rules (recap — never violate)
 - **NEVER write product code** — fixes ship via dispatched `developer` cards.
 - **NEVER self-grade a fix** — falsification is an independent `verifier` card.
-- **NEVER fire intercom for a missing repro** — HITL is a sticky blocked card.
+- **NEVER block the card for a missing repro** — HITL is a sticky blocked card.
 - **NEVER merge the bug branch to main** — it lands on `debug/<bug-id>-<slug>`.
 - **ALWAYS write the post-mortem at converge** (all four inputs).
 - **ALWAYS take exit B** when the root cause has no correct seam / spans a boundary.

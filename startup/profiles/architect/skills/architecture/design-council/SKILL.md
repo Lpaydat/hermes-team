@@ -29,7 +29,7 @@ checks (concrete items, pass/fail). *defect-coverage artifact* —
 FAILURE chain per behavior); the engine validates it before trusting `dod_met`.
 *best-so-far* — the highest-scoring design version, persisted by the driver to
 `council:best_so_far`; the revert target when a round regresses. *interview* —
-a distinct post-convergence phase: a live intercom `ask` with the PO before the
+a distinct post-convergence phase: a live kanban comment with the PO before the
 ADR. *blackboard* — the shared root card `loop_engine` creates; the driver
 persists `council:last_iteration` + `council:best_so_far` + `council:po_interview`
 there. *workflow_complete* — the engine's terminal signal (last phase DoD met).
@@ -78,7 +78,7 @@ before it advances.
    version; the verifier evaluates the DoD artifact; the driver persists
    `council:last_iteration` + `council:best_so_far`); **(1) PO-HITL interview**
    — a distinct T1 phase reached only after phase 0 `dod_met`-advance; the
-   worker calls intercom `ask`, self-blocks `needs_input` on timeout, and is
+   worker calls kanban comment, self-blocks `needs_input` on timeout, and is
    re-entrant; **(2) ADR-record** — a T2 phase whose verifier checks ADR
    convention only. Low = 2 T1 phases (converge + ADR, no interview, no
    verifier).
@@ -182,6 +182,6 @@ Inline essentials:
   (`recommendation` must not be `advance` unless `dod_met` is true). The
   standing `dod-verdict` skill on the verifier profile backs this up.
 - **Interview body** is re-entrant: on resume, if `council:po_interview` is
-  already on the root blackboard, complete immediately; else intercom `ask`,
+  already on the root blackboard, complete immediately; else kanban comment,
   and on timeout / `[target_not_connected]` `kanban_block(kind="needs_input")`
   on yourself — never proceed without PO input.

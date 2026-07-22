@@ -27,15 +27,15 @@
       "schedule_display": "0 */4 * * *",
       "repeat": {
         "times": 999999,
-        "completed": 84
+        "completed": 113
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T09:00:32.413473+07:00",
-      "next_run_at": "2026-07-17T16:00:00+07:00",
-      "last_run_at": "2026-07-17T12:00:30.930773+07:00",
+      "next_run_at": "2026-07-22T16:00:00+07:00",
+      "last_run_at": "2026-07-22T12:00:40.404448+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -74,17 +74,17 @@
       "schedule_display": "every 5m",
       "repeat": {
         "times": null,
-        "completed": 1354
+        "completed": 2425
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-10T21:27:42.873278+00:00",
-      "next_run_at": "2026-07-17T12:20:45.577578+07:00",
-      "last_run_at": "2026-07-17T12:15:45.577578+07:00",
-      "last_status": "ok",
-      "last_error": null,
+      "next_run_at": "2026-07-22T14:39:41.747663+07:00",
+      "last_run_at": "2026-07-22T14:23:47.014857+07:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: HTTP 429: The service may be temporarily overloaded, please try again later",
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
@@ -114,17 +114,17 @@
       "schedule_display": "every 60m",
       "repeat": {
         "times": null,
-        "completed": 138
+        "completed": 247
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-11T04:31:49.973424+07:00",
-      "next_run_at": "2026-07-17T12:56:40.451121+07:00",
-      "last_run_at": "2026-07-17T11:56:40.451121+07:00",
-      "last_status": "ok",
-      "last_error": null,
+      "next_run_at": "2026-07-22T15:04:13.925118+07:00",
+      "last_run_at": "2026-07-22T14:04:13.925118+07:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: HTTP 429: The service may be temporarily overloaded, please try again later",
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
@@ -133,5 +133,5 @@
       "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-17T12:15:45.577696+07:00"
+  "updated_at": "2026-07-22T14:34:41.747799+07:00"
 }

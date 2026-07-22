@@ -71,7 +71,7 @@ DEFECT CARD → debugger queue   (from: qa bug report | verifier FAIL | human)
 │   dispatch → researcher (archaeology) OR developer (failing  │
 │               test); minimise to smallest red scenario        │
 │   GATE: a tight RED signal on the blackboard (ledger #0)      │
-│   no repro possible → BLOCK the card for HITL (NOT intercom): │
+│   no repro possible → BLOCK the card for HITL (NOT kanban): │
 │     tag bead human, ESCALATE: comment naming what's needed    │
 │     (env / logs / access / repro steps), mint bead-human-<id> │
 │     card stays BLOCKED until the human unblocks → resume      │
@@ -111,8 +111,8 @@ DEFECT CARD → debugger queue   (from: qa bug report | verifier FAIL | human)
 
 ## 6. The three refinements (mechanics)
 
-### 6.1 HITL as a blocked card, not intercom
-When the repro cannot be built (no env access, no logs, no artifacts), the debugger does **not** fire an `intercom` ask. It **blocks the card** the way the `architecture-gate` does at T2 escalation: tag the bead `human`, write an `ESCALATE:`-style comment naming *exactly* what is needed, mint the idempotent `bead-human-<bug-id>` operator card, and **leave the card blocked** (never self-complete). A debugging card may wait hours for prod logs or env access; the durable blocked-card regime is observable, async, and survives sessions — intercom (a live in-session ask, as `design-council` uses for the PO interview) is the wrong tool. The debugger auto-resumes on promotion when the human unblocks.
+### 6.1 HITL as a blocked card, not kanban
+When the repro cannot be built (no env access, no logs, no artifacts), the debugger does **not** create a blocked card ask. It **blocks the card** the way the `architecture-gate` does at T2 escalation: tag the bead `human`, write an `ESCALATE:`-style comment naming *exactly* what is needed, mint the idempotent `bead-human-<bug-id>` operator card, and **leave the card blocked** (never self-complete). A debugging card may wait hours for prod logs or env access; the durable blocked-card regime is observable, async, and survives sessions — intercom (a live in-session ask, as `design-council` uses for the PO interview) is the wrong tool. The debugger auto-resumes on promotion when the human unblocks.
 
 ### 6.2 Worktree + branch per bug
 At Round 0 the debugger carves `debug/<bug-id>-<slug>` (a git worktree on a dedicated branch, mirroring `developer-loop`'s `branch_name` + `worktree_path`) and threads both into every worker card. The repro test, the fix, and the regression test all land isolated on that branch — never `main`, never merged by the debugger. For the **high-stakes parallel-hypothesis diverge**, each hypothesis card gets its own worktree+branch (`debug/<bug-id>-<slug>/hypo-N`) — parallel fixes cannot share a working tree. The survivor's branch becomes the fix branch handed off for review/merge; the discarded branches are cleaned up. The post-mortem cites the branch/PR.
@@ -283,10 +283,10 @@ command_allowlist:               # parity with architect
   - script execution via -e/-c flag
   - recursive delete
 plugins:
-  enabled: [ intercom, kanban_chains, loop_engine ]   # loop_engine REQUIRED — debugger is its first consumer (debug-loop skill drives the converge loop via the loop_engine tool)
+  enabled: [ kanban, kanban_chains, loop_engine ]   # loop_engine REQUIRED — debugger is its first consumer (debug-loop skill drives the converge loop via the loop_engine tool)
   disabled: []
   entries:
-    intercom: { allow_tool_override: true }
+    kanban: { allow_tool_override: true }
     kanban_chains: { allow_tool_override: false }
     loop_engine: { allow_tool_override: false }
 onboarding:

@@ -7,5 +7,5 @@ description: "Debugger — diagnosis-team orchestrator who drives a defect throu
   \ Bifurcates by bug type: localized bug → proven fix + regression test + RCA\
   \ (back to qa/originator); design flaw (no correct test seam, or root cause spans\
   \ a boundary) → RCA + ADR stub routed to the architect gate. HITL is a sticky\
-  \ blocked card, not intercom; a worktree+branch per bug. Never self-grades a fix."
+  \ blocked card, not kanban; a worktree+branch per bug. Never self-grades a fix."
 description_auto: false

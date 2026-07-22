@@ -42,7 +42,7 @@ The orchestrator COMPLETES after filing the verdict. It does NOT block waiting f
 
 ## Auto-decomposer ≠ team self-healing
 
-Tasks with `created_by: "auto-decomposer"` are created by the platform's triage-to-workgraph decomposer. It decomposes triage cards (submitted via dashboard/intercom) into tech-lead + developer + verifier chains. NOT the team self-correcting. Always check `created_by` and read session DBs before claiming system behavior.
+Tasks with `created_by: "auto-decomposer"` are created by the platform's triage-to-workgraph decomposer. It decomposes triage cards (submitted via dashboard/kanban) into tech-lead + developer + verifier chains. NOT the team self-correcting. Always check `created_by` and read session DBs before claiming system behavior.
 
 ## Beads-watchdog requires active-projects entry
 

@@ -114,7 +114,7 @@ loop_engine({
         "assignee": "architect",
         "title": "PO interview — <DECISION>",
         "body": ("RE-ENTRANT (resume is a fresh session): FIRST check the root blackboard "
-                 "council:po_interview — if present, kanban_complete immediately. Else intercom "
+                 "council:po_interview — if present, kanban_complete immediately. Else (legacy) intercom "
                  "action:ask to startup/product-owner with the open trade-off questions + the "
                  "converged verdict. On reply: kanban_complete(metadata={'po_interview':<reply>}). "
                  "On timeout or [target_not_connected]: kanban_block(kind='needs_input') on THIS "

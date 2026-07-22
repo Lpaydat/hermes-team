@@ -6,22 +6,12 @@ model:
 toolsets:
   - hermes-cli
   - kanban
-  - kanban_chains
-  - loop_engine
-  - intercom
 agent:
   api_max_retries: 10
   reasoning_effort: xhigh
-kanban:
-  max_in_progress_per_profile: 3
-  max_in_progress: 3
 skills:
   disabled:
-    # -- mattpocock family: everything except the design doctrine three --
-    # Deprecated skills dropped from doctrine (absorbed by active skills or gate ceremony)
-    - design-an-interface
-    - request-refactor-plan
-    - ubiquitous-language
+    # -- mattpocock family: everything except the design doctrine six --
     - ask-matt
     - claude-handoff
     - code-review
@@ -91,16 +81,10 @@ command_allowlist:
   - recursive delete
 plugins:
   enabled:
-    - intercom
     - kanban_chains
-    - loop_engine
   disabled: []
   entries:
-    intercom:
-      allow_tool_override: true
     kanban_chains:
-      allow_tool_override: false
-    loop_engine:
       allow_tool_override: false
 onboarding:
   seen:

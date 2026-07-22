@@ -1,6 +1,6 @@
 Gateway-less profile: sessions spawn per kanban card and intercom spawn-send. No systemd unit by design.
 §
-Intercom addressing: sessions spawned by the offline spawner can register under a degraded team identity, so bare profile names may route to the wrong team. Always use the qualified form `startup/<profile>` when sending or replying over intercom.
+Intercom addressing: sessions spawned by the offline spawner can register under a degraded team identity, so bare profile names may route to the wrong team. Always use the qualified form `startup/<profile>` when sending or replying over kanban.
 §
 Architecture gate built+tested by Claude Code (7 beads 1y1.1–1y1.7, 6 edge drills on test boards test32–43, 2 defects fixed in 886361b). Test boards still on disk. No production task has entered the gate yet. v2 redesign: architect is proactive design partner for new projects (design phase before tickets), reactive gate for incremental changes. See docs/workflow-redesign-v2.md.
 §

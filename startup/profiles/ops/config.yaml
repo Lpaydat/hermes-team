@@ -74,15 +74,11 @@ _config_version: 33
 fallback_model: []
 plugins:
   enabled:
-  - intercom
   - kanban_chains
   disabled: []
   entries:
-    intercom:
-      allow_tool_override: true
     kanban_chains:
       allow_tool_override: false
-
 kanban:
   max_in_progress_per_profile: 3
   max_in_progress: 3

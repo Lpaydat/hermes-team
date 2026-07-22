@@ -8,7 +8,7 @@ toolsets:
   - hermes-cli
   - kanban
   - context_graph
-# PO is grill + coordinate ONLY (pure system). Research is VB's job. These
+# PO is grill + coordinate ONLY (pure system). Research is the builder's job. These
 # toolsets are disabled so PO physically cannot research/delegate/browse during a
 # grill — prompting ("no research" in the skill) proved unreliable; PO reasoned
 # around it. Tool removal is the only reliable enforcement.
@@ -79,14 +79,10 @@ fallback_providers:
     model: deepseek-v4-flash
 plugins:
   enabled:
-    - intercom
     - kanban_chains
     - context_graph
-    - grill_followup
   disabled: []
   entries:
-    intercom:
-      allow_tool_override: true
     kanban_chains:
       allow_tool_override: false
 onboarding:

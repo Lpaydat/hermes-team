@@ -33,7 +33,7 @@ This means:
 1. **State dir:** `/tmp/grill-<slug>/` with `answer.sh` + `init_branches.sh` copied in
 2. **Initialize branches:** `init_branches.sh "$STATE_DIR" "<idea>"` creates `context/` with 8 branch files + `_state.md`
 3. **Clear old state:** `rm -f SESSION.key`
-4. **Timeout plan:** Every `answer.sh` call runs in background with timeout=300+
+4. **Timeout plan:** Every `answer.sh` call runs in background with timeout=600+ (answer.sh also has an internal `timeout $HERMES_GRILL_TIMEOUT` wrapper, default 600s / 10m, so it self-kills even if the terminal tool's timeout is generous)
 
 ## The session-key capture step
 
@@ -83,12 +83,16 @@ grep "| pending\|| active" "$STATE_DIR/context/_state.md"
 1. Read extracted question (answer.sh stdout from previous turn)
 2. Compose answer
 3. Launch answer.sh in background:
-   terminal(background=true, notify_on_complete=true, timeout=300)
+   terminal(background=true, notify_on_complete=true, timeout=600)
 4. Poll: process(action="wait", timeout=60) — repeat until exited
 5. answer.sh stdout = next extracted question
    - Empty/error → PO forgot <Q> tags, read stderr for raw output
    - The orchestrator locks decisions by editing branch files
 ```
+
+**Why 600s:** Model response time is NOT just generation time. For thinking/reasoning models: thinking (up to 5m alone) + tool calling + text generation. The 600s default accounts for all three phases. Reducing below 600s risks killing the model mid-think.
+
+answer.sh has its own internal `timeout $HERMES_GRILL_TIMEOUT` (default 600s / 10m) wrapping the `hermes --resume` call. If the PO model stalls or the API drops, the script self-terminates with a diagnostic instead of hanging forever. The terminal tool timeout is a belt-and-suspenders layer on top. Override the internal timeout with `export HERMES_GRILL_TIMEOUT=900` for very slow models or complex prompts with long context windows.
 
 ## PO behavioral glitches and recovery
 
@@ -122,7 +126,7 @@ PO uses `glm-5.2` via `zai` provider. Turn times vary wildly:
 - **Fast**: launch ~2 min, resume ~60-200s. 8 questions in 45 min.
 - **Slow**: resume >12 min. Provider congestion.
 
-If a resume takes >10 min, kill and retry. Consider switching PO to deepseek (configured fallback) for speed.
+If a resume takes >10 min (the internal timeout's 600s ceiling), answer.sh self-terminates with a diagnostic message and exits 1. The `|| true` catches exit 124 (timeout's kill code). Retry the turn — if it stalls repeatedly, consider switching PO to deepseek (configured fallback) for speed.
 
 ## Answering with --file for long answers
 
@@ -155,6 +159,8 @@ See `references/2026-07-21-v051-live-e2e.md` for the v0.5.1 E2E test results: 9Q
 
 See `references/2026-07-21-v051-commit-cutoff-e2e.md` for the commit-cutoff grill: v0.5.1 complete E2E with auto-locking, grill-rpc skill, and no-tag fallback all working together.
 
+See `references/2026-07-22-timeout-hang-fix.md` for the infinite-hang bug found during a live coding-horoscope grill: `hermes --resume` in answer.sh had no timeout wrapper, stalled model hung the script forever. Fix: `timeout $HERMES_GRILL_TIMEOUT` (default 600s) + empty-output guard.
+
 ## v0.5+ enhancements (grill-rpc skill + auto-lock + no-tag fallback)
 
 ### grill-rpc skill replaces grill-with-docs
@@ -177,6 +183,7 @@ answer.sh tries `<Q>` tags first, then falls back to the last paragraph containi
 - LOCK grep: removed `^` anchor so indented `Lock D{n}:` lines match
 - LOCK insertion: writes under `## Decisions` section via temp file rewrite, not appended to EOF
 - _state.md count: matches `Lock D{n}` prefix (not just `^D{n}`)
+- **Timeout wrapper (v0.5.1-patch)**: `hermes --resume` call in answer.sh had NO timeout — a stalled model or dropped API connection hung the script forever inside `$(...)`. Fixed by wrapping in `timeout $HERMES_GRILL_TIMEOUT` (default 600s) + empty-output guard that exits 1 with diagnostic. Found during coding-horoscope grill: ~20 turns in, PO model call stalled indefinitely.
 
 ## E2E test results summary
 
@@ -185,8 +192,19 @@ answer.sh tries `<Q>` tags first, then falls back to the last paragraph containi
 | v0.2 (CONTEXT.md) | 8 | 14 | 1 (rate limit math) | Complete |
 | v0.4 (branches) | 9 | 15-22 | 2 (JSON vs bash, hard-block vs --no-verify) | Complete |
 | v0.5 (grill-rpc) | 9 | 20 | 2 (same as v0.4) | Complete |
+| v0.5.1 (coding-horoscope) | ~20 | 44 | timeout hang at turn ~20, fixed mid-session | Complete (bug found + fixed, 3-path verified) |
 
-Key finding: branch model solved re-asking. grill-rpc skill improved protocol compliance. Auto-locking eliminated manual file editing.
+Key finding: branch model solved re-asking. grill-rpc skill improved protocol compliance. Auto-locking eliminated manual file editing. Timeout fix eliminated infinite hangs on stalled model calls.
+
+### Timeout fix verification (3 paths tested live)
+
+| Test | Timeout setting | Result |
+|------|----------------|--------|
+| Normal operation | 120s (model responds) | Works, no premature kill, PO context intact |
+| Model can't respond | 1s (impossible deadline) | Clean diagnostic exit in 1s, exit code 1 |
+| Production default | 600s (no override) | Works, model unhurried, full response with question extraction |
+
+All three paths prove the fix works: the timeout doesn't fire prematurely, fires cleanly when needed, and the production default gives the model adequate time.
 
 ## Related skills
 

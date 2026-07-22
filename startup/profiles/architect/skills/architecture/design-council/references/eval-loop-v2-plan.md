@@ -127,7 +127,7 @@ Mitigations: structured rubric with concrete anchors; ensemble for high-stakes; 
 2. **Start with Phase 1** (the evaluator rubric). Ground it in the quality-review dimensions.
    The 4-agent quality-review workflow from this session is the v1 evaluator template.
 3. **Existing infrastructure:** `kanban_chains` (the improve step), the `verifier` profile
-   (judge candidate), the design-council skill (the loop to evolve), the intercom ask (the
+   (judge candidate), the design-council skill (the loop to evolve), the kanban comment (the
    PO interview, already working).
 4. **The autoresearch reference:** https://github.com/karpathy/autoresearch — the
    improve→measure→keep/discard loop against a metric.
@@ -138,8 +138,8 @@ Mitigations: structured rubric with concrete anchors; ensemble for high-stakes; 
 | `startup/profiles/architect/skills/architecture/design-council/SKILL.md` | v1 skill (the loop to evolve) |
 | `startup/profiles/architect/skills/architecture/design-council/references/call-templates.md` | v1 kanban_chains templates |
 | `docs/adr/ADR-002-design-council.md` | v1 decision record (5 alternatives weighed) |
-| `_shared/intercom/broker/server.py` (commit a5b19e9) | the offline-ask-spawn fix (the interview mechanism) |
-| `_shared/intercom/broker/spawner.py` (commit de05228) | fail-loud HERMES_HOME (prevention) |
+| `_shared/kanban/broker/server.py` (commit a5b19e9) | the offline-ask-spawn fix (the interview mechanism) |
+| `_shared/kanban/broker/spawner.py` (commit de05228) | fail-loud HERMES_HOME (prevention) |
 | bd memories | `design-council-validation-…`, `intercom-fixed-…` (the session findings) |
 
 ## Open questions (for the new session)

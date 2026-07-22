@@ -100,7 +100,7 @@ def find_context_md(task_title: str, task_body) -> Optional[str]:
     # convention it follows that session:
     #   1. <repo>/docs/ventures/<name>/        (grill skill's "docs/ventures/")
     #   2. <repo>/startup/docs/ventures/<name>/ (relative from HERMES_HOME=startup)
-    #   3. ~/vault/ventures/<name>/             (venture-pipeline vault convention)
+    #   3. ~/vault/<name>/             (venture-pipeline vault convention)
     # Search all three + the worker's cwd + HERMES_HOME.
     names = [n for n in (venture, slug) if n]
     # Canonical home (absolute-path fix): venture-grill writes CONTEXT.md to
@@ -130,7 +130,7 @@ def find_context_md(task_title: str, task_body) -> Optional[str]:
             p = os.path.join(base, "docs", "ventures", name, "CONTEXT.md")
             if os.path.isfile(p):
                 return p
-    # vault convention (~/vault/ventures/<name>/ — no "docs/" prefix)
+    # vault convention (~/vault/<name>/ — no "docs/" prefix)
     for name in names:
         p = os.path.join(vault, "ventures", name, "CONTEXT.md")
         if os.path.isfile(p):

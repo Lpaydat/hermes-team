@@ -7,7 +7,6 @@ model:
 toolsets:
 - hermes-cli
 - kanban
-- intercom
 agent:
   api_max_retries: 10
   reasoning_effort: xhigh
@@ -55,11 +54,8 @@ known_plugin_toolsets:
   - spotify
 plugins:
   enabled:
-  - intercom
   - kanban_chains
   disabled: []
   entries:
-    intercom:
-      allow_tool_override: true
     kanban_chains:
       allow_tool_override: false
