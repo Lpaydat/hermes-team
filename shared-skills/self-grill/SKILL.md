@@ -65,78 +65,9 @@ Check `~/vault/ventures/ideas/` for an existing dossier before drafting — the 
 
 **Answer as founder:** you have conviction. The dossier is your evidence. You don't hedge, don't fold — if PO pushes on a weakness, defend with evidence or fix it honestly. "This is hard" is not a fatal flaw.
 
-## Setup
+## RPC mechanics
 
-```bash
-STATE_DIR="/tmp/grill-<slug>"
-mkdir -p "$STATE_DIR" && rm -f "$STATE_DIR/SESSION.key"
-
-cp "$HOME/.hermes-teams/shared-skills/self-grill/scripts/answer.sh" "$STATE_DIR/"
-cp "$HOME/.hermes-teams/shared-skills/self-grill/scripts/init_branches.sh" "$STATE_DIR/"
-cp "$HOME/.hermes-teams/shared-skills/self-grill/scripts/add_branch.sh" "$STATE_DIR/"
-cp "$HOME/.hermes-teams/shared-skills/self-grill/scripts/set_active.sh" "$STATE_DIR/"
-chmod +x "$STATE_DIR"/*.sh
-
-"$STATE_DIR/init_branches.sh" "$STATE_DIR" "<your idea>"
-```
-
-## The grill
-
-### Launch PO
-
-```bash
-HERMES_GRILL_STATE_DIR="$STATE_DIR" \
-hermes -p product-owner \
-  --skills grill-rpc \
-  -z "Grill the builder on this idea.
-
-      You will see [GRILL STATE...] before each answer. It shows:
-      - A branch table (which design categories are done/active/pending)
-      - The active branch with locked decisions and questions already asked
-
-      Branches are dynamic. Start by asking questions about the idea.
-      After 2-3 questions, I'll ask you what design categories this idea needs.
-
-      RULES:
-      - Do NOT re-ask anything in 'Questions already asked'
-      - Wrap EVERY question in <Q> tags: <Q>Your question</Q>
-      - Stay on the active branch. Don't jump ahead.
-      - Push past easy answers. 20+ questions is normal.
-
-      Idea: <your idea>" \
-  --cli
-```
-
-Save session key immediately: `hermes -p product-owner sessions list | grep "cli" | head -1 | awk '{print $NF}' > "$STATE_DIR/SESSION.key"`
-
-### Grill through branches
-
-```bash
-HERMES_GRILL_STATE_DIR="$STATE_DIR" \
-"$STATE_DIR/answer.sh" "<your answer>"
-```
-
-answer.sh auto-extracts `Lock D{n}: title = content` decisions, injects grill state prefix, sends to PO, extracts the next question, and logs Q&A.
-
-**PO takes 60-200s per turn.** Never foreground with <300s timeout. Use background + notify_on_complete + repeated `process wait(timeout=60)`.
-
-### Branch management
-
-```bash
-"$STATE_DIR/add_branch.sh" "$STATE_DIR" "security model"   # add branch
-"$STATE_DIR/set_active.sh" "$STATE_DIR" "security model"    # switch active
-grep "| pending\|| active" "$STATE_DIR/context/_state.md"   # empty = done
-```
-
-### Export
-
-```bash
-for f in "$STATE_DIR"/context/*.md; do
-    [[ "$(basename "$f")" == "_state.md" ]] && continue
-    echo "--- $(basename "$f")" ---"
-    cat "$f"
-done > "$STATE_DIR/SUMMARY.md"
-```
+All grill RPC operations — setup, PO launch, answer pattern, branch management, decision locking, timeout handling, done criteria, and model quirks — live in **`grill-rpc-ops`**. Load it (`skill_view grill-rpc-ops`) when running a grill session. That skill is the single source of truth for the mechanics; this skill owns the workflow and the founder role.
 
 ## Dossier delegation pattern
 
@@ -144,11 +75,5 @@ When building dossiers at scale, delegate research to subagents via `delegate_ta
 
 ## Known issues
 
-1. **Session key capture** — save to SESSION.key immediately after launching PO.
-2. **Question fallback** — if `<Q>` tag and paragraph fallback both fail, read stderr.
-3. **skill_manage symlink quirk** — `skill_manage(action='patch')` fails with "not found." Use the `patch` tool targeting `~/.hermes-teams/shared-skills/self-grill/SKILL.md` directly. Support files go to `~/.hermes-teams/shared-skills/self-grill/references/`.
-4. **Config changes don't apply mid-session** — `delegation.max_iterations` is cached at startup. Raised to 999 on disk but requires engine restart. If subagents hit limits, extract from the delegation summary file.
-
-## Overlap note
-
-`grill-rpc-ops` covers PO launch, branch management, timeout patterns, and model quirks from an operational perspective. This skill covers the full grill workflow including discovery, dossier integration, pipeline context, and the founder-answerer role.
+1. **skill_manage symlink quirk** — `skill_manage(action='patch')` fails with "not found." Use the `patch` tool targeting `~/.hermes-teams/shared-skills/self-grill/SKILL.md` directly.
+2. **Config changes don't apply mid-session** — `delegation.max_iterations` is cached at startup. Raised to 999 on disk but requires engine restart. If subagents hit limits, extract from the delegation summary file.

@@ -2,11 +2,12 @@
 
 The builder's automated pipeline (cron-driven) feeds ideas into the grill. This reference documents the pipeline architecture for context when running grills.
 
-## Entry: 3 Doors
+## Entry: 4 Doors
 
 - **Door A — Problem:** Reddit/HN complaints (pain-driven)
 - **Door B — Opportunity:** tech launches, API releases, regulatory shifts (shift-driven)
 - **Door C — Copycat:** Product Hunt, revenue reports, app rankings (success-driven)
+- **Door D — User:** Founder submits ideas to `~/vault/ventures/user-ideas.md`. PRIORITY — always in the build list, first in the chain, regardless of score. Same downstream. Flaws/questions → blocked kanban card (needs_input), never killed.
 
 ## Downstream phases
 

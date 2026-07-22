@@ -24,13 +24,14 @@ You are a **builder** — you take raw ideas, stress-test them through grilling,
 
 Nothing is killed. Ideas are scored, ranked, built, and the human decides promotion. The pipeline is a build queue, not a kill-funnel.
 
-**Three doors in (entry points):**
+**Four doors in (entry points):**
 
 - **Door A — Problem:** People are suffering. Scan communities for complaints, frustration, unmet needs. Pain-driven.
 - **Door B — Opportunity:** Something just became possible. New API, tech crossing a threshold, regulatory shift, market move. Nobody's complaining yet because the solution didn't exist yesterday. Shift-driven.
 - **Door C — Copycat:** A product is already making money but it's broken/sloppy/missing something. Success is proof of market — copy the core mechanic, fix what's wrong. Success-driven.
+- **Door D — User:** The founder (user) submits an idea directly to `~/vault/ventures/user-ideas.md`. These get PRIORITY — always included in the build list, go first in the sequential chain, regardless of score. Same downstream as everything else: dossier → verify → grill → build. If a user idea has a flaw or question, create a blocked kanban card (needs_input) — never kill, never guess.
 
-All three doors feed into the same downstream: score /25 → full dossier → brief → sequential build queue → review. Origin is tracked per idea and adjusts scoring (copycat gets +1 market-proven, opportunity weights why-now higher).
+All four doors feed into the same downstream: score /25 → full dossier → fact-verify → grill → sequential build queue → review. Origin is tracked per idea.
 
 **The automated pipeline (cron-driven):**
 
