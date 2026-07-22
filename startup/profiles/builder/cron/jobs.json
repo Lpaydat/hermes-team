@@ -1,0 +1,137 @@
+{
+  "jobs": [
+    {
+      "id": "9493ebf6c4e2",
+      "name": "Daily Demand Signal Scan",
+      "prompt": "You are the builder running a daily demand signal scan. This is Stage 1 of your demand-signal pipeline.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:ALREADY_SCANNED, exit immediately. Return \"Already scanned for [DATE].\" and stop.\n- If STATUS:NEEDS_SCANNING, run the full scan workflow below.\n\n== SCAN WORKFLOW ==\n\nQuickly scan key communities for fresh complaints, unmet needs, and willingness-to-pay signals. This is a LIGHT pass - 10-15 minutes of targeted searching, not an exhaustive deep dive. Append findings to the signal buffer.\n\nScan these sources via web_search and browser tools:\n- Reddit: r/SideProject, r/Entrepreneur, r/SaaS, r/smallbusiness, r/startups, r/IndieBusiness\n- Hacker News: front page + \"Ask HN\" posts from the last 24h\n- Product Hunt: recent launches and their comment sections\n\nFor each signal found, capture: source URL, quote (exact words), platform, topic/category, pain type.\n\nAppend all findings to ~/vault/ventures/signals/daily-scan.md. Do NOT score or filter - just capture raw signals.\n\nQuality over quantity. Aim for 5-15 new signals per day. If zero actionable signals, append \"No significant signals today.\" and finish.\n\n== COMPLETION ==\n\nAfter appending findings, update the guard marker by writing today's date to ~/vault/ventures/.last-scan\n\nDo not deliver any output. This runs silent.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "zai",
+      "model_snapshot": "glm-5.2",
+      "base_url": null,
+      "script": "scan-guard.sh",
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "30 */3 * * *",
+        "display": "30 */3 * * *"
+      },
+      "schedule_display": "30 */3 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 144
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-03T13:08:22.790689+07:00",
+      "next_run_at": "2026-07-22T15:30:00+07:00",
+      "last_run_at": "2026-07-22T15:01:17.211197+07:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: Skipped to prevent unintended spend: global inference config drifted since this job was created (provider 'zai' -> 'deepseek'; model 'glm-5.2' -> 'deepseek-v4-pro'), and this job is unpinned. No inference call was made. To run on the new config, pin it explicitly: `cronjob action=update job_id=9493ebf6c4e2 provider=<provider> model=<model>` (or pin the original values to keep them). See #44585.",
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "web",
+        "terminal",
+        "file"
+      ],
+      "workdir": "/home/lpaydat/.hermes-teams/startup/profiles/builder",
+      "fire_claim": null
+    },
+    {
+      "id": "a9b7d447f13e",
+      "name": "RequestHunt Weekly Deep Scan",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "scan-requesthunt.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 5 * * 1,3,5",
+        "display": "0 5 * * 1,3,5"
+      },
+      "schedule_display": "0 5 * * 1,3,5",
+      "repeat": {
+        "times": null,
+        "completed": 8
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-03T13:08:28.575542+07:00",
+      "next_run_at": "2026-07-24T05:00:00+07:00",
+      "last_run_at": "2026-07-22T15:01:17.215940+07:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/lpaydat/.hermes-teams/startup/profiles/builder/scripts/scan-requesthunt.sh",
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": "/home/lpaydat/.hermes-teams/startup/profiles/builder",
+      "fire_claim": null
+    },
+    {
+      "id": "7872dbc93ab1",
+      "name": "Pipeline + Build Cycle",
+      "prompt": "You are the builder running the pipeline + build cycle.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:RECENT, CHECK URGENT conditions first. If none, skip.\n- If STATUS:DUE, run the full pipeline cycle below.\n\n== URGENT CONDITIONS (override the cooldown) ==\n\nEven if the pipeline ran recently, you MUST run if either is true:\n1. Any completed build tasks on the kanban board (product-owner/tech-lead finished work that needs review)\n2. Any gate feedback comments on your tasks (the human responded to a product review)\n\nIf no urgent conditions and STATUS:RECENT, exit with \"Pipeline ran [N]d ago, no urgent work. Skipping.\" and stop.\n\n== FULL PIPELINE CYCLE (when DUE) ==\n\nPHASE 1: INGEST SIGNALS - Read ~/vault/ventures/signals/daily-scan.md and requesthunt dumps.\nPHASE 2: FILTER AND RANK - Score signals, cut weak ones, record kills in ~/vault/ventures/killed-ideas.md.\nPHASE 3: DEEP DIVE SURVIVORS - Lean canvas, assumption map, experiment design for survivors.\nPHASE 4: BUILD - Design specs, create kanban tasks for product-owner/tech-lead. Check existing builds.\nPHASE 5: GATE NOTIFICATION - Only deliver output when a product is ready for review or you need human input.\n\n== COMPLETION ==\n\nAfter running the full cycle, update the guard marker by writing current timestamp to ~/vault/ventures/.last-pipeline\n\n== RULES ==\n- Build first, then show the product. Never deliver a pre-build digest.\n- Never show raw ideas or unfinished work. Only built products or blockers.\n- Never spin silently - surface blockers.\n- Keep ~/vault/ventures/portfolio.md updated.",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": "zai",
+      "model_snapshot": "glm-5.2",
+      "base_url": null,
+      "script": "pipeline-guard.sh",
+      "no_agent": false,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 2,8,14,20 * * *",
+        "display": "0 2,8,14,20 * * *"
+      },
+      "schedule_display": "0 2,8,14,20 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 74
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-03T13:08:28.935656+07:00",
+      "next_run_at": "2026-07-22T20:00:00+07:00",
+      "last_run_at": "2026-07-22T15:01:17.237867+07:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: Skipped to prevent unintended spend: global inference config drifted since this job was created (provider 'zai' -> 'deepseek'; model 'glm-5.2' -> 'deepseek-v4-pro'), and this job is unpinned. No inference call was made. To run on the new config, pin it explicitly: `cronjob action=update job_id=7872dbc93ab1 provider=<provider> model=<model>` (or pin the original values to keep them). See #44585.",
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "web",
+        "terminal",
+        "file",
+        "kanban",
+        "delegation"
+      ],
+      "workdir": "/home/lpaydat/.hermes-teams/startup/profiles/builder",
+      "fire_claim": null
+    }
+  ],
+  "updated_at": "2026-07-22T15:01:17.238169+07:00"
+}
