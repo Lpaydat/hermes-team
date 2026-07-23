@@ -101,8 +101,8 @@ Run after the harness exits: `evals_cmd` → test suite → lint → typecheck. 
 ## 4. Trace capture (non-negotiable, before completing)
 
 ```bash
-mkdir -p ~/vault/traces/<board>/<chain-root-id>/
-cp <transcript> ~/vault/traces/<board>/<chain-root-id>/attempt-<n>.jsonl
+mkdir -p ~/projects/<slug>/traces/<chain-root-id>/
+cp <transcript> ~/projects/<slug>/traces/<chain-root-id>/attempt-<n>.jsonl
 ```
 
 **Key by the chain root** — the ORIGINAL developer card id (`Chain-Root:` from a fix card's body; your own card id on a first attempt) — so all attempts for one piece of work land in one directory with continuous numbering (attempt-1 = first run, attempt-2 = first fix round, …). Transcript locations: claude `~/.claude/projects/<cwd-encoded>/<session-id>.jsonl`; codex `~/.codex/sessions/YYYY/MM/DD/rollout-*<session-id>.jsonl`; opencode via `opencode export`. The worktree dies; the ledger survives. Escalation (trace-first iteration) and tech-lead reflection both read from here.

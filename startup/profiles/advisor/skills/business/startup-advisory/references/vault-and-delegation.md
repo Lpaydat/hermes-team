@@ -83,6 +83,6 @@ When you need deep research that goes beyond a quick web search:
 
 - `scout` — fast source discovery, triage, SQLite cataloging, Telegram digests
 - `researcher` — deep research synthesis, wiki note authoring, the only one who writes to `~/vault/wiki/`
-- `tech-lead` — development work, dev journal authoring in `~/vault/journal/`
+- `tech-lead` — development work, dev journal authoring in `~/projects/<slug>/journal/`
 
 Always verify current profiles with `hermes profile list` and `hermes kanban assignees` — rosters change.
