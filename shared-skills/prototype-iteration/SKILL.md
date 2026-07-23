@@ -15,7 +15,7 @@ Triage user feedback on built prototypes into one of five paths and execute. The
 | **Execution** | "Fix X", "add Y", "this is broken", "make it faster" | Rebuild directly. No grill, no dossier. |
 | **Design** | "Wrong audience", "monetization is off", "feature set isn't right" | Re-grill the specific change. Then rebuild. |
 | **New idea** | Feedback introduces an entirely different product | Door D intake → full pipeline (dossier → verify → grill → build). |
-| **Promote** | "Ship it" | Write spec from brief + grill decisions, dispatch to tech-lead via kanban. |
+| **Promote** | "Ship it" | Run `project-promotion` skill: create `~/projects/<slug>/`, copy context, write spec, dispatch to tech-lead. |
 | **Shelve** | "Not right now" or silence | Mark shelved in portfolio.md + idea-bank.md. |
 
 After execution or design iterations, return the prototype to "Awaiting Review" and increment the iteration count in portfolio.md.
@@ -24,8 +24,8 @@ After execution or design iterations, return the prototype to "Awaiting Review" 
 
 - **Builder owns iterations.** The builder built the prototype — the builder iterates it. Tech-lead only gets involved on promote.
 - **No dossier/verify for iterations.** Only if a design pivot introduces entirely new market claims — then re-verify ONLY the new claims.
-- **Re-grill is scoped.** Grill the specific change, not the whole idea. "Monetization is wrong" grills monetization.
-- **5+ iterations without promotion → flag.** Either converging (good) or thrashing (needs a design conversation with the user).
+- **Re-grill is scoped.** Grill the specific change, not the whole idea.
+- **5+ iterations without promotion → flag.** Converging (good) or thrashing (needs a design conversation).
 
 ## Pipeline integration
 

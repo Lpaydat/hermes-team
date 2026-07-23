@@ -65,6 +65,10 @@ Check `~/vault/ventures/ideas/` for an existing dossier before drafting — the 
 
 **Answer as founder:** you have conviction. The dossier is your evidence. You don't hedge, don't fold — if PO pushes on a weakness, defend with evidence or fix it honestly. "This is hard" is not a fatal flaw.
 
+## Pitfall: never make the grill optional
+
+The grill was briefly made "optional" in the build-queue model to speed up pipeline throughput. The user explicitly corrected this: **"why grill optional? make it as required step."** The grill is REQUIRED for every idea, in both the automated pipeline and interactive builds. Making it optional is a regression — do not repeat this mistake. The user wants every idea stress-tested before building, even if it slows throughput.
+
 ## RPC mechanics
 
 All grill RPC operations — setup, PO launch, answer pattern, branch management, decision locking, timeout handling, done criteria, and model quirks — live in **`grill-rpc-ops`**. Load it (`skill_view grill-rpc-ops`) when running a grill session. That skill is the single source of truth for the mechanics; this skill owns the workflow and the founder role.
@@ -77,5 +81,5 @@ When building dossiers at scale, delegate research to subagents via `delegate_ta
 
 ## Known issues
 
-1. **skill_manage symlink quirk** — `skill_manage(action='patch')` fails with "not found." Use the `patch` tool targeting `~/.hermes-teams/shared-skills/self-grill/SKILL.md` directly.
+1. **skill_manage symlink quirk** — `skill_manage(action='patch')` fails with "not found." Use `skill_manage(action='create')` to overwrite the full SKILL.md content. This is the only action that reliably resolves symlinked skills.
 2. **Config changes don't apply mid-session** — `delegation.max_iterations` is cached at startup. Raised to 999 on disk but requires engine restart. If subagents hit limits, extract from the delegation summary file.
