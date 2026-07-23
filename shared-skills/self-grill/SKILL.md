@@ -61,14 +61,9 @@ Check `~/vault/ventures/ideas/` for an existing dossier before drafting — the 
 7. Grill through each branch — ANSWER AS FOUNDER with conviction
 8. Add new branches if the grill surfaces new categories
 9. Done when no pending or active branches remain
-10. Output grill-decisions.md to ~/projects/<slug>/grill-decisions.md (NOT the workspace — the build card reads from here)
 ```
 
 **Answer as founder:** you have conviction. The dossier is your evidence. You don't hedge, don't fold — if PO pushes on a weakness, defend with evidence or fix it honestly. "This is hard" is not a fatal flaw.
-
-## The grill card does NOT build
-
-You are on the GRILL card (parent). Your output is `~/projects/<slug>/grill-decisions.md` only. Do NOT build a prototype. The BUILD card (child) will auto-promote when you complete and handle the prototype + README using the `venture-prototype` skill.
 
 ## NEVER block the kanban card during self-grill
 

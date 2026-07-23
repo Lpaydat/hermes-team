@@ -1,18 +1,18 @@
 ---
 name: venture-prototype
-description: "Build the right prototype type (HTML, API, CLI, or concierge) from grilled venture decisions. Includes POC gate for technical risks and standard README structure for founder review. Loaded by the BUILD card (card 2), not the grill card."
+description: "Build the right prototype type (HTML, API, CLI, or concierge) from grilled venture decisions. Includes POC gate for technical risks and standard README structure for founder review."
 disable-model-invocation: true
 ---
 
 # Venture Prototype
 
-You've been assigned a BUILD card. The grill is already done — grill-decisions.md exists at `~/projects/<slug>/`. Your job: build the prototype and write the README so the founder can review it in 5 minutes.
+You've been grilled. Decisions are locked. Now build the prototype and write the README so the founder can review it in 5 minutes.
 
-Load this skill at the start of the BUILD card. Do NOT grill — that already happened on the parent card.
+Load this skill AFTER self-grill completes and BEFORE completing the kanban card.
 
 ## Step 1 — Read the grill output
 
-Read `~/projects/<slug>/grill-decisions.md`. This is your spec. Every locked decision tells you what to build and what NOT to build.
+Read the grill decisions (in the workspace or `~/projects/<slug>/`). This is your spec. Every locked decision tells you what to build and what NOT to build.
 
 Also read the dossier at `~/vault/ventures/ideas/<slug>.md` for full context.
 
@@ -122,7 +122,7 @@ Link to `~/vault/ventures/ideas/<slug>.md`
 - [ ] Prototype runs with one command
 - [ ] README.md exists at `~/projects/<slug>/README.md` with all sections filled
 - [ ] "How to Review" has specific click-by-click steps
-- [ ] `grill-decisions.md` exists in `~/projects/<slug>/` (from grill card)
+- [ ] grill-decisions.md exists in `~/projects/<slug>/` or workspace
 - [ ] Portfolio updated with correct path to `~/projects/<slug>/prototype/`
 
 ## Pitfalls
@@ -131,10 +131,10 @@ Link to `~/vault/ventures/ideas/<slug>.md`
 - **Skipping the README.** The portfolio entry is NOT a substitute — it's a summary, not a review surface.
 - **Vague "How to Review".** "Try the demo" is useless. "Click the Sync Transactions button, then switch to the Review Queue tab" is useful.
 - **Building a POC when the risk is market.** Don't prove the tech works when the question is whether anyone cares.
-- **Re-grilling.** The grill already happened on the parent card. Don't re-run it. Read the decisions and build.
+- **Re-grilling.** The grill already happened. Don't re-run it. Read the decisions and build.
 
 ## NEVER
 
 - **NEVER put prototypes in `~/vault/`.** That's the Obsidian vault. Prototypes go in `~/projects/<slug>/prototype/`.
 - **NEVER skip the README.** It's mandatory for every prototype.
-- **NEVER block the card during build.** Unlike the grill card (which may need to block for reclaim recovery), the build card should run straight through to completion.
+- **NEVER block the card during build.** The build card should run straight through to completion.
