@@ -20,7 +20,7 @@ Every promoted project lives at `~/projects/<slug>/`:
 │   ├── grill-summary.md    ← exported grill decisions
 │   └── verification.md     ← fact-check report
 ├── prototype/              ← builder's working demo (may be gitignored)
-├── src/                    ← production code (tech-lead + developer)
+├── src/                    ← production code (PO controls, tech-lead/developer writes)
 ├── tests/
 ├── STATUS.md               ← project dashboard (milestones, epics, health)
 ├── README.md               ← what this is, current state
@@ -67,17 +67,19 @@ cp -r <prototype-location>/* prototype/
 hermes kanban create --board <slug>
 ```
 
-7. **Dispatch to tech-lead** — create a kanban task:
+7. **Dispatch to product-owner (PO)** — create a kanban task:
    - Title: "Production build: <project name>"
-   - Assignee: tech-lead
+   - Assignee: product-owner
    - Board: <slug>
-   - Body: "Build production version of <project>. Spec at ~/projects/<slug>/.context/spec.md. Prototype for reference at ~/projects/<slug>/prototype/. STATUS.md is the project dashboard."
-   - The tech-lead takes it from here — runs its Discover→Plan→Execute→Validate→Iterate loop.
+   - Body: "Build production version of <project>. Spec at ~/projects/<slug>/.context/spec.md. Prototype for reference at ~/projects/<slug>/prototype/. STATUS.md is the project dashboard. You own this project: create epics, milestones, beads tickets, dependencies. Control tech-lead for implementation, verifier for review."
+   - PO takes it from here — creates design goals, epics, milestones, beads issues, and dispatches to tech-lead/verifier as needed.
 
 8. **Update portfolio** — move from "Awaiting Review" to "In Production" in `~/vault/ventures/portfolio.md`.
 
 ## After promotion
 
-- Builder is done. Tech-lead owns the project from here.
-- Builder may still iterate on the prototype if the user wants prototype-level changes while production is being built (rare).
+- Builder is done. PO owns the project from here.
+- PO creates spec, epics, milestones, beads tickets with dependencies.
+- PO controls tech-lead (implementation), verifier (review), debugger (fixes).
+- PO owns STATUS.md.
 - The user reviews production milestones via STATUS.md and the project kanban board.

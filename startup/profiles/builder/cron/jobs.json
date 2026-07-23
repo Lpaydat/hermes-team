@@ -89,7 +89,7 @@
     {
       "id": "7872dbc93ab1",
       "name": "Pipeline + Build Cycle",
-      "prompt": "You are the builder running the pipeline + build cycle.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:RECENT, CHECK URGENT conditions first. If none, skip.\n- If STATUS:DUE, run the full pipeline cycle below.\n\n== URGENT CONDITIONS (override the cooldown) ==\n\nEven if the pipeline ran recently, you MUST run if either is true:\n1. Any completed build tasks on the kanban board (product-owner/tech-lead finished work that needs review)\n2. Any gate feedback comments on your tasks (the human responded to a product review)\n\nIf no urgent conditions and STATUS:RECENT, exit with \"Pipeline ran [N]d ago, no urgent work. Skipping.\" and stop.\n\n== FULL PIPELINE CYCLE (when DUE) ==\n\nThis pipeline is a BUILD QUEUE. Nothing is killed. Ideas enter through 4 doors (Problem, Opportunity, Copycat, User), get scored, become full dossiers, get fact-verified, get grilled, and flow into a sequential build queue. The human decides promotion.\n\nPHASE 1: INGEST SIGNALS \u2014 Read ~/vault/ventures/signals/daily-scan.md. New signals arrive tagged with their door (A=Problem, B=Opportunity, C=Copycat, D=User). User ideas (Door D) get PRIORITY \u2014 always included in the build list regardless of score.\n\nPHASE 2: SCORE NEW SIGNALS \u2014 Score /25 with evidence-based rubric. Origin modifiers: Copycat +1 (market proven). User ideas are scored but score does NOT affect inclusion.\n\nPHASE 3: BUILD DOSSIERS \u2014 For each scored idea, create a FULL dossier using ~/vault/ventures/templates/idea-dossier-template.md. Write to ~/vault/ventures/ideas/<slug>.md. All 13 sections required. Use signal data AND web research. NOT one-liners.\n\nPHASE 3.5: FACT-VERIFY (REQUIRED \u2014 independent of dossier writer) \u2014 Dispatch a fact-verification subagent using delegate_task. The verifier MUST be independent. Verifier writes report to ~/vault/ventures/ideas/<slug>-verification.md.\n  - PASS (>=90%): proceed to grill\n  - CONDITIONAL (70-89%): fix disputed claims, then proceed\n  - FAIL (<70% or critical claim fabricated): fix or re-research\n\nPHASE 4: GRILL (REQUIRED) \u2014 For each VERIFIED dossier, run self-grill. You are the FOUNDER \u2014 conviction, evidence, not a neutral observer. If grilling reveals a FATAL FLAW or QUESTION needing user input: create a blocked kanban card (needs_input), never kill.\n\nPHASE 5: RANK AND PICK \u2014 Rank grilled dossiers by score. SELECT ALL Door D (User) ideas first. Then fill remaining slots (up to 10 total) with highest-scored from Doors A/B/C.\n\nPHASE 6: QUEUE BUILDS (SEQUENTIAL) \u2014 Create kanban tasks for tech-lead, chained via kanban_link. Door D first. One at a time. Max 10 per cycle.\n\nPHASE 7: REVIEW QUEUE \u2014 Move completed builds to \"Built / Awaiting Review\" in portfolio.md and idea-bank.md.\n\nPHASE 8: FEEDBACK LOOP \u2014 Load the prototype-iteration skill. Process any user feedback on built prototypes:\n  - Check kanban comments on completed build tasks\n  - TRIAGE feedback type:\n    - Execution (\"fix X\", \"add Y\") \u2192 rebuild directly (builder owns prototype iterations)\n    - Design (\"wrong audience\", \"monetization is off\") \u2192 re-grill the specific change, then rebuild\n    - New idea \u2192 Door D intake \u2192 full pipeline\n    - Promote (\"ship it\") \u2192 write spec, dispatch to tech-lead via kanban for production\n    - Shelve (\"not right now\") \u2192 mark shelved in portfolio.md and idea-bank.md\n  - Comment back on the kanban task with what was done\n  - Track iteration count in portfolio.md\n\n== COMPLETION ==\n\nAfter running the full cycle, update the guard marker by writing current epoch timestamp to ~/vault/ventures/.last-pipeline\n\n== RULES ==\n- NEVER kill ideas. Score and rank only. The human is the gate.\n- NEVER skip fact-verification. Every dossier is independently verified before grilling.\n- NEVER skip the grill. Every build goes through self-grill first. Answer PO as the founder.\n- Door D (User) ideas ALWAYS make the build list. They go first in the sequential chain.\n- If a user idea has a flaw or question, create a BLOCKED kanban card (needs_input) \u2014 never kill.\n- NEVER create parallel build tasks. Chain sequentially via kanban_link.\n- Builder owns prototype iterations. Tech-lead only gets involved on promotion to production.\n- NEVER write a one-line idea entry. Every scored idea gets a full dossier.\n- Never spin silently \u2014 surface blockers immediately.\n- Max 10 new builds queued per cycle.",
+      "prompt": "You are the builder running the pipeline cycle.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:RECENT, exit immediately with \"Pipeline ran [N]d ago, no urgent work. Skipping.\"\n- If STATUS:DUE, run the pipeline below.\n\nThis pipeline does 4 things ONLY. It does NOT grill, build, queue, or review. Those happen in separate builder sessions triggered by the queue-builds.sh cron script and interactive user feedback.\n\nPHASE 1: INGEST SIGNALS \u2014 Read ~/vault/ventures/signals/daily-scan.md. New signals arrive tagged with their door (A=Problem, B=Opportunity, C=Copycat, D=User).\n\nPHASE 2: SCORE \u2014 For each new signal, score /25 (Pain 1-5, Frequency 1-5, WTP 1-5, Competition 1-5, WhyNow 1-5). Origin modifiers: Copycat +1 (market proven). Opportunity weights WhyNow higher. Score WITH evidence from the signal. Add scored ideas to ~/vault/ventures/idea-bank.md.\n\nPHASE 3: BUILD DOSSIERS \u2014 For each newly scored idea, create a FULL dossier using ~/vault/ventures/templates/idea-dossier-template.md. Write to ~/vault/ventures/ideas/<slug>.md. All 13 sections required. Use signal data AND web research. NOT one-liners.\n\nPHASE 3.5: FACT-VERIFY \u2014 For each new dossier, dispatch an independent fact-verification subagent using delegate_task. The verifier MUST be independent. Verifier writes report to ~/vault/ventures/ideas/<slug>-verification.md.\n  - PASS (>=90%): update idea-bank.md status to \"verified\"\n  - CONDITIONAL (70-89%): fix disputed claims in dossier, then mark \"verified\"\n  - FAIL (<70% or critical claim fabricated): fix or re-research\n\nPHASE 4: UPDATE PORTFOLIO \u2014 Update ~/vault/ventures/portfolio.md with any new verified dossiers. The pipeline's job ends here.\n\n== COMPLETION ==\n\nAfter running the cycle, update the guard marker by writing current epoch timestamp to ~/vault/ventures/.last-pipeline\n\n== RULES ==\n- NEVER kill ideas. Score and rank only.\n- NEVER grill in this pipeline. Grilling happens in separate builder sessions.\n- NEVER build prototypes in this pipeline. Building happens in separate builder sessions.\n- NEVER skip fact-verification. Every dossier is independently verified.\n- NEVER write a one-line idea entry. Every scored idea gets a full dossier.\n- The queue-builds.sh cron script handles picking top ideas and creating builder kanban cards. You do NOT create kanban cards.\n- Keep ~/vault/ventures/portfolio.md and ~/vault/ventures/idea-bank.md updated.",
       "skills": [],
       "skill": null,
       "model": null,
@@ -131,7 +131,48 @@
       ],
       "workdir": "/home/lpaydat/.hermes-teams/startup/profiles/builder",
       "fire_claim": null
+    },
+    {
+      "id": "1f5e9186c66c",
+      "name": "Queue Builds for Builder",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "queue-builds.sh",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 */6 * * *",
+        "display": "0 */6 * * *"
+      },
+      "schedule_display": "0 */6 * * *",
+      "repeat": {
+        "times": null,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-23T17:39:46.560337+07:00",
+      "next_run_at": "2026-07-23T18:00:00+07:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": [
+        "terminal"
+      ],
+      "workdir": "/home/lpaydat/.hermes-teams/startup/profiles/builder"
     }
   ],
-  "updated_at": "2026-07-23T15:30:39.719687+07:00"
+  "updated_at": "2026-07-23T17:40:10.315150+07:00"
 }

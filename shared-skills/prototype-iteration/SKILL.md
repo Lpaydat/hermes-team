@@ -15,7 +15,7 @@ Triage user feedback on built prototypes into one of five paths and execute. The
 | **Execution** | "Fix X", "add Y", "this is broken", "make it faster" | Rebuild directly. No grill, no dossier. |
 | **Design** | "Wrong audience", "monetization is off", "feature set isn't right" | Re-grill the specific change. Then rebuild. |
 | **New idea** | Feedback introduces an entirely different product | Door D intake → full pipeline (dossier → verify → grill → build). |
-| **Promote** | "Ship it" | Run `project-promotion` skill: create `~/projects/<slug>/`, copy context, write spec, dispatch to tech-lead. |
+| **Promote** | "Ship it" | Run `project-promotion` skill: create `~/projects/<slug>/`, copy context, write spec, dispatch to PO. |
 | **Shelve** | "Not right now" or silence | Mark shelved in portfolio.md + idea-bank.md. |
 
 After execution or design iterations, return the prototype to "Awaiting Review" and increment the iteration count in portfolio.md.

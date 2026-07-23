@@ -1,47 +1,67 @@
 # Pipeline Context
 
-The builder's automated pipeline (cron-driven) feeds ideas into the grill. This reference documents the pipeline architecture for context when running grills.
+The builder's pipeline architecture. Reference doc — not a process that runs. Matches PIPELINE-ARCHITECTURE.md (source of truth).
 
 ## Entry: 4 Doors
 
 - **Door A — Problem:** Reddit/HN complaints (pain-driven)
 - **Door B — Opportunity:** tech launches, API releases, regulatory shifts (shift-driven)
 - **Door C — Copycat:** Product Hunt, revenue reports, app rankings (success-driven)
-- **Door D — User:** Founder submits ideas to `~/vault/ventures/user-ideas.md`. PRIORITY — always in the build list, first in the chain, regardless of score. Same downstream. Flaws/questions → blocked kanban card (needs_input), never killed.
+- **Door D — User:** Founder submits ideas to `~/vault/ventures/user-ideas.md`. PRIORITY — always in build list, first in queue, regardless of score. Flaws → blocked kanban card, never killed.
 
-## Downstream phases
+## Pipeline stages (split, independent)
 
 ```
-PHASE 1: INGEST SIGNALS  — capture raw signals tagged by door
-PHASE 2: SCORE           — score /25 with evidence, origin modifiers (copycat +1 market-proven)
-PHASE 3: BUILD DOSSIERS  — full venture analysis per idea using template
-PHASE 3.5: FACT-VERIFY   — independent subagent checks every claim
-PHASE 4: GRILL           — REQUIRED: self-grill, builder answers PO as founder
-PHASE 5: RANK AND PICK   — sort by score, take top 10 unbuilt (Door D always included, first in chain)
-PHASE 6: QUEUE BUILDS    — kanban tasks chained SEQUENTIALLY (one at a time)
-PHASE 7: REVIEW QUEUE    — move completed builds to "Awaiting Review"
-PHASE 8: FEEDBACK LOOP   — process user feedback (prototype-iteration skill):
-                           execution → just build | design → re-grill |
-                           new → Door D | promote → tech-lead | shelve → done
+STAGE 1 — AI PIPELINE (cron, no human)
+  Scan 4 doors → Score /25 → Build 13-section dossier → Independent fact-verify
+  → Verified dossiers land in idea-bank.md
+  → Pipeline AI job ENDS here. No grill, no build.
+
+STAGE 2 — QUEUE SCRIPT (cron, no AI)
+  queue-builds.sh reads idea-bank.md → sorts by score → picks top 10
+  → Creates kanban cards assigned to 'builder' (sequential chain via kanban_link)
+
+STAGE 3 — BUILDER SESSIONS (background, separate context per card)
+  Builder picks card → reads dossier → grills with PO → builds prototype
+  → Drops in ~/vault/ventures/prototypes/<slug>/ → updates portfolio.md → completes card
+  → No spec, no tickets, no epics (those are production artifacts)
+
+STAGE 4 — INTERACTIVE REVIEW (user-driven)
+  User reviews prototype → gives feedback to builder:
+    "Fix X" → builder iterates (fast, fail fast)
+    "Promote" → builder runs project-promotion → dispatches to PO
+    "Shelve" → done
+
+PRODUCTION (PO owns from here)
+  PO reads dossier + spec + prototype from ~/projects/<slug>/
+  PO creates: design goals, epics, milestones, beads tickets, dependencies
+  PO controls tech-lead (implementation), verifier (review)
+  PO owns STATUS.md
 ```
 
 ## Artifacts
 
-| Artifact | Path | Purpose |
-|----------|------|---------|
-| Signal buffer | `~/vault/ventures/signals/daily-scan.md` | Raw signals tagged by door |
-| Dossiers | `~/vault/ventures/ideas/<slug>.md` | Full 13-section venture analysis |
-| Verification reports | `~/vault/ventures/ideas/<slug>-verification.md` | Independent fact-check per dossier |
-| Dossier template | `~/vault/ventures/templates/idea-dossier-template.md` | Template for new dossiers |
-| Verification template | `~/vault/ventures/templates/fact-verification-template.md` | Template for verification reports |
-| Idea bank | `~/vault/ventures/idea-bank.md` | Lightweight index linking to dossiers |
-| Portfolio | `~/vault/ventures/portfolio.md` | Status tracker (Awaiting Review at top) |
-| Specs | `~/vault/ventures/specs/` | Written specs for spec'd ventures |
+| Artifact | Path | Stage |
+|----------|------|-------|
+| Raw signals | `~/vault/ventures/signals/daily-scan.md` | Scan |
+| User ideas (Door D) | `~/vault/ventures/user-ideas.md` | Scan |
+| Dossiers | `~/vault/ventures/ideas/<slug>.md` | Dossier |
+| Verification reports | `~/vault/ventures/ideas/<slug>-verification.md` | Fact-verify |
+| Dossier template | `~/vault/ventures/templates/idea-dossier-template.md` | Dossier |
+| Verification template | `~/vault/ventures/templates/fact-verification-template.md` | Fact-verify |
+| Idea bank (index) | `~/vault/ventures/idea-bank.md` | Score |
+| Portfolio (status) | `~/vault/ventures/portfolio.md` | All |
+| Prototypes | `~/vault/ventures/prototypes/<slug>/` | Build |
+| Promoted projects | `~/projects/<slug>/` | Production |
+| Architecture spec | `~/vault/ventures/PIPELINE-ARCHITECTURE.md` | Reference |
 
 ## Cron jobs
 
-1. **Daily Discovery Scan** (every 3h, guarded once/day) — 3-door scan
-2. **RequestHunt Weekly** (Mon/Wed/Fri) — multi-platform deep scan
-3. **Pipeline + Build Cycle** (4x/day, 3-day cooldown) — full pipeline
+| Job | Type | Schedule | Script | What it does |
+|-----|------|----------|--------|-------------|
+| Daily Discovery Scan | AI | Every 3h (guarded once/day) | scan-guard.sh | 4-door scan → daily-scan.md |
+| Pipeline + Build Cycle | AI | 4x/day (3-day cooldown) | pipeline-guard.sh | Score → Dossier → Fact-Verify ONLY |
+| Queue Builds | Script | Every 6h | queue-builds.sh | Reads idea-bank, creates builder kanban cards for top 10 |
+| RequestHunt Weekly | Script | Mon/Wed/Fri | scan-requesthunt.sh | Multi-platform deep scan |
 
 Full cron prompts: `cat ~/.hermes-teams/startup/profiles/builder/cron/jobs.json | python3 -m json.tool`
