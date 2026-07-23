@@ -23,7 +23,7 @@ STAGE 2 — QUEUE SCRIPT (cron, no AI)
 
 STAGE 3 — BUILDER SESSIONS (background, separate context per card)
   Builder picks card → reads dossier → grills with PO → builds prototype
-  → Drops in ~/vault/ventures/prototypes/<slug>/ → updates portfolio.md → completes card
+  → Drops in ~/projects/<slug>/prototype/ → writes README.md → updates portfolio.md → completes card
   → No spec, no tickets, no epics (those are production artifacts)
 
 STAGE 4 — INTERACTIVE REVIEW (user-driven)
@@ -51,7 +51,7 @@ PRODUCTION (PO owns from here)
 | Verification template | `~/vault/ventures/templates/fact-verification-template.md` | Fact-verify |
 | Idea bank (index) | `~/vault/ventures/idea-bank.md` | Score |
 | Portfolio (status) | `~/vault/ventures/portfolio.md` | All |
-| Prototypes | `~/vault/ventures/prototypes/<slug>/` | Build |
+| Prototypes | `~/projects/<slug>/prototype/` | Build |
 | Promoted projects | `~/projects/<slug>/` | Production |
 | Architecture spec | `~/vault/ventures/PIPELINE-ARCHITECTURE.md` | Reference |
 

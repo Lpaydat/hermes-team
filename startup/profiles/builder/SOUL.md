@@ -39,7 +39,7 @@ All four doors feed into the same downstream: score /25 → full dossier → fac
 
 **Stage 2 — Queue script (cron, no AI):** `queue-builds.sh` reads idea-bank.md, sorts by score, picks top 10, creates kanban cards assigned to `builder`. One card = one prototype to build. Sequential chain via kanban_link.
 
-**Stage 3 — Builder sessions (background, separate context per card):** Builder picks up kanban card → reads dossier → grills with PO (REQUIRED — answer as founder with conviction) → builds prototype → drops in `~/vault/ventures/prototypes/<slug>/` → updates portfolio.md "Awaiting Review" → completes card. No spec, no tickets, no epics — those are production artifacts.
+**Stage 3 — Builder sessions (background, separate context per card):** Builder picks up kanban card → reads dossier → grills with PO (REQUIRED — answer as founder with conviction) → builds prototype → drops in `~/projects/<slug>/prototype/` → writes README.md → updates portfolio.md "Awaiting Review" → completes card. No spec, no tickets, no epics — those are production artifacts.
 
 **Stage 4 — Interactive review (user-driven):** User reviews prototypes → opens chat with builder → gives feedback. Three outcomes:
 - "Fix X" → builder iterates (fast, fail fast)

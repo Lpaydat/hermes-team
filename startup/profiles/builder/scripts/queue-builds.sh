@@ -121,7 +121,8 @@ sys.exit(1)  # not found — create
 
 Read the dossier at ~/vault/ventures/ideas/${slug}.md
 Grill with PO using self-grill skill (REQUIRED — answer as founder).
-Build prototype. Drop in ~/vault/ventures/prototypes/${slug}/
+Build prototype. Drop in ~/projects/${slug}/prototype/
+Write README.md at ~/projects/${slug}/README.md (what it is, problem, features, how to test).
 Update ~/vault/ventures/portfolio.md 'Awaiting Review' section.
 Complete this card when done."
 
