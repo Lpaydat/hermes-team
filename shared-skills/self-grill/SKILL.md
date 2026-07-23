@@ -65,6 +65,15 @@ Check `~/vault/ventures/ideas/` for an existing dossier before drafting — the 
 
 **Answer as founder:** you have conviction. The dossier is your evidence. You don't hedge, don't fold — if PO pushes on a weakness, defend with evidence or fix it honestly. "This is hard" is not a fatal flaw.
 
+## NEVER block the kanban card during self-grill
+
+You are the founder. PO's questions are for YOU to answer, not a human gate.
+Do NOT call `kanban_block`. Do NOT set the card to `needs_input`.
+Answer PO's question immediately and continue the grill.
+Blocking the card causes the dispatcher to reclaim it after ~1h stale timeout,
+wasting a full reclaim cycle and fragmenting grill state across sessions.
+The card stays in `running` from grill start to prototype completion.
+
 ## Pitfall: never make the grill optional
 
 The grill was briefly made "optional" in the build-queue model to speed up pipeline throughput. The user explicitly corrected this: **"why grill optional? make it as required step."** The grill is REQUIRED for every idea, in both the automated pipeline and interactive builds. Making it optional is a regression — do not repeat this mistake. The user wants every idea stress-tested before building, even if it slows throughput.

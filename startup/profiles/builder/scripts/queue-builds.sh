@@ -125,14 +125,20 @@ Build prototype. Drop in ~/vault/ventures/prototypes/${slug}/
 Update ~/vault/ventures/portfolio.md 'Awaiting Review' section.
 Complete this card when done."
 
-    ARGS="--assignee builder --body \"$BODY\""
-
     if [ -n "$PREV_ID" ]; then
         # Chain sequentially — this card waits for the previous one
-        ARGS="$ARGS --parent $PREV_ID"
+        RESULT=$(hermes kanban --board "$BOARD" create "$TITLE" \
+            --assignee builder \
+            --body "$BODY" \
+            --parent "$PREV_ID" \
+            --json 2>/dev/null || echo "{}")
+    else
+        RESULT=$(hermes kanban --board "$BOARD" create "$TITLE" \
+            --assignee builder \
+            --body "$BODY" \
+            --json 2>/dev/null || echo "{}")
     fi
 
-    RESULT=$(eval hermes kanban --board "$BOARD" create "$TITLE" $ARGS --json 2>/dev/null || echo "{}")
     TASK_ID=$(echo "$RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
 
     if [ -n "$TASK_ID" ]; then

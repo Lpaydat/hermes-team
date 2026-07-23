@@ -28,11 +28,13 @@ chmod +x "$STATE_DIR"/*.sh
 
 "$STATE_DIR/init_branches.sh" "$STATE_DIR" "<idea>"
 
-HERMES_GRILL_STATE_DIR="$STATE_DIR" \
-hermes -p product-owner \
+# CRITICAL: wrap in timeout 600. glm-5.2 thinking alone can take 300s+.
+# Without timeout, --cli hangs silently and the builder wastes cycles
+# polling for output that never arrives.
+timeout 600 hermes -p product-owner \
   --skills grill-rpc \
   -z "Grill the builder on: <idea>. You will see [GRILL STATE...] before each answer. Branches are dynamic — propose categories as needed." \
-  --cli
+  --cli 2>&1 | tail -80
 
 hermes -p product-owner sessions list | grep "cli" | head -1 | awk '{print $NF}' > "$STATE_DIR/SESSION.key"
 ```
