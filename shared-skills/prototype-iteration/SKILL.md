@@ -22,15 +22,15 @@ After execution or design iterations, return the prototype to "Awaiting Review" 
 
 ## Rules
 
-- **Builder owns iterations.** The builder built the prototype — the builder iterates it. Tech-lead only gets involved on promote.
+- **Builder owns iterations.** The builder built the prototype — the builder iterates it. PO only gets involved on promote.
 - **No dossier/verify for iterations.** Only if a design pivot introduces entirely new market claims — then re-verify ONLY the new claims.
 - **Re-grill is scoped.** Grill the specific change, not the whole idea.
 - **5+ iterations without promotion → flag.** Converging (good) or thrashing (needs a design conversation).
 
-## Pipeline integration
+## Interactive feedback (Stage 4)
 
-Phase 8 loads this skill to process feedback from two sources:
+This skill loads during interactive review — user reviews prototype and gives feedback to builder:
 1. **Direct chat** — user tells builder directly
-2. **Kanban comments** — pipeline's urgent-condition check catches new comments
+2. **Kanban comments** — on completed build tasks
 
-For kanban feedback: read comment → triage → execute → comment back with what was done.
+The feedback loop is NOT part of the pipeline cron (Stage 1). It happens in interactive builder sessions when the user initiates review.

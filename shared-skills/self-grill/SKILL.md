@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 Launch PO to grill you on an idea. Branches are created dynamically as the grill reveals what design categories matter for THIS specific idea — no hardcoded list. PO identifies what needs interrogation, you add branches, the grill progresses.
 
-> **Pipeline context** — the grill is Phase 4 of an 8-phase build-queue pipeline. See [`references/pipeline-context.md`](references/pipeline-context.md) for the full pipeline architecture, artifact paths, and cron job details.
+> **Pipeline context** — the grill happens in Stage 3 (builder sessions), NOT in the pipeline cron. See [`references/pipeline-context.md`](references/pipeline-context.md) for the 4-stage architecture, artifact paths, and cron job details.
 >
 > **Web evidence** — for gathering real quotes/URLs/competitor data for dossiers, see [`references/web-evidence-gathering.md`](references/web-evidence-gathering.md).
 >
