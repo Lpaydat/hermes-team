@@ -12,7 +12,7 @@ Load this skill AFTER self-grill completes and BEFORE completing the kanban card
 
 ## Step 1 — Read the grill output
 
-Read the grill decisions (in the workspace or `~/projects/<slug>/`). This is your spec. Every locked decision tells you what to build and what NOT to build.
+Read the grill decisions in `~/projects/<slug>/grill/`. This is your spec — one file per branch, each with locked decisions and Q&A history. Every locked decision tells you what to build and what NOT to build.
 
 Also read the dossier at `~/vault/ventures/ideas/<slug>.md` for full context.
 
@@ -122,7 +122,7 @@ Link to `~/vault/ventures/ideas/<slug>.md`
 - [ ] Prototype runs with one command
 - [ ] README.md exists at `~/projects/<slug>/README.md` with all sections filled
 - [ ] "How to Review" has specific click-by-click steps
-- [ ] grill-decisions.md exists in `~/projects/<slug>/` or workspace
+- [ ] grill decisions exist in `~/projects/<slug>/grill/` (one file per branch)
 - [ ] Portfolio updated with correct path to `~/projects/<slug>/prototype/`
 
 ## Pitfalls
