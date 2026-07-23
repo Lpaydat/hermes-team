@@ -114,40 +114,67 @@ sys.exit(1)  # not found — create
         continue
     fi
 
-    # Create the kanban card
-    TITLE="Build prototype: $name"
+    # Create TWO kanban cards per idea: grill card (parent) → build card (child)
+    # The grill card runs self-grill and outputs grill-decisions.md.
+    # The build card runs venture-prototype and outputs the prototype + README.
+    # The build card is chained to the grill card (waits for grill to complete).
 
-    BODY="Score: ${score}/25 | Origin: Door ${origin} | Status: ${status}
+    GRILL_TITLE="Grill: $name"
+    GRILL_BODY="Score: ${score}/25 | Origin: Door ${origin} | Status: ${status}
 
 Read the dossier at ~/vault/ventures/ideas/${slug}.md
 Grill with PO using self-grill skill (REQUIRED — answer as founder).
-Build prototype. Drop in ~/projects/${slug}/prototype/
-Write README.md at ~/projects/${slug}/README.md (what it is, problem, features, how to test).
+Output grill-decisions.md to ~/projects/${slug}/grill-decisions.md
+Do NOT build the prototype — that's the next card.
+Complete this card when the grill is done."
+
+    BUILD_TITLE="Build prototype: $name"
+    BUILD_BODY="Score: ${score}/25 | Slug: ${slug}
+
+Read grill decisions at ~/projects/${slug}/grill-decisions.md
+Load venture-prototype skill. Do NOT re-grill — that's already done.
+POC gate → pick prototype type → build → write README.
+Prototype goes in ~/projects/${slug}/prototype/
+README goes in ~/projects/${slug}/README.md (use venture-prototype template).
 Update ~/vault/ventures/portfolio.md 'Awaiting Review' section.
 Complete this card when done."
 
+    # Create grill card (chained to previous idea's build card for sequential processing)
     if [ -n "$PREV_ID" ]; then
-        # Chain sequentially — this card waits for the previous one
-        RESULT=$(hermes kanban --board "$BOARD" create "$TITLE" \
+        GRILL_RESULT=$(hermes kanban --board "$BOARD" create "$GRILL_TITLE" \
             --assignee builder \
-            --body "$BODY" \
+            --body "$GRILL_BODY" \
             --parent "$PREV_ID" \
             --json 2>/dev/null || echo "{}")
     else
-        RESULT=$(hermes kanban --board "$BOARD" create "$TITLE" \
+        GRILL_RESULT=$(hermes kanban --board "$BOARD" create "$GRILL_TITLE" \
             --assignee builder \
-            --body "$BODY" \
+            --body "$GRILL_BODY" \
             --json 2>/dev/null || echo "{}")
     fi
 
-    TASK_ID=$(echo "$RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+    GRILL_ID=$(echo "$GRILL_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
 
-    if [ -n "$TASK_ID" ]; then
-        PREV_ID="$TASK_ID"
-        CREATED=$((CREATED + 1))
-        echo "CREATED [$TASK_ID]: [$score] $name (chained to: ${PREV_ID:-none})"
+    if [ -n "$GRILL_ID" ]; then
+        # Create build card, chained to grill card
+        BUILD_RESULT=$(hermes kanban --board "$BOARD" create "$BUILD_TITLE" \
+            --assignee builder \
+            --body "$BUILD_BODY" \
+            --parent "$GRILL_ID" \
+            --json 2>/dev/null || echo "{}")
+
+        BUILD_ID=$(echo "$BUILD_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+
+        if [ -n "$BUILD_ID" ]; then
+            PREV_ID="$BUILD_ID"
+            CREATED=$((CREATED + 1))
+            echo "CREATED [$GRILL_ID → $BUILD_ID]: [$score] $name"
+        else
+            echo "PARTIAL: grill card $GRILL_ID created but build card failed for $name"
+            PREV_ID="$GRILL_ID"
+        fi
     else
-        echo "FAILED: $name"
+        echo "FAILED: $name (grill card creation failed)"
     fi
 
 done <<< "$SORTED"
@@ -157,6 +184,6 @@ echo "$(date -Iseconds)" > "$MARKER"
 
 echo ""
 echo "=== Queue Builds Complete ==="
-echo "Created: $CREATED kanban cards for builder"
+echo "Created: $CREATED idea pipelines (2 cards each: grill → build)"
 echo "Board: $BOARD"
 echo "Marker updated: $MARKER"

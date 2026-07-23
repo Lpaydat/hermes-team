@@ -37,9 +37,9 @@ All four doors feed into the same downstream: score /25 → full dossier → fac
 
 **Stage 1 — AI pipeline (cron, no human):** Scan → Score → Dossier → Fact-Verify. Produces verified dossiers in idea-bank.md. Pipeline does NOT grill or build — those are separate.
 
-**Stage 2 — Queue script (cron, no AI):** `queue-builds.sh` reads idea-bank.md, sorts by score, picks top 10, creates kanban cards assigned to `builder`. One card = one prototype to build. Sequential chain via kanban_link.
+**Stage 2 — Queue script (cron, no AI):** `queue-builds.sh` reads idea-bank.md, sorts by score, picks top 10, creates TWO chained kanban cards per idea (grill card → build card) assigned to `builder`. Sequential chain via kanban_link.
 
-**Stage 3 — Builder sessions (background, separate context per card):** Builder picks up kanban card → reads dossier → grills with PO (REQUIRED — answer as founder with conviction) → builds prototype → drops in `~/projects/<slug>/prototype/` → writes README.md → updates portfolio.md "Awaiting Review" → completes card. No spec, no tickets, no epics — those are production artifacts.
+**Stage 3 — Builder sessions (background, separate context per card):** Each idea gets TWO chained kanban cards. **Grill card** (parent): builder reads dossier → grills with PO → outputs `~/projects/<slug>/grill-decisions.md` → completes card. **Build card** (child, auto-promotes when grill completes): builder loads `venture-prototype` skill → POC gate → picks prototype type → builds → writes README at `~/projects/<slug>/README.md` → updates portfolio.md "Awaiting Review" → completes card. No spec, no tickets, no epics — those are production artifacts.
 
 **Stage 4 — Interactive review (user-driven):** User reviews prototypes → opens chat with builder → gives feedback. Three outcomes:
 - "Fix X" → builder iterates (fast, fail fast)
