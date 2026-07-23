@@ -75,11 +75,13 @@ All grill RPC operations — setup, PO launch, answer pattern, branch management
 
 ## Dossier delegation pattern
 
-When building dossiers at scale, delegate research to subagents via `delegate_task` with `role='leaf'`. If a subagent hits the tool-call limit before writing the file, the content is preserved in the delegation summary at `~/.hermes-teams/startup/profiles/builder/cache/delegation/subagent-summary-*.txt` — extract and write locally.
+When building dossiers at scale, delegate research to subagents via `delegate_task` with `role='leaf'`. Dispatch in batches of 3 (parallel). If a subagent hits the tool-call limit before writing the file, the content is preserved in the delegation summary at `~/.hermes-teams/startup/profiles/builder/cache/delegation/subagent-summary-*.txt` — extract and write locally.
+
+**Batch pattern (tested 2026-07-23, 9 dossiers in 3 batches):** dispatch 3 subagents at once with `delegate_task(tasks=[...])`. Each gets the idea name, template path, output path, and existing signal data. Most write the file directly; ~1 in 3 exhausts the iteration budget and needs summary extraction.
 
 **Budget awareness:** check `delegation.max_iterations` in `~/.hermes-teams/startup/config.yaml` before dispatching. A rich 13-section dossier with web research needs 80-150 tool calls (search + fetch + write). If the budget is low (e.g., 50), the subagent will exhaust it before writing the file. The content survives in the summary — extract and write locally as fallback.
 
 ## Known issues
 
-1. **skill_manage symlink quirk** — `skill_manage(action='patch')` fails with "not found." Use `skill_manage(action='create')` to overwrite the full SKILL.md content. This is the only action that reliably resolves symlinked skills.
+1. **skill_manage symlink quirk** — `skill_manage(action='patch')` and `action='write_file'` fail with "not found." Use `skill_manage(action='create')` to overwrite the full SKILL.md content. This is the only action that reliably resolves symlinked skills.
 2. **Config changes don't apply mid-session** — `delegation.max_iterations` is cached at startup. Raised to 999 on disk but requires engine restart. If subagents hit limits, extract from the delegation summary file.
