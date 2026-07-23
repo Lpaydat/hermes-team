@@ -85,6 +85,14 @@ cp /tmp/grill-<slug>/context/*.md ~/projects/<slug>/grill/
 
 Completion criterion: every branch file exists in `~/projects/<slug>/grill/`. Verify with `ls ~/projects/<slug>/grill/*.md | wc -l` — the count must match the number of branches in `_state.md`.
 
+**Before completing the card**, run the validation script:
+
+```bash
+bash ~/.hermes-teams/shared-skills/self-grill/scripts/validate-grill-output.sh <slug>
+```
+
+Exit 0 = pass (safe to complete). Exit 1 = fail (fix the issue before completing). Do NOT call `kanban_complete` until the script passes.
+
 If this step is skipped, the grill decisions are lost. The venture-prototype skill (loaded after the grill) reads from this directory to build the prototype.
 
 ## RPC mechanics
