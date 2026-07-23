@@ -8,13 +8,13 @@ auxiliary:
     model: glm-4.6
     provider: zai
 command_allowlist:
-  - script execution via -e/-c flag
-  - execute_code
+- script execution via -e/-c flag
+- execute_code
 display:
   skin: dgx-spark
 fallback_providers:
-  - model: deepseek-v4-flash
-    provider: deepseek
+- model: deepseek-v4-flash
+  provider: deepseek
 kanban:
   max_in_progress: 3
   max_in_progress_per_profile: 3
@@ -30,77 +30,80 @@ onboarding:
 plugins:
   disabled: []
   enabled:
-    - kanban_chains
-    - context_graph
+  - kanban_chains
+  - loop_engine
+  - context_graph
   entries:
     kanban_chains:
       allow_tool_override: false
+    loop_engine:
+      allow_tool_override: false
 skills:
   disabled:
-    - airtable
-    - arxiv
-    - ask-matt
-    - blogwatcher
-    - claude-code
-    - codebase-design
-    - codebase-inspection
-    - codex
-    - decision-mapping
-    - design-an-interface
-    - diagnosing-bugs
-    - domain-modeling
-    - edit-article
-    - git-guardrails-claude-code
-    - github-auth
-    - github-code-review
-    - github-issues
-    - github-pr-workflow
-    - github-repo-management
-    - google-workspace
-    - handoff
-    - hermes-agent
-    - himalaya
-    - implement
-    - improve-codebase-architecture
-    - jupyter-live-kernel
-    - migrate-to-shoehorn
-    - node-inspect-debugger
-    - notion
-    - opencode
-    - plan
-    - ponytail
-    - ponytail-audit
-    - ponytail-debt
-    - ponytail-gain
-    - ponytail-help
-    - ponytail-review
-    - powerpoint
-    - prototype
-    - python-debugpy
-    - qa
-    - request-refactor-plan
-    - requesting-code-review
-    - resolving-merge-conflicts
-    - code-review
-    - scaffold-exercises
-    - setup-matt-pocock-skills
-    - setup-pre-commit
-    - simplify-code
-    - spike
-    - systematic-debugging
-    - tdd
-    - teach
-    - test-driven-development
-    - to-tickets
-    - to-spec
-    - triage
-    - ubiquitous-language
-    - wizard
-    - writing-beats
-    - writing-fragments
-    - writing-shape
-    - xurl
+  - airtable
+  - arxiv
+  - ask-matt
+  - blogwatcher
+  - claude-code
+  - codebase-design
+  - codebase-inspection
+  - codex
+  - decision-mapping
+  - design-an-interface
+  - diagnosing-bugs
+  - domain-modeling
+  - edit-article
+  - git-guardrails-claude-code
+  - github-auth
+  - github-code-review
+  - github-issues
+  - github-pr-workflow
+  - github-repo-management
+  - google-workspace
+  - handoff
+  - hermes-agent
+  - himalaya
+  - implement
+  - improve-codebase-architecture
+  - jupyter-live-kernel
+  - migrate-to-shoehorn
+  - node-inspect-debugger
+  - notion
+  - opencode
+  - plan
+  - ponytail
+  - ponytail-audit
+  - ponytail-debt
+  - ponytail-gain
+  - ponytail-help
+  - ponytail-review
+  - powerpoint
+  - prototype
+  - python-debugpy
+  - qa
+  - request-refactor-plan
+  - requesting-code-review
+  - resolving-merge-conflicts
+  - code-review
+  - scaffold-exercises
+  - setup-matt-pocock-skills
+  - setup-pre-commit
+  - simplify-code
+  - spike
+  - systematic-debugging
+  - tdd
+  - teach
+  - test-driven-development
+  - to-tickets
+  - to-spec
+  - triage
+  - ubiquitous-language
+  - wizard
+  - writing-beats
+  - writing-fragments
+  - writing-shape
+  - xurl
 toolsets:
-  - hermes-cli
-  - kanban
-  - context_graph
+- hermes-cli
+- kanban
+- context_graph

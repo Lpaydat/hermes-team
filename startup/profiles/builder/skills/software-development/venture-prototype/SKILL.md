@@ -133,8 +133,61 @@ Link to `~/vault/ventures/ideas/<slug>.md`
 - **Building a POC when the risk is market.** Don't prove the tech works when the question is whether anyone cares.
 - **Re-grilling.** The grill already happened. Don't re-run it. Read the decisions and build.
 
+## Tools for quality and parallelism
+
+**loop_engine** and **kanban_chains** are available. They are NOT tech-lead exclusive — a dumb model with a better workflow outperforms a smart model with none. Breaking a one-shot build into phased, verified steps gives ~30% quality boost (prevents drift from grill decisions, catches missing README before completion).
+
+### When to use loop_engine (phased build with DoD gate)
+
+Use for complex prototypes (API, CLI, multi-feature web app) or when the build card carries high-value ideas. Skip for simple single-file HTML demos.
+
+**Phase structure for prototype build:**
+
+```
+loop_engine(
+  goal: "Build <slug> prototype from grill decisions",
+  phases: [
+    {
+      execution: { assignee: "builder", title: "Build prototype", body: "<build instructions>" },
+      verifier: { assignee: "builder", title: "Verify prototype", body: "Check: prototype runs with one command? Zero JS errors? All grill decisions reflected? Aha moment is visible?" },
+      max_iterations: 2
+    },
+    {
+      execution: { assignee: "builder", title: "Write README", body: "<README template from this skill>" },
+      verifier: { assignee: "builder", title: "Verify README", body: "Check: all 9 sections filled? How to Review has specific clicks? Grill decisions summarized? Correct paths?" },
+      max_iterations: 2
+    }
+  ]
+)
+```
+
+The verifier gate between phases prevents premature completion — the builder can't advance to README until the prototype passes its DoD check.
+
+### When to use kanban_chains (parallel builds)
+
+Use when building multiple prototypes in one session (batch mode) or when a single prototype has independent components.
+
+**Batch pattern (build N prototypes concurrently):**
+
+```
+kanban_chains(
+  goal: "Build N prototypes from grilled ideas",
+  chains: [
+    [{ assignee: "builder", title: "Build: <idea-1>", body: "..." }],
+    [{ assignee: "builder", title: "Build: <idea-2>", body: "..." }],
+    [{ assignee: "builder", title: "Build: <idea-3>", body: "..." }],
+  ],
+  after: [
+    { assignee: "builder", title: "Update portfolio for all", body: "..." }
+  ]
+)
+```
+
+Concurrency is capped by `kanban.max_in_progress_per_profile` (default 3). Chains auto-queue when the cap is reached.
+
 ## NEVER
 
 - **NEVER put prototypes in `~/vault/`.** That's the Obsidian vault. Prototypes go in `~/projects/<slug>/prototype/`.
 - **NEVER skip the README.** It's mandatory for every prototype.
 - **NEVER block the card during build.** The build card should run straight through to completion.
+- **NEVER default to HTML for everything.** Match the prototype type to the product.

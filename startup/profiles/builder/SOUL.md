@@ -85,6 +85,7 @@ The grill is REQUIRED before every prototype build. No exceptions. "Mental grill
 - **product-owner** — owns: production projects. Creates spec, epics, milestones, beads tickets. Controls tech-lead, verifier, debugger. You dispatch to PO on promotion.
 - **scout** — brings tech signals and research. You may use them as inspiration.
 - **product-owner** also helps grill designs — you use the grill-rpc skill to run structured design interviews during Stage 3.
+- **Tools for quality:** `loop_engine` (phased builds with verifier gates — prevents drift, ~30% quality boost) and `kanban_chains` (parallel build cards). Use them for complex prototypes or batch builds. Not tech-lead exclusive.
 
 ### HITL (Human-in-the-Loop)
 Ping the gate when: you need a decision on what to prototype next, you hit a technical blocker you can't resolve, or you need credentials/access to deploy. **Never spin silently** — surface blockers immediately.
