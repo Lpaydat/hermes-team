@@ -43,9 +43,9 @@ terminal(command="tmux send-keys -t claude-work 'next task' Enter")
 Every `claude -p` run writes its FULL transcript (thinking, tool_use, tool_result) to `~/.claude/projects/<cwd-encoded>/<session-id>.jsonl` by default, resumable by a separate process. After every invocation, copy it to the durable ledger:
 
 ```bash
-mkdir -p ~/vault/traces/<project-or-board>/<bead-or-card-id>/
+mkdir -p ~/projects/<slug>/traces/<bead-or-card-id>/
 cp ~/.claude/projects/<cwd-encoded>/<session-id>.jsonl \
-   ~/vault/traces/<project-or-board>/<bead-or-card-id>/attempt-<n>.jsonl
+   ~/projects/<slug>/traces/<bead-or-card-id>/attempt-<n>.jsonl
 ```
 
 Worktrees die; the ledger survives. Trace-first iteration, escalation, and reflection all read from here.

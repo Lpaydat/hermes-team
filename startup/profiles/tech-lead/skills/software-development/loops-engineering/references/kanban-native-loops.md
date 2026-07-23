@@ -11,7 +11,7 @@ v1 assumed the developer's execution trace dies with its session. False, twice o
 1. **Harness transcripts persist on disk by default** — claude: `~/.claude/projects/<cwd-encoded>/<session-id>.jsonl` (full trace: thinking, tool_use, tool_result), resumable cross-process via `claude -p -r <id>`; codex: `~/.codex/sessions/.../rollout-*.jsonl`; opencode: `opencode export`.
 2. **Hermes persists every profile session** in per-profile `state.db` (FTS5-indexed), readable cross-profile via `session_search(profile=...)`; `kanban_complete` stamps `worker_session_id` into card run metadata (on complete only — block paths must include the session id in the block comment).
 
-So trace-first iteration (SKILL.md Iterate rules) survives async mode unchanged. The only new requirement is the capture convention: **every harness invocation copies its transcript to `~/vault/traces/<board>/<card-id>/attempt-<n>.jsonl`** before the card completes or blocks.
+So trace-first iteration (SKILL.md Iterate rules) survives async mode unchanged. The only new requirement is the capture convention: **every harness invocation copies its transcript to `~/projects/<slug>/traces/<card-id>/attempt-<n>.jsonl`** before the card completes or blocks.
 
 ## Roles
 
@@ -123,7 +123,7 @@ The dispatch path's lifetime record before commissioning: 0 completions in 29 ru
 1. Pick a trivial, real, single-file bead (or write one) on a project board.
 2. tech-lead calls `kanban_chains` (creates dev+verifier cards atomically, links tech-lead as dependent on verifier, blocks with kind=dependency).
 3. Watch: dispatcher claims dev card → developer completes with trace + report + branch/worktree metadata → verification card auto-promotes with the handoff → verifier executes, verdicts, merges via slot → bead closed.
-4. Verify afterwards: `worker_session_id` stamped, transcript in `~/vault/traces/<board>/<card-id>/`, `session_search(profile=developer)` finds the session, the parent handoff carried branch_name/worktree_path, journal entry written.
+4. Verify afterwards: `worker_session_id` stamped, transcript in `~/projects/<slug>/traces/<card-id>/`, `session_search(profile=developer)` finds the session, the parent handoff carried branch_name/worktree_path, journal entry written.
 5. Any step fails → fix the config/choreography and rerun. Do not route real work until one commissioning loop is fully green.
 6. Round 2 of commissioning (recommended): seed a card designed to FAIL review once — verify the findings comment, fix-card choreography (original worktree + warm resume), fresh review card promotion, and the second-round merge all work.
 
