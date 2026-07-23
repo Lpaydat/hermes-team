@@ -99,8 +99,8 @@ Step-by-step. Be specific — "Open index.html", "Click the Sync button",
 "The aha moment is X". The founder should know exactly what to do.
 
 ## Grill Decisions
-Summary table: decision | lock value. Link to grill-decisions.md.
-Note any flaws PO caught and how they were corrected.
+Summary table: decision | lock value. Link to grill/ directory
+(one file per branch). Note any flaws PO caught and how they were corrected.
 
 ## Riskiest Assumption
 The ONE thing that could kill this. Whether a POC was run and what it found.

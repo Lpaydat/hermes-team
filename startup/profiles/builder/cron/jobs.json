@@ -66,17 +66,17 @@
       "schedule_display": "0 5 * * 1,3,5",
       "repeat": {
         "times": null,
-        "completed": 8
+        "completed": 9
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T13:08:28.575542+07:00",
-      "next_run_at": "2026-07-24T05:00:00+07:00",
-      "last_run_at": "2026-07-22T15:01:17.215940+07:00",
-      "last_status": "error",
-      "last_error": "Script not found: /home/lpaydat/.hermes-teams/startup/profiles/builder/scripts/scan-requesthunt.sh",
+      "next_run_at": "2026-07-27T05:00:00+07:00",
+      "last_run_at": "2026-07-24T05:00:17.969663+07:00",
+      "last_status": "ok",
+      "last_error": null,
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
@@ -175,5 +175,5 @@
       "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-24T03:30:17.052375+07:00"
+  "updated_at": "2026-07-24T05:00:17.970084+07:00"
 }

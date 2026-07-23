@@ -30,11 +30,13 @@ hermes gateway status --profile builder | head -5
 
 ## 2. Running queue-builds.sh
 
-The queue script lives at `~/.hermes-teams/startup/profiles/builder/scripts/queue-builds.sh`. It reads `~/vault/ventures/idea-bank.md`, picks top 10 unbuilt ideas by score, creates kanban cards assigned to `builder`, chained sequentially.
+The queue script lives at `~/.hermes-teams/startup/profiles/builder/scripts/queue-builds.sh`. It reads `~/vault/ventures/idea-bank.md`, picks top 10 unbuilt ideas by score, creates **one kanban card per idea** assigned to `builder`, chained sequentially across ideas.
 
 ```bash
 cd ~/.hermes-teams/startup/profiles/builder/scripts && bash queue-builds.sh
 ```
+
+**1-card architecture (current):** One card per idea. Builder reads dossier → grills with PO → builds prototype → writes README → updates portfolio → completes. Cards chain sequentially across ideas (idea 2 waits for idea 1's card to complete).
 
 **Guard:** The script has a 6h cooldown marker at `~/vault/ventures/.last-queue`. To force a re-run during testing:
 
@@ -42,7 +44,7 @@ cd ~/.hermes-teams/startup/profiles/builder/scripts && bash queue-builds.sh
 rm -f ~/vault/ventures/.last-queue
 ```
 
-**Expected output on success:** 10 `CREATED [t_xxx]` lines, one per idea, sorted by score descending.
+**Expected output on success:** 10 `CREATED [t_xxx]` lines (one per idea), sorted by score descending.
 
 ## 3. Verifying kanban cards after queue-builds.sh
 
@@ -57,8 +59,9 @@ After running the queue script, verify cards were created correctly:
 
 **Checklist:**
 - 10 cards exist with titles starting "Build prototype:"
+- Each card (except the first) has the previous card as parent (sequential chain)
 - First card (highest score) should be `running` or `ready`
-- Remaining cards should be `todo` (or `ready` if unchained)
+- Remaining cards should be `todo` (waiting for their parent to complete)
 - Re-running the script should create 0 cards (dedup via slug-in-title check)
 
 **Dedup verification:**
@@ -182,6 +185,12 @@ hermes kanban --board hermes-hq show <task_id> 2>&1 | grep heartbeat | tail -3
 
 `references/prototype-deliverable-requirements.md` — REQUIRED reading for builders. Every prototype MUST ship with index.html + README.md (with specific sections) + grill-decisions.md. 8/10 prototypes in the E2E test were missing READMEs — this file defines the quality bar.
 
+`references/2026-07-24-vault-migration-and-cross-profile-scan.md` — the full vault-to-projects migration: what stays in vault (Obsidian), what moves to ~/projects/, how to audit ALL profiles for wrong paths, and the sed backreference pitfall.
+
+`references/2026-07-24-venture-prototype-vs-mattpocock-prototype.md` — why Matt Pocock's `prototype` skill does NOT fit our venture pipeline (in-codebase dev prototyping vs our standalone clickable demos), and the proposed venture-prototype README structure for founder review.
+
+`references/2026-07-24-2card-pipeline-architecture.md` — **SUPERSEDED.** The 2-card split (grill card → build card) was reverted on 2026-07-24 after the user clarified they meant separating grill and build PHASES, not cards per idea. The pipeline uses 1 card per idea. Kept for historical context on why the split was considered and what problems it attempted to solve.
+
 ## Pitfalls
 
 - **Gateway caches config at startup.** A config.yaml change is invisible to running sessions until `hermes gateway restart`. Sessions spawned by the dispatcher inherit the gateway's cached config, not the file on disk.
@@ -194,3 +203,8 @@ hermes kanban --board hermes-hq show <task_id> 2>&1 | grep heartbeat | tail -3
 - **Builder blocks kanban card during self-grill.** The builder calls `kanban_block(kind='needs_input')` while waiting for grill answers, even though it IS the founder in a self-grill. This stops heartbeats and triggers a dispatcher reclaim after ~1h. **FIXED 2026-07-24:** Both `self-grill` and `grill-rpc-ops` SKILL.md files were patched directly via the `patch` tool (bypasses pinned-skill restriction). The self-grill skill now has a "NEVER block the kanban card during self-grill" section. Cards 6+ in the E2E test should benefit. See `references/2026-07-23-self-grill-card-blocking.md` for root-cause analysis.
 - **Slug mismatch between idea-bank.md and dossier filenames creates duplicate prototype dirs.** LeadPilot: `leadpilot-ai-local-smb-lead-gen` (idea-bank) vs `leadpilot-local-smb-lead-gen` (dossier). Builder created both dirs. Normalize slugs in idea-bank.md to match actual dossier filenames.
 - **Pinned skills cannot be patched by skill_manage or the background curator.** But they CAN be patched via the `patch` tool directly on the filesystem path. `grill-rpc-ops` and `self-grill` were both successfully patched this way (2026-07-24): the `--cli` timeout fix and the never-block-during-self-grill fix. The `patch` tool operates on files, not through the curator, so pin protection does not apply.
+- **`~/vault/` is Obsidian — NEVER put project artifacts there.** The user has corrected this repeatedly across multiple sessions. `~/vault/ventures/` holds ONLY pipeline intake (signals, idea-bank, dossiers, portfolio). ALL project artifacts (prototypes, README, context, production code, journal, traces, qa-evidence) go in `~/projects/<slug>/`. This applies to ALL profiles — not just builder. The user said: "I kept telling you to don't use ~/vault as that's obsidian location that we plan to use it for our second brain." See `references/2026-07-24-vault-migration-and-cross-profile-scan.md` for the full audit across builder, tech-lead, developer, qa, and advisor profiles.
+- **Project promotion SKILL.md step 3 still says "Copy prototype from ~/vault/ventures/prototypes/"** — this is a known stale path. The prototype already lives at `~/projects/<slug>/prototype/` from the build phase. No copy needed. NOTE: There are TWO project-promotion skill dirs (top-level symlink + software-development/ copy). The shared-skills one is the canonical source. Must fix BOTH or consolidate to one.
+- **Prototype deliverable inconsistency — SOLVED by venture-prototype skill.** The `venture-prototype` skill enforces README.md as mandatory with a verify checklist checking for all required sections before allowing completion. See `references/prototype-deliverable-requirements.md` for the quality bar. NOTE: the 2-card grill/build split was reverted — the pipeline uses 1 card per idea. The venture-prototype skill loads after the grill completes within the same session.
+- **Wrong paths spread across ALL profiles, not just builder.** When `~/vault/` appeared in builder's files, it also existed in tech-lead's SOUL.md and loops-engineering skill (journal, traces). ALWAYS scan all profiles when fixing a path — `grep -rn 'pattern' ~/.hermes-teams/startup/profiles/*/SOUL.md ~/.hermes-teams/startup/profiles/*/skills/ ~/.hermes-teams/shared-skills/`. Use `cross_profile=True` on the `patch` tool to fix other profiles' files. See `references/2026-07-24-vault-migration-and-cross-profile-scan.md` for the full audit.
+- **sed backreferences on paths produce `\x01` garbage.** `sed -i 's|pattern|\1/prototype/|g'` silently inserts literal control chars when the replacement has backslashes. Use Python `re.sub` or context-based string replacement instead.
