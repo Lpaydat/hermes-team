@@ -18,7 +18,13 @@ Launch PO to grill you on an idea. Branches are created dynamically as the grill
 
 Before launching the grill, produce a **venture brief** from the dossier. A raw idea fed to PO wastes the first 3-5 turns extracting "what problem are you solving?" — that's discovery the builder should do beforehand.
 
-The brief is a **strawman**, not settled scope. When launching PO, state: "this list is incomplete by definition; one of your jobs is to find the gaps, not just audit what's here." PO grills *both* the features *and* the list's completeness.
+The brief has three pillars:
+
+1. **Problem / Opportunity** — Why does this need to exist? What pain or gap? Who has this problem (specific, not "everyone")? What they do today instead?
+2. **Core Idea** — One-sentence pitch. The core mechanism or insight that makes your approach solve the problem better. Not features — the *insight*.
+3. **Core Features** — 3-7 irreducible capabilities, each traceable to a pain point. If a feature doesn't map to a problem, it's scope creep.
+
+The brief is a **strawman**, not settled scope. The pillars are **iterative** — tighten in loops until consistent (a feature that doesn't solve the stated problem sends you back to pillar 1 or 2). When launching PO, state: "this list is incomplete by definition; one of your jobs is to find the gaps, not just audit what's here." PO grills *both* the features *and* the list's completeness.
 
 Use the [venture brief template](references/venture-brief-template.md). Check `~/vault/ventures/ideas/` for an existing dossier before drafting.
 
@@ -27,7 +33,7 @@ Use the [venture brief template](references/venture-brief-template.md). Check `~
 ```
 1. Draft venture brief (3 pillars) from the dossier
 2. Set up grill state (see grill-rpc-ops for scripts)
-3. Launch PO with the brief
+3. Launch PO with the brief, not a raw idea
 4. PO asks questions → first few reveal what categories matter
 5. Ask PO: "What 3-5 design categories does this idea need?"
 6. Create branches from PO's answer
@@ -44,6 +50,8 @@ Use the [venture brief template](references/venture-brief-template.md). Check `~
 You are the founder. PO's questions are for YOU to answer, not a human gate.
 Do NOT call `kanban_block`. Do NOT set the card to `needs_input`.
 Answer immediately and continue the grill.
+Blocking causes the dispatcher to reclaim the card after ~1h stale timeout,
+wasting a full reclaim cycle and fragmenting grill state across sessions.
 The card stays `running` from grill start to completion.
 
 ## Grill output: per-branch files (REQUIRED)
