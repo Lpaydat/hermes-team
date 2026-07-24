@@ -114,3 +114,5 @@ All grill RPC operations — setup, PO launch, answer pattern, branch management
 When building dossiers at scale, delegate research to subagents via `delegate_task` with `role='leaf'`. Dispatch in batches of 3 (parallel). If a subagent hits the tool-call limit before writing the file, the content is preserved in the delegation summary — extract and write locally.
 
 Check `delegation.max_iterations` in `~/.hermes-teams/startup/config.yaml` before dispatching. A rich 13-section dossier with web research needs 80-150 tool calls. If the budget is low, extract from the delegation summary as fallback.
+
+**CRITICAL: Restrict leaf subagent toolsets.** Always pass `enabled_toolsets` to delegate_task when dispatching research subagents. Use `["web", "file", "terminal"]` — do NOT include `"kanban"`. Leaf subagents that inherit the kanban toolset will call `kanban_complete` on your parent task, marking it done before the grill runs. This bug caused 2/3 prototype pairs to require recovery cards in the July 24 parallel test.

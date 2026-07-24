@@ -130,6 +130,7 @@ When the prototype + README are done, write the review handoff. Load the `protot
 - **Building a POC when the risk is market.** Don't prove the tech works when the question is whether anyone cares.
 - **Re-grilling.** The grill already happened. Don't re-run it. Read the decisions and build.
 - **Skipping loop_engine.** The builder self-assesses every build as "simple enough" to skip loop_engine. This is premature completion every time — proven in the July 24 E2E test. loop_engine is MANDATORY.
+- **Subagents completing the parent card.** When you use `delegate_task` for research or verification, leaf subagents inherit the kanban toolset and can call `kanban_complete` on your parent task. This causes the card to complete before the work is done. **ALWAYS pass `enabled_toolsets` to delegate_task** to restrict leaf subagents to only the tools they need (e.g. `["web", "file", "terminal"]`). NEVER give a research subagent the kanban toolset — it has no business managing task lifecycle.
 
 ## Build with loop_engine (MANDATORY)
 
@@ -139,7 +140,9 @@ loop_engine breaks the one-shot build into phased steps with an independent veri
 
 ### Phase 0 — Write verification script (BEFORE building)
 
-Before calling loop_engine, write a verification script at `/tmp/verify-<slug>.py` that checks the prototype against the grill decisions. Use the [verify script template](references/verify-script-template.md) — parse every `Lock D` line from `~/projects/<slug>/context/*.md` and check prototype existence, README sections, and decision coverage.
+Before calling loop_engine, write a verification script at `/tmp/verify-<slug>.py` that checks the prototype against the grill decisions. Use the [verify script template](references/verify-script-template.md) — it provides 4 categories of checks (structural, decision-content, README, build-rules).
+
+**Minimum: 20 checks.** The template gives you ~15 automatic checks (DOCTYPE, JS braces, README sections, dark theme, zero deps, simulated data label). You must add at least 5 decision-content checks that map specific `Lock D` values to elements in the prototype HTML. Aim for 30-50 checks for complex prototypes (RouteOpt had 48).
 
 This script IS the verifier's DoD. The verifier runs it. If exit code != 0, the phase replans.
 
