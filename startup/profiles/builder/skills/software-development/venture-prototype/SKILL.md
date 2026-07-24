@@ -99,7 +99,7 @@ Step-by-step. Be specific — "Open index.html", "Click the Sync button",
 "The aha moment is X". The founder should know exactly what to do.
 
 ## Grill Decisions
-Summary table: decision | lock value. Link to grill/ directory
+Summary table: decision | lock value. Link to context/ directory
 (one file per branch). Note any flaws PO caught and how they were corrected.
 
 ## Riskiest Assumption
@@ -133,39 +133,118 @@ Link to `~/vault/ventures/ideas/<slug>.md`
 - **Building a POC when the risk is market.** Don't prove the tech works when the question is whether anyone cares.
 - **Re-grilling.** The grill already happened. Don't re-run it. Read the decisions and build.
 
-## Tools for quality and parallelism
+## Build with loop_engine (MANDATORY)
 
-**loop_engine** and **kanban_chains** are available. They are NOT tech-lead exclusive — a dumb model with a better workflow outperforms a smart model with none. Breaking a one-shot build into phased, verified steps gives ~30% quality boost (prevents drift from grill decisions, catches missing README before completion).
+You MUST use `loop_engine` for every prototype build. No exceptions. Do NOT self-assess the build as "simple enough" to skip it — that's premature completion, and the E2E test proved the builder does this every time when left to choose.
 
-### When to use loop_engine (phased build with DoD gate)
+loop_engine breaks the one-shot build into phased steps with an independent verifier gate between each phase. The verifier is a separate agent session that checks the work against the spec (the grill decisions in context/). This is the "don't trust the LLM" principle — same as Claude Code's verification loops. A dumb model with a better workflow outperforms a smart model with none.
 
-**DEFAULT: use loop_engine for every build.** The E2E test showed the builder
-skips it by judging "this is simple enough" — that's premature completion.
-Breaking the build into phases with a verifier gate catches drift and missing
-deliverables. The only time to skip is a literal single-screen HTML page with
-no grill decisions to reflect.
+### Phase 0 — Write verification script (BEFORE building)
 
-**Phase structure for prototype build:**
+Before calling loop_engine, write a temporary verification script at `/tmp/verify-<slug>.py` that checks the prototype against the grill decisions. This is your DoD in executable form.
+
+Read every `Lock D` line from `~/projects/<slug>/context/*.md`. For each locked decision, write a check. Example:
+
+```python
+#!/usr/bin/env python3
+"""Verify <slug> prototype against grill decisions in context/."""
+import re, os, sys
+
+context_dir = os.path.expanduser("~/projects/<slug>/context")
+proto_dir = os.path.expanduser("~/projects/<slug>/prototype")
+readme_path = os.path.expanduser("~/projects/<slug>/README.md")
+
+# Parse locked decisions from context/
+decisions = {}
+for f in os.listdir(context_dir):
+    if f == "_state.md": continue
+    with open(os.path.join(context_dir, f)) as fh:
+        for line in fh:
+            m = re.match(r'Lock (D\d+):\s*(.+?)\s*=\s*(.+)', line)
+            if m:
+                decisions[m.group(1)] = (m.group(2).strip(), m.group(3).strip())
+
+failures = []
+
+# Check 1: Prototype exists
+proto_files = os.listdir(proto_dir) if os.path.isdir(proto_dir) else []
+if not proto_files:
+    failures.append("No prototype files in prototype/")
+
+# Check 2: README exists with required sections
+required_sections = ["## What It Is", "## The Problem", "## Core Features",
+                     "## How to Review", "## Grill Decisions", "## Riskiest Assumption",
+                     "## How to Run", "## What Happens Next", "## Dossier"]
+if os.path.exists(readme_path):
+    readme = open(readme_path).read()
+    for section in required_sections:
+        if section not in readme:
+            failures.append(f"README missing section: {section}")
+else:
+    failures.append("README.md does not exist")
+
+# Check 3: Each decision is referenced in README
+if os.path.exists(readme_path):
+    readme_lower = readme.lower()
+    for d_id, (title, value) in decisions.items():
+        # At least the decision topic should appear somewhere
+        keywords = title.lower().split()[:2]
+        if not all(kw in readme_lower for kw in keywords):
+            failures.append(f"Decision {d_id} ({title}) not reflected in README")
+
+# Report
+print(f"Decisions checked: {len(decisions)}")
+print(f"Checks passed: {3 - len([f for f in failures if 'Check' in f])}")
+print(f"Failures: {len(failures)}")
+for f in failures:
+    print(f"  FAIL: {f}")
+
+sys.exit(1 if failures else 0)
+```
+
+This script IS the verifier's DoD. The verifier runs it. If exit code != 0, the phase replans.
+
+### Phase 1 — Build prototype
 
 ```
 loop_engine(
-  goal: "Build <slug> prototype from grill decisions",
+  goal: "Build <slug> prototype from context/ grill decisions",
+  blackboard: {
+    spec_path: "~/projects/<slug>/context/",
+    extra: { "slug": "<slug>", "verify_script": "/tmp/verify-<slug>.py" }
+  },
   phases: [
     {
-      execution: { assignee: "builder", title: "Build prototype", body: "<build instructions>" },
-      verifier: { assignee: "builder", title: "Verify prototype", body: "Check: prototype runs with one command? Zero JS errors? All grill decisions reflected? Aha moment is visible?" },
+      execution: {
+        assignee: "builder",
+        title: "Build prototype",
+        body: "Read ~/projects/<slug>/context/*.md for locked decisions. Pick prototype type per skill rules. Build in ~/projects/<slug>/prototype/. Follow build rules: one command to run, simulated data, show aha moment."
+      },
+      verifier: {
+        assignee: "builder",
+        title: "Verify prototype against grill decisions",
+        body: "Read ~/projects/<slug>/context/*.md. Check the prototype reflects every locked decision. Run: python3 /tmp/verify-<slug>.py. If exit != 0, the phase fails and must replan."
+      },
       max_iterations: 2
     },
     {
-      execution: { assignee: "builder", title: "Write README", body: "<README template from this skill>" },
-      verifier: { assignee: "builder", title: "Verify README", body: "Check: all 9 sections filled? How to Review has specific clicks? Grill decisions summarized? Correct paths?" },
+      execution: {
+        assignee: "builder",
+        title: "Write README",
+        body: "Write README.md at ~/projects/<slug>/README.md using the template from venture-prototype skill. Read context/ for grill decisions. Include specific click-by-click 'How to Review' steps."
+      },
+      verifier: {
+        assignee: "builder",
+        title: "Verify README completeness",
+        body: "Run: python3 /tmp/verify-<slug>.py. Check all 9 sections exist. Check 'How to Review' has specific click instructions (not vague). Check every grill decision from context/ is referenced. If verify script fails, replan."
+      },
       max_iterations: 2
     }
   ]
 )
 ```
 
-The verifier gate between phases prevents premature completion — the builder can't advance to README until the prototype passes its DoD check.
+The verifier reads `~/projects/<slug>/context/*.md` as the spec and runs the verification script. This is NOT the builder self-reporting — it's an independent check that the prototype matches the locked decisions.
 
 ### When to use kanban_chains (parallel builds)
 
@@ -195,4 +274,4 @@ Concurrency is capped by `kanban.max_in_progress_per_profile` (default 3). Chain
 - **NEVER skip the README.** It's mandatory for every prototype.
 - **NEVER block the card during build.** The build card should run straight through to completion.
 - **NEVER default to HTML for everything.** Match the prototype type to the product.
-- **NEVER skip the grill validation gate.** If grill decisions are missing from `~/projects/<slug>/grill/`, do NOT guess what the decisions were. Block with evidence or run `validate-grill-output.sh` first.
+- **NEVER skip the grill validation gate.** If grill decisions are missing from `~/projects/<slug>/context/`, do NOT guess what the decisions were. Block with evidence or run `validate-grill-output.sh` first.
