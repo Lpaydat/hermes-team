@@ -127,11 +127,13 @@ Link to `~/vault/ventures/ideas/<slug>.md`
 
 ## Pitfalls
 
+- **Shallow grill output (fewer than 20 decisions).** If `~/projects/<slug>/context/` has only 2 decisions per branch, the grill was shallow. Root cause: the builder self-played both roles (wrote questions AND answers without launching PO). The grill is a dialogue — PO must actually run as a separate session and the builder must wait for each `<Q>` tagged question. If the PO session DB shows 0 `<Q>` tags, the grill was self-played and must be re-run. The original ec521103 self-grill with single CONTEXT.md produced 50+ questions; the branch-based approach fragmented it.
 - **Defaulting to HTML for everything.** CrawlPay is middleware — a curl-able endpoint + traffic dashboard is more honest than a fake web app.
 - **Skipping the README.** The portfolio entry is NOT a substitute — it's a summary, not a review surface.
 - **Vague "How to Review".** "Try the demo" is useless. "Click the Sync Transactions button, then switch to the Review Queue tab" is useful.
 - **Building a POC when the risk is market.** Don't prove the tech works when the question is whether anyone cares.
 - **Re-grilling.** The grill already happened. Don't re-run it. Read the decisions and build.
+- **Skipping loop_engine.** The builder self-assesses every build as "simple enough" to skip loop_engine. This is premature completion every time — proven in the July 24 E2E test. loop_engine is MANDATORY.
 
 ## Build with loop_engine (MANDATORY)
 
