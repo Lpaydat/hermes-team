@@ -114,50 +114,87 @@ sys.exit(1)  # not found — create
         continue
     fi
 
-    # Create the kanban card
-    TITLE="Build prototype: $name"
+    # ── Card A: Grill ──
+    GRILL_TITLE="Grill: $name"
 
-    BODY="Score: ${score}/25 | Origin: Door ${origin} | Status: ${status} | Slug: ${slug}
+    GRILL_BODY="Score: ${score}/25 | Slug: ${slug}
 
 Read the dossier at ~/vault/ventures/ideas/${slug}.md
 
-FULL PIPELINE (follow skills exactly):
+YOUR JOB — Grill ONLY. Do NOT build the prototype (that is the next card).
+
 1. Grill with REAL PO using self-grill skill (REQUIRED — answer as founder).
    - CRITICAL: env -u HERMES_KANBAN_TASK before launching PO (see grill-rpc-ops skill)
    - Persist grill output to ~/projects/${slug}/context/ (per-branch files)
    - Run validation: bash ~/.hermes-teams/shared-skills/self-grill/scripts/validate-grill-output.sh ${slug}
-2. Build prototype using loop_engine (MANDATORY — see venture-prototype skill).
-   - Write verify script, use phased build with verifier gates
-   - Drop in ~/projects/${slug}/prototype/
-3. Write README.md at ~/projects/${slug}/README.md (all 9 sections — see venture-prototype template).
-4. Write review handoff (see prototype-review-handoff skill — portfolio entry + kanban comment).
-   Update ~/vault/ventures/portfolio.md 'Awaiting Review' section.
-Complete this card when done.
+2. Write grill decisions summary to ~/projects/${slug}/.context/grill/decisions.md
+3. Copy dossier to ~/projects/${slug}/.context/dossier.md
 
+Complete this card when grill validation passes.
+Do NOT build the prototype — that is the next card.
 NEVER put artifacts in ~/vault/ (Obsidian only). Everything goes in ~/projects/${slug}/."
 
     if [ -n "$PREV_ID" ]; then
-        # Chain sequentially — this card waits for the previous one
-        RESULT=$(hermes kanban --board "$BOARD" create "$TITLE" \
+        GRILL_RESULT=$(hermes kanban --board "$BOARD" create "$GRILL_TITLE" \
             --assignee builder \
-            --body "$BODY" \
+            --body "$GRILL_BODY" \
             --parent "$PREV_ID" \
             --json 2>/dev/null || echo "{}")
     else
-        RESULT=$(hermes kanban --board "$BOARD" create "$TITLE" \
+        GRILL_RESULT=$(hermes kanban --board "$BOARD" create "$GRILL_TITLE" \
             --assignee builder \
-            --body "$BODY" \
+            --body "$GRILL_BODY" \
             --json 2>/dev/null || echo "{}")
     fi
 
-    TASK_ID=$(echo "$RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+    GRILL_ID=$(echo "$GRILL_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
 
-    if [ -n "$TASK_ID" ]; then
-        PREV_ID="$TASK_ID"
-        CREATED=$((CREATED + 1))
-        echo "CREATED [$TASK_ID]: [$score] $name (chained to: ${PREV_ID:-none})"
+    if [ -z "$GRILL_ID" ]; then
+        echo "FAILED (grill card): $name"
+        continue
+    fi
+
+    # ── Card B: Build (parent = grill card, waits for grill to complete) ──
+    BUILD_TITLE="Build: $name"
+
+    BUILD_BODY="Slug: ${slug}
+
+The dossier and grill are DONE. Do NOT re-grill or re-research.
+Read grill decisions at ~/projects/${slug}/context/
+Read decisions summary at ~/projects/${slug}/.context/grill/decisions.md
+
+YOUR JOB — Build ONLY. This card exists to isolate loop_engine in a fresh context.
+
+1. Build prototype using loop_engine (MANDATORY — see venture-prototype skill).
+   - Write verify script at /tmp/verify-${slug}.py BEFORE building
+   - Parse every decision from ~/projects/${slug}/context/*.md
+   - Use loop_engine with 2 phases: (1) build prototype, (2) write README
+   - Each phase has a verifier gate — if verify fails, replan
+   - Drop in ~/projects/${slug}/prototype/
+2. Write README.md at ~/projects/${slug}/README.md (all 9 sections — see venture-prototype template).
+3. Write review handoff (see prototype-review-handoff skill — portfolio entry + kanban comment).
+   Update ~/vault/ventures/portfolio.md 'Awaiting Review' section.
+
+This card's ONLY job is to build with loop_engine. Do not skip it.
+NEVER put artifacts in ~/vault/ (Obsidian only). Everything goes in ~/projects/${slug}/."
+
+    BUILD_RESULT=$(hermes kanban --board "$BOARD" create "$BUILD_TITLE" \
+        --assignee builder \
+        --body "$BUILD_BODY" \
+        --parent "$GRILL_ID" \
+        --json 2>/dev/null || echo "{}")
+
+    BUILD_ID=$(echo "$BUILD_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+
+    if [ -n "$BUILD_ID" ]; then
+        PREV_ID="$BUILD_ID"
+        CREATED=$((CREATED + 2))
+        echo "CREATED [grill:$GRILL_ID] [build:$BUILD_ID]: [$score] $name (chained to: ${PREV_ID:-none})"
     else
-        echo "FAILED: $name"
+        # Build card failed — still advance the chain via grill card
+        PREV_ID="$GRILL_ID"
+        CREATED=$((CREATED + 1))
+        echo "PARTIAL [grill:$GRILL_ID] [build FAILED]: [$score] $name"
     fi
 
 done <<< "$SORTED"
