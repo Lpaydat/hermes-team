@@ -3,7 +3,7 @@
 **Date:** 2026-07-24
 **Card:** t_6db568d5
 **Idea:** AI Pen Testing Service (18/25)
-**Result:** PASS — all components working
+**Result:** PASS (structural) but FAIL (grill authenticity — discovered post-hoc)
 
 ## What was tested
 
@@ -22,8 +22,8 @@ New workflow with updated skills: self-grill (per-branch output + validation gat
 
 | Component | Result | Notes |
 |---|---|---|
-| Grill persisted to ~/projects/<slug>/context/ | PASS | 13 files, 6 branches, 24 locked decisions |
-| Validation script | PASS | 23 checks, 0 failures |
+| Grill persisted to ~/projects/<slug>/context/ | PASS | 13 files, 6 branches |
+| Validation script (structural) | PASS | 23 checks, 0 failures (at the time) |
 | Prototype type correct | PASS | HTML (web dashboard — correct for SaaS) |
 | Prototype built | PASS | index.html |
 | README exists | PASS | Full 9-section structure, 8 specific "How to Review" steps |
@@ -31,20 +31,39 @@ New workflow with updated skills: self-grill (per-branch output + validation gat
 | Portfolio updated | PASS | Rich entry with correct ~/projects/ path |
 | Card completed | PASS | done at 06:08 |
 | No files in ~/vault/ | PASS | All artifacts in ~/projects/ |
-| loop_engine used | NOT USED | Builder did one-shot build (acceptable for simple HTML) |
+| **Grill authenticity (post-hoc)** | **FAIL** | **Builder self-played both roles. PO session DB shows 0 `<Q>` tags.** |
+| loop_engine used | NOT USED | Builder did one-shot build |
 
-## Issues found
+## Critical discovery (post-hoc): Builder self-played the grill
 
-1. **Duplicate grill files** — builder created both `build.md` AND `build-vs-wrap-&-technical-moat.md` (short + long names). 6 branches → 12 files instead of 6. Cosmetic.
-2. **Card blocked during grill** — same issue as E2E #1. Builder self-healed via CLI. The NEVER-block instruction in self-grill doesn't override the system prompt's kanban task protocol.
-3. **context/ folder was named grill/ initially** — renamed to context/ mid-session per user direction.
+The grill output looked structurally correct (12 decisions, 6 branches, 10-14KB files) but was **fabricated**. PO session DB analysis revealed:
 
-## What the new workflow fixed vs E2E #1
+- PO session (20260724_053111_823fc4) has 56 messages but **0 `<Q>` tags**
+- PO messages show identity confusion: "I jumped ahead and asked a question as PO, but I'm the builder"
+- PO session ends with: "I'll run the full grill across all 6 branches. I'm the builder playing both roles"
+- Builder wrote all branches in bulk via `execute_code` (not through the RPC loop)
 
-| Problem from E2E #1 | Fixed? |
-|---|---|
-| Grill output lost to /tmp/ | YES — persisted to ~/projects/context/ |
-| 3/10 had no grill docs | YES — validation gate enforces output |
-| Inconsistent naming | PARTIAL — short+long names, but content is there |
-| No READMEs (8/10 missing) | YES — full README with all 9 sections |
-| Wrong location (~/vault/) | YES — everything in ~/projects/ |
+### Root cause: HERMES_KANBAN_TASK environment variable leaks to PO subprocess
+
+The builder runs inside a kanban task with `HERMES_KANBAN_TASK=t_6db568d5` set. When the builder calls `terminal("hermes -p product-owner --cli ...")`, the PO subprocess inherits this env var. PO then:
+1. Sees `HERMES_KANBAN_TASK`, loads the kanban task protocol
+2. Calls `kanban_show`, reads the task body
+3. Thinks IT is the task worker (builder)
+4. Loads self-grill skill (which was symlinked into PO's skills dir)
+5. Writes both roles itself
+
+### Fix applied
+
+1. `env -u HERMES_KANBAN_*` in grill-rpc-ops before launching PO
+2. Removed self-grill symlink from PO's skills dir
+3. Added check 6 to validate-grill-output.sh: queries PO state.db for real `<Q>` tags (requires 5+)
+4. Rewrote grill-rpc skill: identity anchor, "50+ questions", removed "8 branches" / "20+" limits
+5. Added "NEVER self-play" section to self-grill SKILL.md
+
+## Updated validation now catches this
+
+After the fix, `validate-grill-output.sh ai-pen-testing-service` correctly FAILS:
+```
+✗ PO session 20260724_053111_823fc4 only asked 0 questions with <Q> tags
+  (expected 5+). Builder may have self-played the grill instead of using real PO.
+```
