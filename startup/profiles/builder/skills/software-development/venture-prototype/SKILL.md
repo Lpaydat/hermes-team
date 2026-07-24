@@ -12,7 +12,7 @@ Load this skill AFTER self-grill completes and BEFORE completing the kanban card
 
 ## Step 1 — Read the grill output
 
-Read the grill decisions in `~/projects/<slug>/grill/`. This is your spec — one file per branch, each with locked decisions and Q&A history. Every locked decision tells you what to build and what NOT to build.
+Read the grill decisions in `~/projects/<slug>/context/`. This is your spec — one file per branch, each with locked decisions and Q&A history. Every locked decision tells you what to build and what NOT to build.
 
 Also read the dossier at `~/vault/ventures/ideas/<slug>.md` for full context.
 
@@ -122,7 +122,7 @@ Link to `~/vault/ventures/ideas/<slug>.md`
 - [ ] Prototype runs with one command
 - [ ] README.md exists at `~/projects/<slug>/README.md` with all sections filled
 - [ ] "How to Review" has specific click-by-click steps
-- [ ] grill decisions exist in `~/projects/<slug>/grill/` (one file per branch)
+- [ ] grill decisions exist in `~/projects/<slug>/context/` (one file per branch)
 - [ ] Portfolio updated with correct path to `~/projects/<slug>/prototype/`
 
 ## Pitfalls
@@ -139,7 +139,11 @@ Link to `~/vault/ventures/ideas/<slug>.md`
 
 ### When to use loop_engine (phased build with DoD gate)
 
-Use for complex prototypes (API, CLI, multi-feature web app) or when the build card carries high-value ideas. Skip for simple single-file HTML demos.
+**DEFAULT: use loop_engine for every build.** The E2E test showed the builder
+skips it by judging "this is simple enough" — that's premature completion.
+Breaking the build into phases with a verifier gate catches drift and missing
+deliverables. The only time to skip is a literal single-screen HTML page with
+no grill decisions to reflect.
 
 **Phase structure for prototype build:**
 
@@ -191,3 +195,4 @@ Concurrency is capped by `kanban.max_in_progress_per_profile` (default 3). Chain
 - **NEVER skip the README.** It's mandatory for every prototype.
 - **NEVER block the card during build.** The build card should run straight through to completion.
 - **NEVER default to HTML for everything.** Match the prototype type to the product.
+- **NEVER skip the grill validation gate.** If grill decisions are missing from `~/projects/<slug>/grill/`, do NOT guess what the decisions were. Block with evidence or run `validate-grill-output.sh` first.

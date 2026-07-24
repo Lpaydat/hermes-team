@@ -15,7 +15,7 @@ set -euo pipefail
 
 SLUG="${1:?Usage: validate-grill-output.sh <slug>}"
 PROJECT_DIR="$HOME/projects/$SLUG"
-GRILL_DIR="$PROJECT_DIR/grill"
+CONTEXT_DIR="$PROJECT_DIR/context"
 PASS=0
 FAIL=0
 ERRORS=""
@@ -23,11 +23,11 @@ ERRORS=""
 ok()   { PASS=$((PASS + 1)); }
 fail() { FAIL=$((FAIL + 1)); ERRORS="${ERRORS}\n  ✗ $1"; }
 
-# 1. Grill directory exists
-if [ -d "$GRILL_DIR" ]; then
+# 1. Context directory exists
+if [ -d "$CONTEXT_DIR" ]; then
     ok
 else
-    fail "Grill directory missing: $GRILL_DIR"
+    fail "Context directory missing: $CONTEXT_DIR"
     # Nothing else to check if the dir doesn't exist
     echo "=== GRILL OUTPUT VALIDATION: FAIL ==="
     echo -e "$ERRORS"
@@ -37,7 +37,7 @@ else
 fi
 
 # 2. _state.md exists and has branch entries
-STATE_FILE="$GRILL_DIR/_state.md"
+STATE_FILE="$CONTEXT_DIR/_state.md"
 if [ -f "$STATE_FILE" ]; then
     ok
     # Count branches in state table (lines matching | N | name | status |)
@@ -48,7 +48,7 @@ if [ -f "$STATE_FILE" ]; then
         fail "_state.md has no branch entries (expected at least 1)"
     fi
 else
-    fail "_state.md missing in $GRILL_DIR"
+    fail "_state.md missing in $CONTEXT_DIR"
     BRANCH_COUNT=0
 fi
 
@@ -58,7 +58,7 @@ if [ "$BRANCH_COUNT" -ge 1 ] 2>/dev/null; then
     BRANCH_SLUGS=$(grep -oP '^\| \d+ \| \K[^ |]+' "$STATE_FILE" 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr ' ' '-' || true)
     
     for slug in $BRANCH_SLUGS; do
-        BRANCH_FILE="$GRILL_DIR/${slug}.md"
+        BRANCH_FILE="$CONTEXT_DIR/${slug}.md"
         if [ -f "$BRANCH_FILE" ]; then
             ok
             # Check for ## Decisions section
@@ -81,7 +81,7 @@ fi
 
 # 4. At least 1 locked decision across all branch files
 DECISION_COUNT=0
-for f in "$GRILL_DIR"/*.md; do
+for f in "$CONTEXT_DIR"/*.md; do
     [ "$f" = "$STATE_FILE" ] && continue
     [ -f "$f" ] || continue
     # Count "Lock D" lines in decisions
@@ -99,9 +99,9 @@ fi
 TMP_DIR="/tmp/grill-${SLUG}/context"
 if [ -d "$TMP_DIR" ]; then
     TMP_COUNT=$(find "$TMP_DIR" -name '*.md' -type f 2>/dev/null | wc -l)
-    PROJ_COUNT=$(find "$GRILL_DIR" -name '*.md' -type f 2>/dev/null | wc -l)
+    PROJ_COUNT=$(find "$CONTEXT_DIR" -name '*.md' -type f 2>/dev/null | wc -l)
     if [ "$TMP_COUNT" -gt "$PROJ_COUNT" ]; then
-        fail "Files still in $TMP_DIR ($TMP_COUNT files) — not fully persisted to $GRILL_DIR ($PROJ_COUNT files)"
+        fail "Files still in $TMP_DIR ($TMP_COUNT files) — not fully persisted to $CONTEXT_DIR ($PROJ_COUNT files)"
     else
         ok
     fi
@@ -115,7 +115,7 @@ if [ "$FAIL" -eq 0 ]; then
     echo "RESULT: PASS"
     echo "  Branches: $BRANCH_COUNT"
     echo "  Locked decisions: $DECISION_COUNT"
-    echo "  Branch files verified: $(find "$GRILL_DIR" -name '*.md' ! -name '_state.md' -type f 2>/dev/null | wc -l)"
+    echo "  Branch files verified: $(find "$CONTEXT_DIR" -name '*.md' ! -name '_state.md' -type f 2>/dev/null | wc -l)"
     echo "  Passed: $PASS  Failed: $FAIL"
     exit 0
 else

@@ -40,7 +40,7 @@ Use the [venture brief template](references/venture-brief-template.md). Check `~
 7. Grill through each branch — ANSWER AS FOUNDER with conviction
 8. Add new branches if the grill surfaces new categories
 9. Done when no pending or active branches remain
-10. Persist grill output to ~/projects/<slug>/grill/ (see below)
+10. Persist grill output to ~/projects/<slug>/context/ (see below)
 ```
 
 **Answer as founder:** you have conviction. The dossier is your evidence. Don't hedge, don't fold — if PO pushes on a weakness, defend with evidence or fix it honestly. "This is hard" is not a fatal flaw.
@@ -61,7 +61,7 @@ The grill produces **one file per branch**, not a single giant file. A long gril
 ### Structure
 
 ```
-~/projects/<slug>/grill/
+~/projects/<slug>/context/
 ├── _state.md                  ← branch table + active branch
 ├── <branch-slug>.md           ← one file per branch
 ├── <branch-slug>.md
@@ -79,11 +79,11 @@ The grill scripts write to `/tmp/grill-<slug>/context/` during the session. That
 **Before completing the card**, copy the grill state to the project directory:
 
 ```bash
-mkdir -p ~/projects/<slug>/grill/
-cp /tmp/grill-<slug>/context/*.md ~/projects/<slug>/grill/
+mkdir -p ~/projects/<slug>/context/
+cp /tmp/grill-<slug>/context/*.md ~/projects/<slug>/context/
 ```
 
-Completion criterion: every branch file exists in `~/projects/<slug>/grill/`. Verify with `ls ~/projects/<slug>/grill/*.md | wc -l` — the count must match the number of branches in `_state.md`.
+Completion criterion: every branch file exists in `~/projects/<slug>/context/`. Verify with `ls ~/projects/<slug>/context/*.md | wc -l` — the count must match the number of branches in `_state.md`.
 
 **Before completing the card**, run the validation script:
 
