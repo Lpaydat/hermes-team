@@ -174,7 +174,54 @@ hermes kanban --board hermes-hq show <task_id> 2>&1 | grep heartbeat | tail -3
 
 **IMPORTANT:** Python heredocs with f-strings and backslashes frequently break inside `execute_code`/`terminal` when working with SQLite. Prefer `execute_code` (Python sandbox) for DB queries — it handles multi-line Python cleanly without shell quoting issues. Avoid `terminal()` with `python3 << 'EOF'` heredocs for any SQL query that contains f-strings or backslash-escaped quotes — the nested quoting levels (bash → python → SQL) create syntax errors. Write the Python directly in `execute_code` instead.
 
-## 9. E2E verification recipe and test results
+## 9. Observer mode — monitoring a dispatched worker without interfering
+
+When a kanban card is `running` and the dispatcher has spawned a worker (a separate `hermes -p builder --cli` process), you are the **observer**, not the executor. The worker owns the task. Your job is to report status, verify liveness, and flag problems — NOT to run pipeline steps yourself.
+
+**What NOT to do when a worker is running:**
+- Do NOT launch your own PO session (`hermes -p product-owner ...`). Two PO sessions writing to the same grill state directory creates conflicts and duplicate questions.
+- Do NOT run `answer.sh` yourself. The worker is already in the RPC loop — your answer.sh call sends a second answer to PO from a different identity, confusing the session.
+- Do NOT set up grill state directories, create project dirs, or write dossiers. The worker handles the full pipeline (dossier → grill → build → README → handoff) autonomously. If the dossier already exists from a prior run, the worker will find it.
+- Do NOT create branches or lock decisions. The worker and PO negotiate branches dynamically.
+
+**What TO do instead:**
+- Verify the worker process is alive: `ps -p <PID> -o pid,stat,etime,%cpu`
+- Check process subtree for active PO RPC calls: `pstree -p <worker_pid>`
+- Read grill state files (read-only): `cat /tmp/grill-<slug>/context/_state.md`
+- Count decisions per branch: `grep -c "^Lock D" /tmp/grill-<slug>/context/<branch>.md`
+- Report progress to the user concisely
+- Only intervene if the worker is genuinely hung (0% CPU for 10+ min with no child processes) or if the user explicitly asks you to take action
+
+**How to tell the worker is progressing (not hung):**
+- Worker has child processes (bash → answer.sh → timeout → hermes --resume) = actively in a PO RPC turn
+- Grill state files have recent modification timestamps (within last few minutes)
+- Decision count or question count is increasing between checks
+- Task status remains `running` with recent heartbeats
+
+**If the worker is genuinely stuck (hung, not just thinking):**
+glm-5.2 thinking can take 60-300s per turn — a worker at 0% CPU for 2-3 minutes is likely just waiting for a model response. Check for active `timeout` + `hermes --resume` child processes. If there are NO child processes AND the worker is at 0% CPU AND grill files haven't been modified in 10+ minutes, THEN it may be hung. Report it to the user — do not kill or restart it without explicit direction.
+
+## 10. Power outage recovery
+
+The system auto-recovers from power loss / hard reboot. You do NOT need to manually restart anything in most cases:
+
+1. **Gateways** — managed by systemd user services (`hermes-gateway-<profile>.service`). They auto-restart on boot. Verify with `systemctl --user list-units --type=service | grep hermes`.
+2. **Dispatcher** — runs inside the builder gateway. When the gateway restarts, the dispatcher resumes and re-spawns workers for any `running` tasks that lost their worker process.
+3. **Workers** — a killed worker (from power loss) triggers a reclaim. The dispatcher reclaims the task (stale lock detection) and spawns a fresh worker. The new worker picks up from the kanban card state — it reads the card body, checks existing artifacts, and continues.
+4. **Grill state** — `/tmp/grill-<slug>/` is ephemeral and DOES NOT survive a reboot. However, if the worker was mid-grill when power was lost, the dispatcher's reclaim gives the worker a fresh session that re-runs the grill from scratch (or resumes if grill output was already persisted to `~/projects/<slug>/context/`).
+
+**After a power outage, your job is to verify and report — NOT to restart or re-execute:**
+- Check `uptime` to confirm the reboot happened
+- Check gateways are running
+- Check the task is still `running` (dispatcher re-spawned the worker)
+- Check if a new worker PID exists and is progressing
+- Report status to the user
+
+The key insight: **the system is designed to self-heal.** Dispatching workers, reclaiming stale tasks, and auto-restarting gateways are all automated. Your role during recovery is observation and verification, not manual intervention.
+
+`references/2026-07-24-observer-mode-and-power-recovery.md` — full account of the observer-vs-executor confusion and power outage recovery patterns from the 2026-07-24 livetest.
+
+## 11. E2E verification recipe and test results
 
 `references/e2e-verification-recipe.md` — full step-by-step recipe covering gateway restart, queue-builds.sh, card verification, chaining check, idempotency, and dispatcher pickup.
 
@@ -202,6 +249,12 @@ hermes kanban --board hermes-hq show <task_id> 2>&1 | grep heartbeat | tail -3
 
 `references/2026-07-24-e2e-test-2-ai-pen-testing.md` — E2E test #2 results with the new workflow: all components PASS (grill persistence, validation gate, README, prototype, portfolio). Documents remaining issues (card blocking, duplicate filenames).
 
+`references/2026-07-24-api-prototype-verification-pitfalls.md` — curl-assertion false negatives when verifying FastAPI endpoints: (1) compact JSON breaks `grep '"key": value'` spacing, (2) `curl -sf` swallows error bodies on 4xx/5xx so you can't assert on rejection messages, (3) DOM clicks may not reflect async state — call page handlers from `browser_console` instead.
+
+`references/2026-07-24-loop-engine-enforcement-failure.md` — why the "loop_engine is MANDATORY" instruction fails to prevent skipping (builder self-assesses exemption every time), what doesn't work, and structural enforcement options.
+
+`references/2026-07-24-loop-engine-partial-compliance.md` — the NEW failure mode from the 2026-07-24 rebuild test: builder wrote verify script + ran independent verifier (letter of loop_engine) but skipped phased mechanism with replan gates (spirit). Detection signs, enforcement options, and recommendation to accept partial compliance as stepping stone.
+
 ## Pitfalls
 
 - **Gateway caches config at startup.** A config.yaml change is invisible to running sessions until `hermes gateway restart`. Sessions spawned by the dispatcher inherit the gateway's cached config, not the file on disk.
@@ -226,3 +279,18 @@ hermes kanban --board hermes-hq show <task_id> 2>&1 | grep heartbeat | tail -3
 - **Env leak on resume too, not just launch.** The `env -u HERMES_KANBAN_*` isolation was applied to the PO Launch Recipe in grill-rpc-ops, but the Answer Pattern (which calls `hermes --resume` via answer.sh) does NOT have it. `hermes --resume` rebuilds the system prompt from current env vars — so `HERMES_KANBAN_TASK` leaks back in on every answer turn. This can cause PO to revert to builder-identity confusion mid-grill. The fix is to wrap `answer.sh` calls with the same `env -u` prefix. grill-rpc-ops is pinned and cannot be patched here — ask user to unpin or apply the fix manually.
 - **Prototype deliverable inconsistency — SOLVED by venture-prototype skill.** 8/10 prototypes in the E2E test were missing READMEs. The `venture-prototype` skill enforces README.md as mandatory with a verify checklist. The pipeline uses 1 card per idea; venture-prototype loads after the grill completes within the same session.
 - **Two project-promotion skill dirs exist.** There's a top-level symlink AND a software-development/ copy. The shared-skills one is the canonical source. Must fix BOTH or consolidate to one.
+- **Pinned skills cannot be patched by skill_manage or background curator.** Use the `patch` tool directly on the filesystem path to update pinned skills. The patch tool operates on files, not through the curator.
+- **Builder self-plays grill when env isolation is incomplete.** The `env -u HERMES_KANBAN_*` fix was applied to the PO Launch Recipe but NOT to the Answer Pattern in grill-rpc-ops. `answer.sh` calls `hermes --resume` which rebuilds the system prompt from env vars — so `HERMES_KANBAN_TASK` leaks back in on every answer turn. Fix: wrap answer.sh calls with the same `env -u` prefix. grill-rpc-ops is pinned — use `patch` tool directly. See `references/2026-07-24-answer-pattern-env-isolation-gap.md`.
+- **Grill folder renamed from `grill/` to `context/`.** All skills, scripts, and paths now use `~/projects/<slug>/context/` for per-branch grill output. The validation script (`validate-grill-output.sh`) uses `CONTEXT_DIR` variable.
+- **prototype-iteration and prototype-review-handoff should be user-invoked.** Both were model-invoked (context load) but are loaded via pointer from other skills, not by trigger phrases. Changed to `disable-model-invocation: true` during writing-great-skills audit.
+- **Skill library target shape: class-level umbrellas with references/.** Avoid narrow one-session-one-skill entries. Each pipeline skill is a class: self-grill (grilling), venture-prototype (building), project-promotion (promotion), prototype-iteration (feedback), prototype-review-handoff (handoff), grill-rpc-ops (RPC mechanics). Session-specific detail goes in `references/` under the appropriate umbrella.
+- **ONE CARD PER IDEA. NEVER pack multiple ideas into one kanban card.** A builder session can only handle one full pipeline (dossier → grill → build → handoff). Putting 5 ideas in one card causes premature completion — the builder spends all turns on the first dossier and never reaches grilling or building. queue-builds.sh creates one card per idea, chained sequentially via `--parent`. When manually creating test cards, follow the SAME pattern: one idea per card, chain with `--parent`. This was violated on 2026-07-24 (5 ideas in one card → builder completed with zero prototypes after 25 min). The user explicitly corrected: "did you dump all 5 projects to one builder session?"
+- **Creating kanban cards with multiline bodies via shell truncates the body.** `hermes kanban create --body "$MULTILINE"` via terminal() or bash loses everything after the first newline. Use the `kanban_create` tool directly (Python API) instead — it handles multiline bodies correctly. Alternatively, write the body to a temp file and pass `--body "$(cat /tmp/body.txt)"`. This is a different bug from the `eval` issue — it's shell quoting mangling newlines in the heredoc/variable, not eval word-splitting.
+- **`hermes kanban show <id>` truncates the displayed body** — only shows the first ~50 chars. But the full body IS stored in the kanban DB (verify with `SELECT length(body) FROM tasks WHERE id='t_xxx'`). The builder's `kanban_show` tool returns the FULL body. Do not panic if CLI `show` looks truncated — the card content is intact.
+- **FastAPI verification scripts: two curl-assertion false negatives.** (1) FastAPI emits **compact JSON** — `{"active":true}` not `{"active": true}`. A `grep '"active": true'` assertion fails on valid responses. Fix: parse structurally with `python3 -c "import sys,json; d=json.load(sys.stdin); assert d['active']==True"`. (2) `curl -sf` **discards error bodies** on HTTP 4xx/5xx, so you cannot assert on a deliberate rejection's message (e.g. "not approved" on a 403). Use plain `curl -s` (no `-f`) for negative-path assertions. See `references/2026-07-24-api-prototype-verification-pitfalls.md` for full recipes.
+- **Builder creates `.venv` inside prototype/ when building API prototypes.** The builder runs `pip install` inside `~/projects/<slug>/prototype/`, creating a virtual environment with 2,977+ files (120MB). Prototype build rules say "no dependencies beyond stdlib" but the builder ignores this for API types. Fix: the venture-prototype skill build rules section now explicitly bans `.venv`, `node_modules`, `pip install`, and `npm install` inside prototype/. For API prototypes, hardcode responses instead of installing Flask/FastAPI.
+- **Builder completes card with ZERO output when it can't create a dossier.** Card 2 (SMB Bookkeeping) had no dossier. The builder session read the card, saw "create dossier first," and marked the card done without producing ANY output — no dossier, no grill, no prototype. This is premature completion driven by task complexity at the top of the pipeline. The validation gate only runs during the grill phase, not at card completion. A pre-completion check (prototype/ exists? README exists?) would catch this.
+- **Builder creates DUPLICATE idea-bank entries instead of updating existing ones.** When a builder completes a pipeline, it sometimes adds a NEW row to the "Built/Awaiting Review" section of idea-bank.md with a new product name (e.g., "RouteOpt") and a project-relative dossier path (`~/projects/.../.context/dossier.md`), instead of updating the existing "unbuilt" row to "BUILT_AWAITING_REVIEW". This creates duplicate entries for the same idea — one marked "unbuilt" (stale), one marked "awaiting review" (new). Fix during post-run analysis: update the original row's status, remove the duplicate, ensure the dossier link points to `~/vault/ventures/ideas/<slug>.md` (not a project-relative path that breaks if the project is archived).
+- **Builder SKIPS loop_engine despite MANDATORY instruction — recurring across ALL E2E tests.** The venture-prototype skill says "loop_engine is MANDATORY" in bold caps. The builder has skipped it on every prototype in every E2E run (Batch 1: 10/10, Batch 2: 5/5). The instruction-level enforcement does not work — the builder reads "MANDATORY," self-assesses the build as simple, and skips. The skill already says "do NOT self-assess as simple enough" — still skipped. This is the #1 quality gate failure. Structural enforcement is needed: pre-write the verify script in the card body, or add a post-completion audit checking for verifier sessions in state.db.
+- **Builder undercounts its own grill decisions in README.** README says "61 decisions" but context/ has 65 locked decisions. Happens on multiple runs — the builder estimates instead of counting. The verify script should check `len(decisions)` against the README's stated count and fail if they mismatch. Fix for card authors: add "Count decisions from context/ files using `grep -rh '^Lock D\|^\*\*D[0-9]' ~/projects/<slug>/context/ | sort -u | wc -l` and use that exact number in the README" to the card body.
+- **Portfolio score disagrees with idea-bank score.** The portfolio entry says "19/25" (the dossier's uplifted score) while the idea-bank says "17/25" (the original score). Dossier score uplifts are internal analysis, not bank-level re-scoring. The portfolio and idea-bank MUST use the same score — the original from idea-bank.

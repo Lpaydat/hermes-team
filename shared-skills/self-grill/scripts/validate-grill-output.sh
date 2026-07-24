@@ -85,7 +85,7 @@ for f in "$CONTEXT_DIR"/*.md; do
     [ "$f" = "$STATE_FILE" ] && continue
     [ -f "$f" ] || continue
     # Count "Lock D" lines in decisions
-    count=$(grep -c 'Lock D' "$f" 2>/dev/null || echo 0)
+    count=$(grep -c 'Lock D' "$f" 2>/dev/null) || count=0
     DECISION_COUNT=$((DECISION_COUNT + count))
 done
 
@@ -134,7 +134,35 @@ except:
         if [ "$PO_QUESTIONS" -ge 5 ]; then
             ok
         else
-            fail "PO session $SESSION_KEY only asked $PO_QUESTIONS questions with <Q> tags (expected 5+). Builder may have self-played the grill instead of using real PO."
+            # Fallback: check for questions containing '?' in ALL PO sessions 
+            # that contain our grill content (answer.sh may create new sessions per round)
+            TOTAL_PO_QUESTIONS=$(python3 -c "
+import sqlite3, sys
+try:
+    conn = sqlite3.connect('$PO_DB')
+    c = conn.cursor()
+    # Count assistant messages with '?' across sessions that have our grill content
+    c.execute(\"\"\"
+        SELECT COUNT(DISTINCT m.id) FROM messages m
+        WHERE m.role='assistant' 
+        AND m.content LIKE '%?%'
+        AND m.session_id IN (
+            SELECT DISTINCT session_id FROM messages 
+            WHERE content LIKE '%GRILL STATE%'
+            OR content LIKE '%Lock D%'
+        )
+    \"\"\")
+    print(c.fetchone()[0])
+    conn.close()
+except:
+    print(0)
+" 2>/dev/null || echo 0)
+            
+            if [ "$TOTAL_PO_QUESTIONS" -ge 5 ]; then
+                ok
+            else
+                fail "PO only asked $PO_QUESTIONS <Q> tags + $TOTAL_PO_QUESTIONS '?' questions (expected 5+). Builder may have self-played the grill instead of using real PO."
+            fi
         fi
     else
         fail "PO state.db not found at $PO_DB"

@@ -91,7 +91,16 @@ Do NOT re-ask these questions.]"
 
 # --- 3. Send answer to PO ---
 GRILL_TIMEOUT="${HERMES_GRILL_TIMEOUT:-600}"
-RAW_OUTPUT=$(timeout "$GRILL_TIMEOUT" hermes -p product-owner --resume "$SESSION_ID" \
+# CRITICAL: unset HERMES_KANBAN_* so PO doesn't inherit builder's kanban task
+# and load the worker protocol (which causes it to block the builder's card).
+RAW_OUTPUT=$(env -u HERMES_KANBAN_TASK \
+    -u HERMES_KANBAN_WORKSPACE \
+    -u HERMES_KANBAN_RUN_ID \
+    -u HERMES_KANBAN_CLAIM_LOCK \
+    -u HERMES_KANBAN_BOARD \
+    -u HERMES_KANBAN_DB \
+    -u HERMES_PROFILE \
+    timeout "$GRILL_TIMEOUT" hermes -p product-owner --resume "$SESSION_ID" \
     -z "${PREFIX}
 
 ${ANSWER}" --cli 2>&1) || true
