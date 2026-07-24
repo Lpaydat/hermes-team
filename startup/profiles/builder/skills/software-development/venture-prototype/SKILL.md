@@ -117,13 +117,9 @@ One command. Tech stack in one line.
 Link to `~/vault/ventures/ideas/<slug>.md`
 ```
 
-## Step 6 — Verify Before Completing
+## Step 6 — Handoff for review
 
-- [ ] Prototype runs with one command
-- [ ] README.md exists at `~/projects/<slug>/README.md` with all sections filled
-- [ ] "How to Review" has specific click-by-click steps
-- [ ] grill decisions exist in `~/projects/<slug>/context/` (one file per branch)
-- [ ] Portfolio updated with correct path to `~/projects/<slug>/prototype/`
+When the prototype + README are done, write the review handoff. Load the `prototype-review-handoff` skill — it owns the portfolio entry, kanban comment, and the "what to look at" pointer. Don't ad-hoc these.
 
 ## Pitfalls
 
