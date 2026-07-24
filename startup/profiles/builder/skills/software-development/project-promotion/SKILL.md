@@ -10,16 +10,16 @@ When the user says "promote this" / "ship it", this skill handles the handoff fr
 
 ## Project structure
 
-Every promoted project lives at `~/projects/<slug>/`:
+Every promoted project already lives at `~/projects/<slug>/` (the builder created it during prototype build). Promotion adds production structure:
 
 ```
 ~/projects/<slug>/
 ├── .context/
 │   ├── dossier.md          ← copied from ~/vault/ventures/ideas/<slug>.md
-│   ├── grill-summary.md    ← exported grill decisions
+│   ├── grill/              ← per-branch grill decisions (already here from build)
 │   └── verification.md     ← fact-check report
-├── prototype/              ← builder's working demo
-├── src/                    ← production code (tech-lead + developer)
+├── prototype/              ← builder's working demo (already here from build)
+├── src/                    ← production code (PO → tech-lead → developer)
 ├── tests/
 ├── STATUS.md               ← project dashboard (PO maintains this)
 ├── README.md               ← what this is, current state
@@ -30,12 +30,12 @@ Structure adapts to the stack. Only `.context/`, `STATUS.md`, and `README.md` ar
 
 ## Promotion steps
 
-1. **Create project directory** — `mkdir -p ~/projects/<slug>/.context ~/projects/<slug>/prototype && cd ~/projects/<slug> && git init`
-2. **Copy context** — dossier, verification, grill summary from `~/vault/ventures/ideas/` into `.context/`
-3. **Copy prototype** — from `~/vault/ventures/prototypes/<slug>/` into `prototype/`
-4. **Initialize STATUS.md** from template at `templates/STATUS.md`
+1. **Copy dossier + verification** — `cp ~/vault/ventures/ideas/<slug>.md ~/projects/<slug>/.context/dossier.md` and `cp ~/vault/ventures/ideas/<slug>-verification.md ~/projects/<slug>/.context/verification.md` (if verification exists)
+2. **Copy grill context** — `cp ~/projects/<slug>/context/*.md ~/projects/<slug>/.context/grill/` (the per-branch grill decisions are the prototype blueprint)
+3. **Initialize STATUS.md** from template at `templates/STATUS.md`
+4. **Initialize git** (if not already) — `cd ~/projects/<slug> && git init && git add -A && git commit -m "promote: <slug> prototype to production"`
 5. **Create project kanban board** — `hermes kanban create --board <slug>`
-6. **Dispatch to PO** (NOT tech-lead) — create kanban task assigned to `product-owner` with board `<slug>`. Body: "Take this prototype to production. You own: design goals, epics, milestones, beads tickets, dependencies. You control tech-lead for implementation and verifier for review."
+6. **Dispatch to PO** (NOT tech-lead) — create kanban task assigned to `product-owner` with board `<slug>`. Body: "Take this prototype to production. Read .context/grill/ for locked decisions, .context/dossier.md for market context, prototype/ for the working demo. You own: design goals, epics, milestones, beads tickets, dependencies. You control tech-lead for implementation and verifier for review."
 7. **Update portfolio** — move from "Awaiting Review" to "In Production" in `~/vault/ventures/portfolio.md`.
 
 ## After promotion
