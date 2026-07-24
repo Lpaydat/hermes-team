@@ -117,14 +117,24 @@ sys.exit(1)  # not found — create
     # Create the kanban card
     TITLE="Build prototype: $name"
 
-    BODY="Score: ${score}/25 | Origin: Door ${origin} | Status: ${status}
+    BODY="Score: ${score}/25 | Origin: Door ${origin} | Status: ${status} | Slug: ${slug}
 
 Read the dossier at ~/vault/ventures/ideas/${slug}.md
-Grill with PO using self-grill skill (REQUIRED — answer as founder).
-Build prototype. Drop in ~/projects/${slug}/prototype/
-Write README.md at ~/projects/${slug}/README.md (what it is, problem, features, how to test).
-Update ~/vault/ventures/portfolio.md 'Awaiting Review' section.
-Complete this card when done."
+
+FULL PIPELINE (follow skills exactly):
+1. Grill with REAL PO using self-grill skill (REQUIRED — answer as founder).
+   - CRITICAL: env -u HERMES_KANBAN_TASK before launching PO (see grill-rpc-ops skill)
+   - Persist grill output to ~/projects/${slug}/context/ (per-branch files)
+   - Run validation: bash ~/.hermes-teams/shared-skills/self-grill/scripts/validate-grill-output.sh ${slug}
+2. Build prototype using loop_engine (MANDATORY — see venture-prototype skill).
+   - Write verify script, use phased build with verifier gates
+   - Drop in ~/projects/${slug}/prototype/
+3. Write README.md at ~/projects/${slug}/README.md (all 9 sections — see venture-prototype template).
+4. Write review handoff (see prototype-review-handoff skill — portfolio entry + kanban comment).
+   Update ~/vault/ventures/portfolio.md 'Awaiting Review' section.
+Complete this card when done.
+
+NEVER put artifacts in ~/vault/ (Obsidian only). Everything goes in ~/projects/${slug}/."
 
     if [ -n "$PREV_ID" ]; then
         # Chain sequentially — this card waits for the previous one
