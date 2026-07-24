@@ -97,7 +97,6 @@ EXISTING=$(hermes kanban --board "$BOARD" list --json 2>/dev/null || echo "[]")
 
 # Create kanban cards for each idea
 CREATED=0
-PREV_ID=""
 
 while IFS=$'\t' read -r score slug name status origin; do
     # Skip if already has a kanban card for this slug
@@ -134,18 +133,11 @@ Complete this card when grill validation passes.
 Do NOT build the prototype — that is the next card.
 NEVER put artifacts in ~/vault/ (Obsidian only). Everything goes in ~/projects/${slug}/."
 
-    if [ -n "$PREV_ID" ]; then
-        GRILL_RESULT=$(hermes kanban --board "$BOARD" create "$GRILL_TITLE" \
-            --assignee builder \
-            --body "$GRILL_BODY" \
-            --parent "$PREV_ID" \
-            --json 2>/dev/null || echo "{}")
-    else
-        GRILL_RESULT=$(hermes kanban --board "$BOARD" create "$GRILL_TITLE" \
-            --assignee builder \
-            --body "$GRILL_BODY" \
-            --json 2>/dev/null || echo "{}")
-    fi
+    # Grill card: no cross-idea dependency — each idea runs independently
+    GRILL_RESULT=$(hermes kanban --board "$BOARD" create "$GRILL_TITLE" \
+        --assignee builder \
+        --body "$GRILL_BODY" \
+        --json 2>/dev/null || echo "{}")
 
     GRILL_ID=$(echo "$GRILL_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
 
@@ -187,12 +179,9 @@ NEVER put artifacts in ~/vault/ (Obsidian only). Everything goes in ~/projects/$
     BUILD_ID=$(echo "$BUILD_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
 
     if [ -n "$BUILD_ID" ]; then
-        PREV_ID="$BUILD_ID"
         CREATED=$((CREATED + 2))
-        echo "CREATED [grill:$GRILL_ID] [build:$BUILD_ID]: [$score] $name (chained to: ${PREV_ID:-none})"
+        echo "CREATED [grill:$GRILL_ID] [build:$BUILD_ID]: [$score] $name"
     else
-        # Build card failed — still advance the chain via grill card
-        PREV_ID="$GRILL_ID"
         CREATED=$((CREATED + 1))
         echo "PARTIAL [grill:$GRILL_ID] [build FAILED]: [$score] $name"
     fi
