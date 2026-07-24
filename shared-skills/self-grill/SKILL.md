@@ -54,6 +54,16 @@ Blocking causes the dispatcher to reclaim the card after ~1h stale timeout,
 wasting a full reclaim cycle and fragmenting grill state across sessions.
 The card stays `running` from grill start to completion.
 
+## NEVER self-play the grill (CRITICAL)
+
+You MUST launch a REAL PO session via CLI and answer its questions through the RPC loop (`answer.sh`). You are the FOUNDER (answerer). PO is the GRILLER (questioner).
+
+NEVER write both sides of the grill yourself. NEVER fabricate PO questions. NEVER generate decisions without a real PO session asking the question first.
+
+If you catch yourself thinking "I'll write the grill content for all branches" — STOP. That is self-play. Launch PO, wait for its question, answer as founder, repeat.
+
+The validation script checks PO's session database for real `<Q>` tag questions. If it finds fewer than 5, the validation FAILS and you cannot complete the card.
+
 ## Grill output: per-branch files (REQUIRED)
 
 The grill produces **one file per branch**, not a single giant file. A long grill (100+ Q&A) in one file is unmanageable. Per-branch files keep each design area self-contained.

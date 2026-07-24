@@ -109,6 +109,40 @@ else
     ok
 fi
 
+# 6. REAL PO sessions exist (not builder self-play)
+SESSION_KEY=""
+if [ -f "/tmp/grill-${SLUG}/SESSION.key" ]; then
+    SESSION_KEY=$(cat "/tmp/grill-${SLUG}/SESSION.key" 2>/dev/null | tr -d '[:space:]')
+fi
+
+if [ -n "$SESSION_KEY" ]; then
+    PO_DB="$HOME/.hermes-teams/startup/profiles/product-owner/state.db"
+    if [ -f "$PO_DB" ]; then
+        # Check that the PO session actually asked questions (not self-play)
+        PO_QUESTIONS=$(python3 -c "
+import sqlite3, sys
+try:
+    conn = sqlite3.connect('$PO_DB')
+    c = conn.cursor()
+    c.execute(\"SELECT COUNT(*) FROM messages WHERE session_id='$SESSION_KEY' AND role='assistant' AND content LIKE '%<Q>%'\")
+    print(c.fetchone()[0])
+    conn.close()
+except:
+    print(0)
+" 2>/dev/null || echo 0)
+
+        if [ "$PO_QUESTIONS" -ge 5 ]; then
+            ok
+        else
+            fail "PO session $SESSION_KEY only asked $PO_QUESTIONS questions with <Q> tags (expected 5+). Builder may have self-played the grill instead of using real PO."
+        fi
+    else
+        fail "PO state.db not found at $PO_DB"
+    fi
+else
+    fail "No SESSION.key found in /tmp/grill-${SLUG}/ — builder never launched a real PO session"
+fi
+
 # Report
 echo "=== GRILL OUTPUT VALIDATION: $SLUG ==="
 if [ "$FAIL" -eq 0 ]; then

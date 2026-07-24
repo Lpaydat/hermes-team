@@ -19,6 +19,8 @@ Operational reference for running grill sessions. Covers the mechanics that `sel
 
 ## PO Launch Recipe
 
+**CRITICAL: Environment isolation.** The builder runs inside a kanban task with `HERMES_KANBAN_TASK` set. If you pass that env to PO, PO loads the kanban task protocol, thinks IT is the task worker, and starts playing builder. You MUST unset kanban env vars before launching PO:
+
 ```bash
 STATE_DIR="/tmp/grill-<slug>"
 mkdir -p "$STATE_DIR"
@@ -29,9 +31,15 @@ chmod +x "$STATE_DIR"/*.sh
 "$STATE_DIR/init_branches.sh" "$STATE_DIR" "<idea>"
 
 # CRITICAL: wrap in timeout 600. glm-5.2 thinking alone can take 300s+.
-# Without timeout, --cli hangs silently and the builder wastes cycles
-# polling for output that never arrives.
-timeout 600 hermes -p product-owner \
+# CRITICAL: unset HERMES_KANBAN_* so PO doesn't inherit builder identity.
+env -u HERMES_KANBAN_TASK \
+    -u HERMES_KANBAN_WORKSPACE \
+    -u HERMES_KANBAN_RUN_ID \
+    -u HERMES_KANBAN_CLAIM_LOCK \
+    -u HERMES_KANBAN_BOARD \
+    -u HERMES_KANBAN_DB \
+    -u HERMES_PROFILE \
+    timeout 600 hermes -p product-owner \
   --skills grill-rpc \
   -z "Grill the builder on: <idea>. You will see [GRILL STATE...] before each answer. Branches are dynamic — propose categories as needed." \
   --cli 2>&1 | tail -80
