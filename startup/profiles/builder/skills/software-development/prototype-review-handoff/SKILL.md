@@ -1,6 +1,7 @@
 ---
 name: prototype-review-handoff
 description: "Write the review handoff when a prototype is ready for founder feedback — portfolio entry, kanban comment, and the 'look here' pointer."
+disable-model-invocation: true
 ---
 
 # Prototype Review Handoff

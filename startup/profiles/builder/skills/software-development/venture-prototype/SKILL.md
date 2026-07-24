@@ -1,6 +1,6 @@
 ---
 name: venture-prototype
-description: "Build the right prototype type (HTML, API, CLI, or concierge) from grilled venture decisions. Includes POC gate for technical risks and standard README structure for founder review."
+description: "Build venture prototypes from grilled decisions. POC gate, type selection, loop_engine phases."
 disable-model-invocation: true
 ---
 
@@ -133,72 +133,13 @@ When the prototype + README are done, write the review handoff. Load the `protot
 
 ## Build with loop_engine (MANDATORY)
 
-You MUST use `loop_engine` for every prototype build. No exceptions. Do NOT self-assess the build as "simple enough" to skip it — that's premature completion, and the E2E test proved the builder does this every time when left to choose.
+You MUST use `loop_engine` for every prototype build. No exceptions. Do NOT self-assess the build as "simple enough" to skip it — that is premature completion.
 
 loop_engine breaks the one-shot build into phased steps with an independent verifier gate between each phase. The verifier is a separate agent session that checks the work against the spec (the grill decisions in context/). This is the "don't trust the LLM" principle — same as Claude Code's verification loops. A dumb model with a better workflow outperforms a smart model with none.
 
 ### Phase 0 — Write verification script (BEFORE building)
 
-Before calling loop_engine, write a temporary verification script at `/tmp/verify-<slug>.py` that checks the prototype against the grill decisions. This is your DoD in executable form.
-
-Read every `Lock D` line from `~/projects/<slug>/context/*.md`. For each locked decision, write a check. Example:
-
-```python
-#!/usr/bin/env python3
-"""Verify <slug> prototype against grill decisions in context/."""
-import re, os, sys
-
-context_dir = os.path.expanduser("~/projects/<slug>/context")
-proto_dir = os.path.expanduser("~/projects/<slug>/prototype")
-readme_path = os.path.expanduser("~/projects/<slug>/README.md")
-
-# Parse locked decisions from context/
-decisions = {}
-for f in os.listdir(context_dir):
-    if f == "_state.md": continue
-    with open(os.path.join(context_dir, f)) as fh:
-        for line in fh:
-            m = re.match(r'Lock (D\d+):\s*(.+?)\s*=\s*(.+)', line)
-            if m:
-                decisions[m.group(1)] = (m.group(2).strip(), m.group(3).strip())
-
-failures = []
-
-# Check 1: Prototype exists
-proto_files = os.listdir(proto_dir) if os.path.isdir(proto_dir) else []
-if not proto_files:
-    failures.append("No prototype files in prototype/")
-
-# Check 2: README exists with required sections
-required_sections = ["## What It Is", "## The Problem", "## Core Features",
-                     "## How to Review", "## Grill Decisions", "## Riskiest Assumption",
-                     "## How to Run", "## What Happens Next", "## Dossier"]
-if os.path.exists(readme_path):
-    readme = open(readme_path).read()
-    for section in required_sections:
-        if section not in readme:
-            failures.append(f"README missing section: {section}")
-else:
-    failures.append("README.md does not exist")
-
-# Check 3: Each decision is referenced in README
-if os.path.exists(readme_path):
-    readme_lower = readme.lower()
-    for d_id, (title, value) in decisions.items():
-        # At least the decision topic should appear somewhere
-        keywords = title.lower().split()[:2]
-        if not all(kw in readme_lower for kw in keywords):
-            failures.append(f"Decision {d_id} ({title}) not reflected in README")
-
-# Report
-print(f"Decisions checked: {len(decisions)}")
-print(f"Checks passed: {3 - len([f for f in failures if 'Check' in f])}")
-print(f"Failures: {len(failures)}")
-for f in failures:
-    print(f"  FAIL: {f}")
-
-sys.exit(1 if failures else 0)
-```
+Before calling loop_engine, write a verification script at `/tmp/verify-<slug>.py` that checks the prototype against the grill decisions. Use the [verify script template](references/verify-script-template.md) — parse every `Lock D` line from `~/projects/<slug>/context/*.md` and check prototype existence, README sections, and decision coverage.
 
 This script IS the verifier's DoD. The verifier runs it. If exit code != 0, the phase replans.
 
