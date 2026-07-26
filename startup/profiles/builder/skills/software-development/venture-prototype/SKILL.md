@@ -140,9 +140,13 @@ loop_engine breaks the one-shot build into phased steps with an independent veri
 
 ### Phase 0 — Write verification script (BEFORE building)
 
-Before calling loop_engine, write a verification script at `/tmp/verify-<slug>.py` that checks the prototype against the grill decisions. Use the [verify script template](references/verify-script-template.md) — it provides 4 categories of checks (structural, decision-content, README, build-rules).
+Before calling loop_engine, write a verification script at `/tmp/verify-<slug>.py` that checks the prototype against the grill decisions. Use the [verify script template](references/verify-script-template.md) — it provides 5 categories of checks (structural, decision-content, README, build-rule & environment, runtime execution).
 
-**Minimum: 20 checks.** The template gives you ~15 automatic checks (DOCTYPE, JS braces, README sections, dark theme, zero deps, simulated data label). You must add at least 5 decision-content checks that map specific `Lock D` values to elements in the prototype HTML. Aim for 30-50 checks for complex prototypes (RouteOpt had 48).
+**Minimum: 20 checks** (aim for 40-50 for complex prototypes). The template gives you automatic checks for each prototype type (HTML vs CLI vs API). You must add at least 5 decision-content checks that map specific `Lock D` values to elements in the prototype. 
+
+**CRITICAL: Category 5 (runtime execution) is mandatory.** The verify script MUST subprocess-run the prototype and assert exit code 0. Static-only checks (AST parse, grep, regex) are NOT sufficient — the July 25 E2E test proved this: 47/47 static checks passed but the prototype crashed on execution (unguarded `import imagehash`). The verify script catches this; the static check suite doesn't.
+
+**Also critical: Category 4 (environment checks).** The verify script MUST scan for unguarded imports of packages that may not be installed (`imagehash`, `torch`, `tensorflow`, etc.). Any such import must be wrapped in try/except, otherwise the prototype crashes at runtime.
 
 This script IS the verifier's DoD. The verifier runs it. If exit code != 0, the phase replans.
 

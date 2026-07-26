@@ -136,11 +136,14 @@ Q_NUM=$((Q_NUM + 1))
 } >> "$ACTIVE_FILE"
 
 # --- 6. Auto-update _state.md decision counts (dynamic) ---
-# Parse each branch row from _state.md and update its decision count
-while IFS='|' read -r _num _name _status _decisions; do
+# Parse each branch row from _state.md and update its decision count.
+# FIX: The row format is "| N | name | status | count |" — the leading pipe
+# creates an empty first field when splitting on '|'. We must read 5 fields
+# (including the empty leading one) to get num, name, status, decisions aligned.
+while IFS='|' read -r _empty _num _name _status _decisions; do
     num=$(echo "$_num" | tr -d ' ')
     name=$(echo "$_name" | sed 's/^ *//;s/ *$//')
-    [[ -z "$name" || "$name" == "#" ]] && continue
+    [[ -z "$num" || -z "$name" || "$name" == "#" ]] && continue
     
     slug=$(echo "$name" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
     bfile="$CONTEXT_DIR/${slug}.md"

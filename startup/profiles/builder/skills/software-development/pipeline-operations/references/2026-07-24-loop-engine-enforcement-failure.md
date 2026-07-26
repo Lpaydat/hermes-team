@@ -35,6 +35,19 @@ Despite skipping loop_engine, the RouteOpt prototype was actually good quality:
 
 But the prototype was built from `.context/grill/decisions.md` (a summary file) rather than reading every branch file independently. The verifier gate would have caught any decisions missed.
 
-## Recommendation
+## UPDATE: Two-card split + verify template RESOLVED this (2026-07-25 Batch 3)
 
-Treat this as a pipeline architecture problem, not a skill wording problem. The skill already says MANDATORY three times. The builder ignores it. The fix needs to be structural (verify script as completion gate) or the instruction needs to be moved into the kanban task protocol itself (which the builder follows more strictly than skill content).
+The structural fix worked. Splitting the pipeline into separate grill and build cards, plus rewriting the verify-script-template.md to enforce 4 categories with minimum 20 checks, produced:
+
+| Batch | Verify checks (avg) | Recovery cards | Grill decisions (avg) |
+|---|---|---|---|
+| Batch 1 (single card) | 48 (RouteOpt only) | N/A | 65 (RouteOpt only) |
+| Batch 2 (2-card, old template) | 8.3 | 2 | 21 |
+| **Batch 3 (2-card, new template)** | **56** | **0** | **53** |
+
+Key changes that fixed it:
+1. **Two-card split** — build card isolates loop_engine in a fresh session where it's the ONLY job
+2. **Verify-script-template.md rewritten** — 4 categories (structural, decision-content, README, build-rules), minimum 20 checks, with ~15 automatic checks built into the template
+3. **Card body includes "MINIMUM 20 checks" + template path** — explicit instruction that the builder followed
+
+The original recommendation below is now superseded. The structural coupling was achieved through card design + template, not through a completion gate script.
