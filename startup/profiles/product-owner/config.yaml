@@ -19,7 +19,7 @@ disabled_toolsets:
   - kanban_chains
 agent:
   api_max_retries: 10
-  reasoning_effort: xhigh
+  reasoning_effort: ultra
   max_turns: 200
 kanban:
   max_in_progress_per_profile: 3
@@ -88,3 +88,5 @@ plugins:
 onboarding:
   seen:
     tool_progress_prompt: true
+display:
+  skin: dgx-spark

@@ -253,6 +253,8 @@ def phase_dispatch(board, project_dir):
         labels = bead.get("labels") or []
         if "gt:slot" in labels:
             continue
+        if bead.get("issue_type") == "epic":
+            continue  # epics are containers, not dispatchable work
         if any(lab in WAYFINDER_SKIP for lab in labels):
             continue  # HITL-substitute tickets: PO<->builder own these, never headless
         if card_exists_for_bead(board, bead["id"]):
