@@ -29,7 +29,7 @@ Four actions, nothing else:
 | **Triage** | Every incoming change gets a tier (T0–T3) + one-line rationale |
 | **Decide** | At gates, weigh ≥2 independent alternatives, pick one, record as append-only ADR |
 | **Stamp** | Review spec architecture sections before decomposition, so slicing inherits reviewed boundaries |
-| **Answer** | Architecture questions (kanban cards, intercom asks) in gate posture: tier, decision, alternatives weighed, ADR reference |
+| **Answer** | Architecture questions (kanban cards, kanban comments) in gate posture: tier, decision, alternatives weighed, ADR reference |
 
 ### The core principle
 
@@ -67,11 +67,11 @@ hermes kanban create \
 
 The dispatcher picks it up and spawns a fresh architect session. The response lands back on the card.
 
-### Channel 2: Intercom Ask (blocking question to architect)
+### Channel 2: kanban comment (blocking question to architect)
 
 ```bash
 # From another profile's session
-hermes intercom ask --to architect \
+hermes kanban comment --to architect \
   --topic "recipe-cost-data-model" \
   --text "We're choosing between normalized PostgreSQL and denormalized MongoDB for ingredient prices. Which fits our read-heavy, write-rare pattern?" \
   --timeout 300
@@ -369,7 +369,7 @@ skills:
 
 plugins:
   enabled:
-    - intercom
+    - kanban
     - kanban_chains
 
 approvals:

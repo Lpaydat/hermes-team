@@ -65,11 +65,11 @@ _config_version: 33
 fallback_model: []
 plugins:
   enabled:
-  - intercom
   - kanban_chains
+  - skill_enforcer
   disabled: []
   entries:
-    intercom:
-      allow_tool_override: true
     kanban_chains:
       allow_tool_override: false
+skill_enforcer:
+  mandatory: []

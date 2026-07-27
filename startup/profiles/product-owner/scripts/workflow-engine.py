@@ -159,7 +159,7 @@ def has_active_po_dispatch_card(board):
 
 # Wayfinder frontier tickets route by type label straight to the profile that
 # can resolve them (autonomous venture pipeline). grilling/prototype are the
-# HITL-substitute types — PO<->VB over intercom via work-the-map cards — and
+# HITL-substitute types — PO<->builder via file-based RPC work-the-map cards — and
 # must NEVER be headless-dispatched by the engine.
 WAYFINDER_ROUTES = {
     "wayfinder:research": "scout",
@@ -253,8 +253,10 @@ def phase_dispatch(board, project_dir):
         labels = bead.get("labels") or []
         if "gt:slot" in labels:
             continue
+        if bead.get("issue_type") == "epic":
+            continue  # epics are containers, not dispatchable work
         if any(lab in WAYFINDER_SKIP for lab in labels):
-            continue  # HITL-substitute tickets: PO<->VB own these, never headless
+            continue  # HITL-substitute tickets: PO<->builder own these, never headless
         if card_exists_for_bead(board, bead["id"]):
             continue
         route = next((WAYFINDER_ROUTES[lab] for lab in labels if lab in WAYFINDER_ROUTES), None)

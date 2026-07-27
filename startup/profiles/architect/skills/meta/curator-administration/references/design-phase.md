@@ -46,13 +46,13 @@ User/VB ←grilling→ PO
                 │
                 ▼
          PO creates architect kanban card
-         (card body = spec link + context summary + intercom topic)
+         (card body = spec link + context summary + card topic)
                 │
                 ▼
          ARCHITECT picks up card
          ├── reads spec + context
          ├── runs design (kanban_chains fan-out — the design team)
-         ├── intercoms PO when needs input (topic from card body)
+         ├── kanban-comments to PO when needs input (topic from card body)
          └── completes card with design doc + ADRs
                 │
                 ▼
@@ -86,7 +86,7 @@ body: |
   - <key finding 2>
   - <constraints discovered>
 
-  ## Intercom topic
+  ## card topic
   <project-slug>-design
 
   ## Open technical questions (PO couldn't answer)
@@ -96,12 +96,12 @@ body: |
 
 ## How architect and PO communicate during design
 
-### Intercom topic-based session targeting (NO session IDs needed)
+### card topic-based session targeting (NO session IDs needed)
 
-Intercom computes a **deterministic session ID** from the topic:
+(Legacy/deprecated) Intercom computed a **deterministic session ID** from the topic:
 
 ```
-session_id = intercom-{team}-{profile_A}-{profile_B}-{topic}-{hash8}
+session_id = (legacy) intercom-{team}-{profile_A}-{profile_B}-{topic}-{hash8}
 ```
 
 - `team` = `startup`
@@ -130,16 +130,16 @@ route to the wrong team under the degraded identity issue.
 |-----------|---------|
 | Handoff (brief → design) | Kanban card body |
 | Design output (ADRs, design doc) | Kanban card completion metadata |
-| "I'm blocked, need PO's input" | Intercom ask (blocking, topic-based) |
-| FYI (design ready) | Intercom send (fire-and-forget) |
-| Iterative Q&A during design | Intercom (topic = accumulated session) |
+| "I'm blocked, need PO's input" | kanban comment (blocking, topic-based) |
+| FYI (design ready) | kanban comment (fire-and-forget) |
+| Iterative Q&A during design | File-based RPC + session resume (legacy: Intercom) |
 | Durable decision record | Kanban comment + ADR file |
 
 ### Example
 
 ```python
 # Architect asks PO a blocking question during design
-intercom ask(
+kanban comment(
     to="startup/product-owner",
     topic="recipe-cost-design",       # from card body
     text="Your brief says <$500/mo. Does that include the price API subscription?",

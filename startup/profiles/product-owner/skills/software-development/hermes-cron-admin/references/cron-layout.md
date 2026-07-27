@@ -38,7 +38,7 @@ Both trees have identical internal layout. Scan both or you miss half the profil
 ## Observed profiles (your install may differ)
 
 Both trees together held jobs.json for: `product-owner`, `scout`, `tech-lead`,
-`venture-builder`, `vault-keeper`, `ops` (teams tree only). Several profiles
+`builder`, `vault-keeper`, `ops` (teams tree only). Several profiles
 also carry non-empty `"skills":` arrays.
 
 ## Copy-paste scan script

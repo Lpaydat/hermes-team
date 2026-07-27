@@ -84,7 +84,7 @@ Tested: three consecutive cron ticks produce exactly one task per ready issue, z
 - **Kanban board** = orchestration memory (task state, comments, handoffs across sessions)
 - **Beads** = project task memory (epics, beads, sub-beads, dependencies, acceptance checklists)
 - **3-file crash state** (`contract.md`, `progress.md`, `log.md`) = per-engagement recovery state
-- **~/vault/journal/<project>/** = dev journey logs (build-in-public raw material)
+- **~/projects/<slug>/journal/** = dev journey logs (build-in-public raw material)
 - **~/vault/wiki/** = researcher's curated knowledge (READ ONLY — do not write here)
 
 ## Self-Improvement Loop

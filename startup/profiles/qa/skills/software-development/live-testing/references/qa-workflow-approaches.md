@@ -73,7 +73,7 @@ Rank claims by risk (likelihood × impact). P0/P1 → full depth (10+ edge cases
 
 Every test result written to disk immediately. Protocol resumable from any phase. Read `overall-summary.json` on re-dispatch → skip completed phases, re-run only incomplete. Fully crash-resilient.
 
-**When to use:** Always for medium/large artifacts. The evidence ledger at `~/vault/qa-evidence/<qa-card-id>/` is written by all child workers and read by the main session for Phase 7 synthesis.
+**When to use:** Always for medium/large artifacts. The evidence ledger at `~/projects/<slug>/qa-evidence/<qa-card-id>/` is written by all child workers and read by the main session for Phase 7 synthesis.
 
 ## Summary Comparison
 

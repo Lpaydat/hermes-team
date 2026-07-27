@@ -138,7 +138,7 @@ The FAIL→fix→re-verify loop runs **without you**: the verifier files finding
 **Case A — ESCALATE card arrives** (iteration ≥ 3 or spec gap):
 
 1. **Read the accumulated findings first** (the `REVIEW-ITERATION` comments on the dev card — the whole story is there).
-2. **Then the trace**: read the developer's harness transcript from the ledger (`~/vault/traces/<board>/<chain-root>/attempt-N.jsonl`). Grep for the moment judgment diverged from spec. The fix is usually the contract wording for that exact moment — not rewriting the whole task.
+2. **Then the trace**: read the developer's harness transcript from the ledger (`~/projects/<slug>/traces/<chain-root>/attempt-N.jsonl`). Grep for the moment judgment diverged from spec. The fix is usually the contract wording for that exact moment — not rewriting the whole task.
 3. **Classify the ESCALATE, then route by defect class** (do not blind-retry — iter≥3 means the dev↔verify loop is stalled; find out *why* before re-dispatching):
    - **Defect-class bug** (root-cause-unknown, no contract wording explains the failure — the blind-retry hole): **teardown first, then route to `debugger`**. Drain the in-flight dev+verifier chain on this defect — complete or cancel its outstanding fix cards — **BEFORE** creating the debugger card, so two loops never own one defect at once (`no two-loops-one-defect`). Then file the defect (repro + accumulated findings + ledger trace) to `debugger` for its root-cause converge loop; the debugger diagnoses and dispatches its own dev+verifier pair to fix + falsify. You do not write the fix.
    - **Contract gap** (the spec wording caused the failure): re-contract — update PRD/contract, then a NEW dev+verifier chain via `kanban_chains` with the corrected contract (cold restart per Ralph when the approach was wrong).
@@ -159,7 +159,7 @@ Key rules:
 **Done when**: validation passes (returns to Phase 4 done condition). Then:
 1. `bd close <bead-id>` — close the bead in the issue tracker (non-negotiable — the automation loop depends on this to surface the next ready bead)
 2. Mark done on kanban board (`kanban_complete`)
-3. Write journal entry to `~/vault/journal/<project>/`
+3. Write journal entry to `~/projects/<slug>/journal/`
 4. Run reflection (below)
 5. Hand back to user
 

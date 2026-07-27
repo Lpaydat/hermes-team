@@ -1,0 +1,115 @@
+model:
+  context_length: 1000000
+  default: glm-5.2
+  provider: zai
+toolsets:
+- hermes-cli
+- kanban
+- context_graph
+agent:
+  max_turns: 2000
+  api_max_retries: 10
+  reasoning_effort: ultra
+kanban:
+  max_in_progress_per_profile: 3
+  max_in_progress: 3
+auxiliary:
+  vision:
+    provider: zai
+    model: glm-4.6
+display:
+  skin: dgx-spark
+skills:
+  disabled:
+  - airtable
+  - arxiv
+  - ask-matt
+  - blogwatcher
+  - claude-code
+  - codebase-design
+  - codebase-inspection
+  - codex
+  - decision-mapping
+  - design-an-interface
+  - diagnosing-bugs
+  - domain-modeling
+  - edit-article
+  - git-guardrails-claude-code
+  - github-auth
+  - github-code-review
+  - github-issues
+  - github-pr-workflow
+  - github-repo-management
+  - google-workspace
+  - handoff
+  - hermes-agent
+  - himalaya
+  - implement
+  - improve-codebase-architecture
+  - jupyter-live-kernel
+  - migrate-to-shoehorn
+  - node-inspect-debugger
+  - notion
+  - opencode
+  - plan
+  - ponytail
+  - ponytail-audit
+  - ponytail-debt
+  - ponytail-gain
+  - ponytail-help
+  - ponytail-review
+  - powerpoint
+  - prototype
+  - python-debugpy
+  - qa
+  - request-refactor-plan
+  - requesting-code-review
+  - resolving-merge-conflicts
+  - code-review
+  - scaffold-exercises
+  - setup-matt-pocock-skills
+  - setup-pre-commit
+  - simplify-code
+  - spike
+  - systematic-debugging
+  - tdd
+  - teach
+  - test-driven-development
+  - to-tickets
+  - to-spec
+  - triage
+  - ubiquitous-language
+  - wizard
+  - writing-beats
+  - writing-fragments
+  - writing-shape
+  - xurl
+command_allowlist:
+- execute_code
+- script execution via -e/-c flag
+- command parser limit or malformed executable payload
+onboarding:
+  seen:
+    busy_input_prompt: true
+    tool_progress_prompt: true
+_config_version: 33
+plugins:
+  disabled: []
+  enabled:
+  - kanban_chains
+  - loop_engine
+  - context_graph
+  - skill_enforcer
+  entries:
+    kanban_chains:
+      allow_tool_override: false
+    loop_engine:
+      allow_tool_override: false
+skill_enforcer:
+  mandatory:
+  - self-grill
+  - grill-rpc-ops
+  - venture-prototype
+  - prototype-review-handoff
+  - prototype-verification
+  - project-promotion

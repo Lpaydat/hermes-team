@@ -1,0 +1,85 @@
+---
+name: context-graph
+description: Storage + recovery adapter for the grill family (grill-with-docs / grilling / grill-me). Persists the grill's decisions, branches, terms, and answers to the context_graph SQLite DB and recovers grill state from it — INSTEAD OF CONTEXT.md / ADR files / glossary files. Load BEFORE the grill skill. Pure I/O — it does NOT drive the interview or decide branching; the official grill skill does that. Force-loaded by venture-intake.
+disable-model-invocation: true
+---
+
+# context-graph — store + recover the grill in the graph (not CONTEXT.md)
+
+You are **NOT** the interviewer and you do **NOT** decide what to ask or when to branch. The
+official grill skill (`grill-with-docs` → `grilling` + `domain-modeling`) drives the interview:
+it walks the design tree, forks branches ("walk down each branch, resolving dependencies
+one-by-one"), asks one question at a time, and decides when shared understanding is reached.
+**THIS skill's only job: persist what the grill produces into the `context_graph` DB, and
+recover prior grill state from it on every activation** — replacing CONTEXT.md, ADR files, and
+the glossary file.
+
+Load this **before** the grill skill, so the storage convention is set when the grill says
+"write this down."
+
+## Store — persist what the grill produces (never CONTEXT.md / files)
+
+Whatever `grill-with-docs` / `grilling` / `domain-modeling` would write to CONTEXT.md, an ADR,
+or a glossary file, write to the graph instead via the `context_graph` toolset:
+
+- **Venture root** — one `root` node per venture, tagged with the venture `<slug>` (so the whole
+  tree recovers via `graph_pull('<slug>')`):
+  `graph_add_node(type='root', title='<venture>', topics=['<slug>'])`. **The root stays OPEN for
+  the entire grill — NEVER `graph_resolve_node` the root until GRILL COMPLETE.** Resolving it early
+  is a false-completion signal (it makes `has_open_root()` lie and lets the grill stop prematurely).
+  Only decisions/facts get resolved mid-grill; the root resolves once, at the very end.
+- **A decision or fact** the grill poses — `graph_add_node(type='decision'|'fact', title='<the decision>', topics=['<slug>', …])`.
+  A `fact` resolves by lookup; a `decision` resolves only by the user-rep (VB).
+- **A branch / sub-decision** — when the grill drills into a decision (walks down a branch),
+  persist the sub-decision as a child that **blocks its PARENT decision** (not the root):
+  `graph_add_edge(source_id=<subdecision>, target_id=<parent_decision>, edge_type='blocks')`.
+  The top-level decision still blocks the root; its children block it. A sub-decision blocks
+  **exactly one** node (its parent) — never also edge it to the root (double-edging makes
+  `graph_tree` emit the node at two depths via `UNION ALL` and pollutes the view). This storage
+  shape is what lets `graph_tree(root)` show real depth and `graph_frontier()` enforce
+  one-at-a-time drilling — the grill's branch doctrine lands here.
+- **An answer** (VB resolves a decision, or a fact is looked up) —
+  `graph_resolve_node(node_id, content='VB: <answer>' or 'lookup: <fact>')`. The `content`
+  records the answer verbatim.
+- **A term** (domain-modeling pins shared language) —
+  `graph_add_node(type='term', title='<term>', content='<VB-approved definition>', topics=[…])`.
+  Term nodes replace the glossary file.
+
+That is the entire write surface. Do not invent node or edge types. Edge types available:
+`blocks, relates_to, caused_by, supersedes, part_of, references, answers`.
+
+## Recover — read prior grill state on every activation (before asking anything)
+
+On every activation (fresh, resumed, or re-spawned), recover the grill state **from the graph** —
+never from CONTEXT.md, never from in-session memory:
+
+```text
+pull     = graph_pull('<slug>')     # every node for this venture
+root     = the node with type='root' in pull
+tree     = graph_tree(root.id)      # full branch structure: depth + decision dependencies
+frontier = graph_frontier()         # open decisions/facts with no open blocker = the next questions
+```
+
+Recover the root by filtering `graph_pull('<slug>')` to `type='root'` — never from memory. If no
+root exists, the grill has not started: seed it (above) and let the grill skill pose the entry
+question. `graph_tree(root)` is what shows the branching structure; `graph_frontier()` is the
+work queue the grill walks.
+
+## GRILL COMPLETE — read the gate from the graph
+
+The grill skill decides when shared understanding is reached; the graph makes that check
+unfakeable. Fire GRILL COMPLETE (resolve the root, signal VB on the grill topic) only when all
+three read true:
+
+1. `graph_frontier()` is empty (no open unblocked decision/fact).
+2. Every `decision` in `graph_tree(root)` is resolved with a recorded answer.
+3. At least one `term` node exists.
+
+`graph_remaining()` (all open decision/fact — the full backlog) empty is the quick mechanical
+check for #1.
+
+## What this skill is NOT
+
+Not the interviewer. Not the branch decider. Not the doc author. It stores and recovers only.
+The official grill skill owns the interview, the branching, and the doc intent; this skill
+redirects their storage from files to the graph DB.

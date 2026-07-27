@@ -37,7 +37,7 @@ delegate_task fan-out (parallel, restricted context each):
     Subagent B: Phase 4 — walk journeys (gets plan journeys + connection details)
     Subagent C: Phase 5 — non-functional smoke (gets connection details + smoke ref)
     Each returns: per-item PASS/FAIL + evidence pointers (not raw output)
-    Each writes evidence to ~/vault/qa-evidence/<qa-card-id>/phase-N/
+    Each writes evidence to ~/projects/<slug>/qa-evidence/<qa-card-id>/phase-N/
     ↓
 Main session: Phase 6 (explore — needs full context, keep in-session)
               Phase 7 (synthesize verdict + report from subagent summaries)
@@ -88,7 +88,7 @@ Total: potentially 35–75K tokens of raw test output. The plan (Phase 1) and ve
 Every test result written to disk immediately. Protocol resumable from any phase. Read `summary.json` on re-dispatch → skip completed phases, re-run only incomplete.
 
 ```
-~/vault/qa-evidence/<qa-card-id>/
+~/projects/<slug>/qa-evidence/<qa-card-id>/
   plan.json                    — the test plan (from Phase 1)
   phase-3-claims/
     claim-01-proven.txt        — actual test output

@@ -183,7 +183,7 @@ Skills on disk fall into three categories that cross-cut each other:
    - **Tool integrations**: unique to one profile's workflow
      (`airtable`, `github-*` on venture-builder)
    - **Agent-created**: written by an agent during runtime, tracked in
-     `.curator_state` (`team-observability`, `intercom`)
+     `.curator_state` (`team-observability`, `kanban`)
 
 To classify: iterate every profile's skills, resolve symlinks, then
 count how many profiles each real-dir skill appears in. Skills in 1
@@ -458,9 +458,9 @@ that checks all four integration points and produces a gap report.
 The architect profile has two entry points:
 
 1. **Design phase (new projects)** — proactive. PO creates a kanban card
-   with spec + context + intercom topic. The architect picks it up, runs
+   with spec + context + card topic. The architect picks it up, runs
    the full design phase (domain model, stack, boundaries, data model,
-   ADRs), intercoms PO when needed, and completes the card with design
+   ADRs), kanban-comments to PO when needed, and completes the card with design
    output. PO then reads the design and cuts tickets.
 
 2. **Gate ceremony (incremental changes)** — reactive. The T0–T3
@@ -536,7 +536,7 @@ ADR-001 at `docs/adr/ADR-001-architect-as-design-partner.md`.
   auditing whether a gateway-less profile is wired into the team workflow
   (wayfinder routing, identity prompts, consumer skills, gate skill).
 - `references/design-phase.md` — the v2 simplified design phase: PO-owned
-  flow (architect as design service, not co-author), intercom topic-based
+  flow (architect as design service, not co-author), card topic-based
   session targeting, kanban_chains fan-out (NOT delegate_task), skill
   ownership (to-spec/to-tickets stay with PO), fan-out scaling by tier.
   When `architecture-gate` is unpinned, move this there.

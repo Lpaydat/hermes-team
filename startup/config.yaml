@@ -111,7 +111,7 @@ memory:
   nudge_interval: 10
   flush_min_turns: 6
 delegation:
-  max_iterations: 50
+  max_iterations: 999
 skills:
   creation_nudge_interval: 15
   disabled:

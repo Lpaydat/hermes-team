@@ -1,0 +1,11 @@
+name: context_graph
+version: 0.1.0
+description: >-
+  SQLite-backed graph for dynamic project context. Replaces monolithic
+  CONTEXT.md with queryable nodes (decision/fact/term/artifact/root),
+  typed edges (blocks/relates_to/caused_by/supersedes/part_of/references/answers),
+  and multi-topic tags (one decision tagged auth+data-store+security retrieved
+  by all three). Queries: frontier (work queue), pull (topic subgraph),
+  context (node neighborhood), tree (dependency tree).
+provides_tools:
+  - context_graph

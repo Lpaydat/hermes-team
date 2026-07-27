@@ -8,7 +8,7 @@ with 6 edge-case drills on isolated kanban boards.
 
 | Bead | What it built |
 |------|--------------|
-| 1y1.1 | Architect profile (dispatch + intercom) |
+| 1y1.1 | Architect profile (dispatch + kanban) |
 | 1y1.2 | ADR convention (create, supersede, chain A→B→C) |
 | 1y1.3 | Architecture routing (questions → ADR or escalate) |
 | 1y1.4 | Architecture gate (T0–T3 blast-radius triage) |
