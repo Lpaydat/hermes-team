@@ -11,15 +11,26 @@ The leading word is _tracer-bullet_: each ticket is a thin end-to-end slice that
 
 ## Gate: grill decisions must exist
 
-Before doing anything, verify:
+Before doing anything, check for existing grill decisions. The builder's grill
+covers product and business decisions; the production spec fills implementation
+gaps. Accept grill decisions from either source.
 
-```
-~/projects/<slug>/.driver/grill/decisions.md exists AND contains locked decisions
-```
+Check these locations (in order):
+1. `~/projects/<slug>/.driver/grill/decisions.md`
+2. `~/projects/<slug>/.context/grill/decisions.md`
+3. `~/projects/<slug>/context/*.md` (builder's per-branch grill output)
 
-If it does not exist or is empty: STOP. Tell the user the grill hasn't run yet. Load `project-kickoff-grill`. Do not proceed to spec without grill decisions — a spec written from unchallenged discussion will have holes that surface during implementation when they're 10x more expensive to fix.
+If grill decisions exist (from any source): proceed. The product decisions are
+settled — synthesize the spec from them. Do NOT re-grill product decisions that
+are already locked.
 
-For migrations: also verify the old → new field mapping table exists in the grill decisions file.
+If grill decisions do NOT exist: STOP. Tell the user the grill hasn't run yet.
+Load `project-kickoff-grill`. Do not proceed to spec without grill decisions.
+
+**Conditional re-grill:** If the user raises new concerns during promotion that
+challenge existing grill decisions (e.g., "actually, I want to add offline
+support" or "I'm not sure about the pricing model"), load `project-kickoff-grill`
+and grill ONLY the new concerns. Do not re-litigate settled decisions.
 
 ## Step 1: Write the spec
 
