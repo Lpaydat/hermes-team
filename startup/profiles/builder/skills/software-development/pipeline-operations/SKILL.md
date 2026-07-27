@@ -7,6 +7,8 @@ description: Operate the venture builder pipeline — run queue-builds.sh, verif
 
 Operating the 4-stage venture pipeline: queue-builds.sh, kanban card verification, gateway config reloads, and the bash/CLI pitfalls that cost time.
 
+> **Pipeline architecture** — the 4 stages, 2-card split, and project structure are documented in [`references/venture-pipeline-architecture.md`](references/venture-pipeline-architecture.md).
+
 ## 1. Gateway restart for config changes
 
 Changes to `~/.hermes-teams/startup/config.yaml` (e.g. `delegation.max_iterations`) are written to disk but NOT picked up by the running gateway. The gateway caches config at startup. Any session it spawns (via the dispatcher) will use the old cached value.

@@ -11,7 +11,30 @@ Skills are opt-in via `skill_view`. Nothing forces the PO to load them. Four fai
 3. **Skill loaded but ignored:** PO could load `to-tickets`, read it, then create beads manually anyway.
 4. **False enforcement claim in SOUL.md (verified 2026-07-27):** SOUL.md stated "The `to-spec` skill enforces this at the tool level: it must refuse to write a spec if no grilling has occurred." Grepping the actual `to-spec` SKILL.md confirmed this is false — zero grill/enforce/refuse/gate keywords exist in the skill. The skill is a read-only symlink (chmod 444) to the Matt Pocock shared-skills pack; it cannot be patched to add enforcement. A false claim of enforcement is worse than no claim: the PO believes a safety net exists and relaxes self-discipline. **The only enforcement that exists today is the PO's own pipeline discipline (loading skills at the right steps).** The layers below are DESIGN goals, none implemented yet.
 
-## The three-layer defense
+## Layer 0: Config-level tool removal (PROVEN — already in production)
+
+The ONLY enforcement mechanism proven to work reliably. Everything else below is design-only.
+
+The PO config.yaml already uses `disabled_toolsets` to physically remove tools the PO should never use:
+
+```yaml
+disabled_toolsets:
+  - browser       # no web browsing
+  - delegation    # no delegate_task
+  - web           # no web_search/web_extract
+  - kanban_chains # no matrix topology (prevents the dev→verifier bypass)
+```
+
+The PO config has a comment that states the principle directly:
+> "PO is grill + coordinate ONLY. Prompting ('no research' in the skill) proved unreliable; PO reasoned around it. Tool removal is the only reliable enforcement."
+
+This proves the pattern: **prompting is a suggestion, tool removal is enforcement.** The same mechanism can enforce other role boundaries by adding the relevant toolset to `disabled_toolsets`.
+
+**How to configure:** `disabled_toolsets` under the top-level or `agent:` key in config.yaml. Per-platform override via `platform_toolsets`. See Hermes docs: `website/docs/user-guide/security.md` and `configuration.md`.
+
+**Limitation:** `disabled_toolsets` works at the tool level (can this agent call `write_file`?), not at the workflow level (did this agent load `to-spec` before calling `bd create`?). For workflow-order enforcement, you need Layers 1-2 (stamps + engine gate). But for role-boundary enforcement ("should this agent have this tool at all?"), config-level removal is the gold standard — the user explicitly confirmed this approach over word-bans.
+
+## Layer 1+: Proof and gate layers (design — not yet implemented)
 
 ### Layer 1: Skills leave proof (stamps)
 
@@ -81,8 +104,17 @@ The plugin runs inside the agent's tool stream. It sees tool calls. But it can't
 
 ## Implementation priority
 
+0. **Already done:** Config-level tool removal (Layer 0) — proven, in production. Extend to cover more role boundaries (e.g., PO file-write restriction if needed).
 1. **Highest impact:** Workflow engine gate (Layer 2) — blocks dispatch without proof. Pure Python, no LLM.
 2. **High impact:** Dispatch card `--skills` flag (Layer 2) — forces dev-dispatch load. One-line patch.
 3. **Medium impact:** Skill stamps (Layer 1) — enables the gate. Requires patching each skill (to-spec, to-tickets, dev-dispatch).
 4. **Low impact:** Plugin observer (Layer 3) — nice for audit, but the workflow gate is the real enforcement.
 5. **Low impact:** Monthly audit (Layer 4) — catches drift after the fact.
+
+## Skills ecosystem + graph engineering research (searched 2026-07-27)
+
+Searched the open agent skills ecosystem (`npx skills find`) for existing tools/libraries that implement "skills as composable workflows." No match exists. Top results were domain-specific patterns (deployment, git, saga orchestration from `wshobson/agents`, `ruvnet/ruflo`) — not a framework for structuring skills-as-workflows. The `codewithjv/agent-skills@create-locked-down-skill` (20 installs) restricts skill execution but doesn't compose workflows.
+
+Also researched "graph engineering" (July 2026 X trend, Peter Steinberger). Read 8 articles. **Not applicable here.** Graph engineering is multi-agent runtime orchestration (nodes = agents, edges = data deps, fan-out/fan-in, shared state). Our problem is single-agent skill composition within one session. The one stealable principle is the **dependency test**: "Does step B actually read step A's output? If no data crosses the boundary, there's no edge." Good for workflow design, doesn't need DAG formalism.
+
+**We are building this ourselves.** The `create-workflow` authoring skill (agreed 2026-07-27) will teach profiles how to write skill-chaining workflows with real gates.
