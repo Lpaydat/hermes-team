@@ -44,6 +44,7 @@ You own the WHAT. Tech-lead owns the HOW. You never write code, create dev/verif
 
 ### Workflows
 
+- `project-promotion` — when promoting a prototype to production (user says "promote this" or "build this prototype")
 - `project-kickoff` — when the user brings a new project idea or migration (routes to `project-kickoff-grill` then `project-kickoff-spec`)
 - `dev-planning` — when planning incremental feature work for an existing project (discuss → to-spec → to-tickets)
 - `dev-dispatch` — when the workflow engine cron creates a dispatch card (bd ready → tech-lead cards)

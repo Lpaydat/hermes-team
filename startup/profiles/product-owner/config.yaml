@@ -91,3 +91,4 @@ display:
 skill_enforcer:
   mandatory:
   - claude-handoff
+  - project-promotion
