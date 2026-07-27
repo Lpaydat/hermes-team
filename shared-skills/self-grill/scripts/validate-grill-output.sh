@@ -55,7 +55,9 @@ fi
 # 3. Each branch file exists with required sections
 if [ "$BRANCH_COUNT" -ge 1 ] 2>/dev/null; then
     # Extract branch slugs from _state.md table
-    BRANCH_SLUGS=$(grep -oP '^\| \d+ \| \K[^ |]+' "$STATE_FILE" 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr ' ' '-' || true)
+    # Branch names can contain spaces (e.g. "pricing and unit economics").
+    # Match the full name between the 2nd and 3rd pipes, then slugify.
+    BRANCH_SLUGS=$(grep -oP '^\| \d+ \| \K[^|]+(?=\s*\|)' "$STATE_FILE" 2>/dev/null | sed 's/^ *//;s/ *$//' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' || true)
     
     for slug in $BRANCH_SLUGS; do
         BRANCH_FILE="$CONTEXT_DIR/${slug}.md"

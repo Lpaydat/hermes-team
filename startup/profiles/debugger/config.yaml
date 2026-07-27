@@ -95,9 +95,12 @@ plugins:
   enabled:
   - kanban_chains
   - loop_engine
+  - skill_enforcer
   disabled: []
   entries:
     kanban_chains:
       allow_tool_override: false
     loop_engine:
       allow_tool_override: false
+skill_enforcer:
+  mandatory: []

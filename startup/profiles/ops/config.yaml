@@ -75,6 +75,7 @@ fallback_model: []
 plugins:
   enabled:
   - kanban_chains
+  - skill_enforcer
   disabled: []
   entries:
     kanban_chains:
@@ -82,3 +83,5 @@ plugins:
 kanban:
   max_in_progress_per_profile: 3
   max_in_progress: 3
+skill_enforcer:
+  mandatory: []

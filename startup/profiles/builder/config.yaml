@@ -107,4 +107,9 @@ plugins:
       allow_tool_override: false
 skill_enforcer:
   mandatory:
-  - claude-handoff
+  - self-grill
+  - grill-rpc-ops
+  - venture-prototype
+  - prototype-review-handoff
+  - prototype-verification
+  - project-promotion

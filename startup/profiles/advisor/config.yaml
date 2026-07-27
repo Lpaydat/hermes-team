@@ -20,7 +20,10 @@ kanban:
 plugins:
   enabled:
   - kanban_chains
+  - skill_enforcer
   disabled: []
   entries:
     kanban_chains:
       allow_tool_override: false
+skill_enforcer:
+  mandatory: []
