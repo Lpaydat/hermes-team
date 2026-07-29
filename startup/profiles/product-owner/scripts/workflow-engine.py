@@ -261,7 +261,6 @@ def dispatch_bug_to_debugger(board, project_dir, bead):
         "--assignee", "debugger",
         "--body", body,
         "--workspace", f"dir:{project_dir}",
-        "--skills", "loops-engineering",
         "--idempotency-key", f"bead-{bead_id}",
         "--json",
     ])
