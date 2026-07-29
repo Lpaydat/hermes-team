@@ -73,3 +73,4 @@ Dispatched N bead(s):
 - `--idempotency-key "bead-<bead-id>"` is the dedup — always include it.
 - `--workspace worktree:<path>` gives each card its own `.worktrees/<task-id>/` — required for parallel execution.
 - Never create dev/verifier cards — tech-lead does that via `kanban_delegate`.
+- **Never set `skills` on the dispatch card.** The CLI template above has no `--skill` flag. Tech-lead loads its own skills via its SOUL.md identity. If you set `skills` to a category name like `"software-development"` (a directory, not a skill), the agent crashes at startup with `Error: Unknown skill(s)` and the card burns all retries without doing any work.

@@ -24,6 +24,11 @@
       "name": "DomainGuard",
       "path": "/home/lpaydat/projects/domain-security-monitor-crowdstrike-for-domains",
       "board": "domainguard"
+    },
+    {
+      "name": "LivetestPipeline",
+      "path": "/home/lpaydat/projects/livetest-pipeline",
+      "board": "livetest-pipeline"
     }
   ],
   "paused_projects": [

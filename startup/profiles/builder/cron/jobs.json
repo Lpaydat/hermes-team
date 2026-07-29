@@ -22,15 +22,15 @@
       "schedule_display": "30 */3 * * *",
       "repeat": {
         "times": null,
-        "completed": 191
+        "completed": 200
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T13:08:22.790689+07:00",
-      "next_run_at": "2026-07-28T06:30:00+07:00",
-      "last_run_at": "2026-07-28T03:30:05.963531+07:00",
+      "next_run_at": "2026-07-30T00:30:00+07:00",
+      "last_run_at": "2026-07-29T21:30:07.891680+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -66,15 +66,15 @@
       "schedule_display": "0 5 * * 1,3,5",
       "repeat": {
         "times": null,
-        "completed": 10
+        "completed": 11
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T13:08:28.575542+07:00",
-      "next_run_at": "2026-07-29T05:00:00+07:00",
-      "last_run_at": "2026-07-27T05:00:04.763868+07:00",
+      "next_run_at": "2026-07-31T05:00:00+07:00",
+      "last_run_at": "2026-07-29T11:02:24.922770+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -88,7 +88,7 @@
     },
     {
       "id": "7872dbc93ab1",
-      "name": "Pipeline + Build Cycle",
+      "name": "Idea Intake Cycle (Signals \u2192 Scored Dossiers)",
       "prompt": "You are the builder running the pipeline cycle.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:RECENT, exit immediately with \"Pipeline ran [N]d ago, no urgent work. Skipping.\"\n- If STATUS:DUE, run the pipeline below.\n\nThis pipeline does 4 things ONLY. It does NOT grill, build, queue, or review. Those happen in separate builder sessions triggered by the queue-builds.sh cron script and interactive user feedback.\n\nPHASE 1: INGEST SIGNALS \u2014 Read ~/vault/ventures/signals/daily-scan.md. New signals arrive tagged with their door (A=Problem, B=Opportunity, C=Copycat, D=User).\n\nPHASE 2: SCORE \u2014 For each new signal, score /25 (Pain 1-5, Frequency 1-5, WTP 1-5, Competition 1-5, WhyNow 1-5). Origin modifiers: Copycat +1 (market proven). Opportunity weights WhyNow higher. Score WITH evidence from the signal. Add scored ideas to ~/vault/ventures/idea-bank.md.\n\nPHASE 3: BUILD DOSSIERS \u2014 For each newly scored idea, create a FULL dossier using ~/vault/ventures/templates/idea-dossier-template.md. Write to ~/vault/ventures/ideas/<slug>.md. All 13 sections required. Use signal data AND web research. NOT one-liners.\n\nPHASE 3.5: FACT-VERIFY \u2014 For each new dossier, dispatch an independent fact-verification subagent using delegate_task. The verifier MUST be independent. Verifier writes report to ~/vault/ventures/ideas/<slug>-verification.md.\n  - PASS (>=90%): update idea-bank.md status to \"verified\"\n  - CONDITIONAL (70-89%): fix disputed claims in dossier, then mark \"verified\"\n  - FAIL (<70% or critical claim fabricated): fix or re-research\n\nPHASE 4: UPDATE PORTFOLIO \u2014 Update ~/vault/ventures/portfolio.md with any new verified dossiers. The pipeline's job ends here.\n\n== COMPLETION ==\n\nAfter running the cycle, update the guard marker by writing current epoch timestamp to ~/vault/ventures/.last-pipeline\n\n== RULES ==\n- NEVER kill ideas. Score and rank only.\n- NEVER grill in this pipeline. Grilling happens in separate builder sessions.\n- NEVER build prototypes in this pipeline. Building happens in separate builder sessions.\n- NEVER skip fact-verification. Every dossier is independently verified.\n- NEVER write a one-line idea entry. Every scored idea gets a full dossier.\n- The queue-builds.sh cron script handles picking top ideas and creating builder kanban cards. You do NOT create kanban cards.\n- Keep ~/vault/ventures/portfolio.md and ~/vault/ventures/idea-bank.md updated.",
       "skills": [],
       "skill": null,
@@ -108,15 +108,15 @@
       "schedule_display": "0 2,8,14,20 * * *",
       "repeat": {
         "times": null,
-        "completed": 96
+        "completed": 101
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T13:08:28.935656+07:00",
-      "next_run_at": "2026-07-28T08:00:00+07:00",
-      "last_run_at": "2026-07-28T02:21:08.532384+07:00",
+      "next_run_at": "2026-07-30T02:00:00+07:00",
+      "last_run_at": "2026-07-29T20:06:15.861964+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -154,15 +154,15 @@
       "schedule_display": "0 */6 * * *",
       "repeat": {
         "times": null,
-        "completed": 20
+        "completed": 25
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-23T17:39:46.560337+07:00",
-      "next_run_at": "2026-07-28T06:00:00+07:00",
-      "last_run_at": "2026-07-28T00:00:04.320739+07:00",
+      "next_run_at": "2026-07-30T00:00:00+07:00",
+      "last_run_at": "2026-07-29T18:00:05.744878+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -175,5 +175,5 @@
       "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-28T03:30:05.963937+07:00"
+  "updated_at": "2026-07-29T21:30:07.892101+07:00"
 }
