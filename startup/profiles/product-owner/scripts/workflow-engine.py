@@ -238,6 +238,35 @@ def dispatch_wayfinder_ticket(board, project_dir, bead, assignee):
     ])
     return [f"dispatch: {'routed' if ok else 'FAILED to route'} wayfinder ticket {bead_id} → {assignee} on {board}"]
 
+def dispatch_bug_to_debugger(board, project_dir, bead):
+    """Route a bug bead directly to debugger (skips PO dispatch → tech-lead)."""
+    bead_id = bead["id"]
+    detail = bd_json(project_dir, "show", bead_id) or {}
+    if isinstance(detail, list):
+        detail = detail[0] if detail else {}
+    description = detail.get("description") or bead.get("title", "")
+
+    if DRY_RUN:
+        return [f"dispatch: would route bug {bead_id} → debugger on {board}"]
+
+    body = (
+        f"## Bug {bead_id} — {bead.get('title', '?')}\n\n"
+        f"{description}\n\n"
+        f"## Resolve protocol (run bd from {project_dir})\n\n"
+        f"Run your loops-engineering doctrine. Diagnose, fix, verify. "
+        f"Close the bead with `bd close {bead_id}` when done."
+    )
+    ok, _ = run_kanban(board, [
+        "create", f"[auto] bug: {bead.get('title', bead_id)}"[:120],
+        "--assignee", "debugger",
+        "--body", body,
+        "--workspace", f"dir:{project_dir}",
+        "--skills", "loops-engineering",
+        "--idempotency-key", f"bead-{bead_id}",
+        "--json",
+    ])
+    return [f"dispatch: {'routed' if ok else 'FAILED to route'} bug {bead_id} → debugger on {board}"]
+
 def phase_dispatch(board, project_dir):
     """Check bd ready and create a PO dispatch card for one project."""
     actions = []
@@ -258,6 +287,10 @@ def phase_dispatch(board, project_dir):
         if any(lab in WAYFINDER_SKIP for lab in labels):
             continue  # HITL-substitute tickets: PO<->builder own these, never headless
         if card_exists_for_bead(board, bead["id"]):
+            continue
+        # Route bugs to debugger, not tech-lead
+        if bead.get("issue_type") == "bug":
+            actions.extend(dispatch_bug_to_debugger(board, project_dir, bead))
             continue
         route = next((WAYFINDER_ROUTES[lab] for lab in labels if lab in WAYFINDER_ROUTES), None)
         if route:
