@@ -44,11 +44,7 @@ Write to `<project-dir>/PRD.md`. Publish as a beads epic with `ready-for-agent`.
 
 ## Step 2: Architect gate
 
-Load the `architect-gate` skill. It owns the design card creation, waiting for completion, and reading the design output. Do NOT inline the handoff — the skill is the single source of truth.
-
-The architect may need PO input on product-ambiguous decisions — it will launch an RPC call to you. Answer immediately with product context.
-
-**Gate card rule:** Gate cards are owner decisions, not PO decisions. When the architect assigns a gate card to `product-owner`, the PO's job is to surface it to the human (comment, block) — NOT to resolve it. A dispatched PO worker has no authority to make product decisions on the user's behalf.
+Load the `architect-gate` skill. It owns the design card creation, waiting for completion, and reading the design output. The skill is the single source of truth — it includes sequencing warnings and gate-card handling.
 
 **Completion criterion:** architect design card completed, gate cards surfaced to the human, design doc + ADRs published.
 
@@ -70,15 +66,7 @@ mkdir -p ~/projects/<slug> && cd ~/projects/<slug> && git init && bd init
 hermes kanban boards switch <slug>
 ```
 
-Register in `active-projects.json`.
-
-**CRITICAL sequencing:** Do NOT add `ready-for-agent` to beads until Step 2 (architect gate) is complete. The moment you register in `active-projects.json`, the workflow engine begins checking beads every tick. If beads have `ready-for-agent`, the engine dispatches immediately — before design is finalized.
-
-Correct order:
-1. Create board + beads WITHOUT `ready-for-agent`
-2. Run architect design + resolve gate cards
-3. Apply owner decisions to ADRs
-4. ONLY NOW: add `ready-for-agent` to beads AND register in `active-projects.json`
+Register in `active-projects.json` AFTER the architect gate is complete (see `architect-gate` skill for sequencing).
 
 **Monorepo pitfall:** If the project has frontend + backend, include the directory path in EVERY bead description: "React scaffold **in `frontend/`**". Without it, code lands in repo root.
 

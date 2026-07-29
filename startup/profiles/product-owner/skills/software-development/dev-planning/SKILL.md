@@ -70,7 +70,6 @@ If it stays `open`, `bd ready` shows it as dispatchable — tech-lead tries to "
 - Never create tech-lead/dev/verifier cards — dispatch happens via the workflow engine cron.
 - Be _decisive_. When the other party gives a clear instruction, execute it. When the natural design has a single path, state it and move on — creating options where none exist is unnecessary complexity.
 - Create the project board before adding it to `active-projects.json`: `hermes kanban boards create <slug> --default-workdir <path>`. Then add `{name, path, board}` to the config.
-- **CRITICAL sequencing:** Do NOT add `ready-for-agent` to beads until step 3 (architect gate) is complete. The moment you register in `active-projects.json`, the workflow engine begins checking beads every tick.
 
 ## Reference
 

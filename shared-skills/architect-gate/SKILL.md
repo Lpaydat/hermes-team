@@ -18,11 +18,15 @@ Create a kanban card (`assignee: architect`) on the project board with:
 - **Open technical questions** — anything you couldn't answer
 - **Stakes** — `low` (prototype/internal), `standard` (normal feature), `high` (revenue/safety/hard-to-reverse)
 
-## Step 2 — Wait
+**Completion criterion:** design card created on the project board with `assignee: architect`.
 
-The architect runs `design-council` (research + peer fan-out, convergence loop, ADR recording). It may need PO input on product-ambiguous decisions — it will launch an RPC call to you. Answer immediately with product context.
+## Step 2 — Respond to architect queries
 
-If the architect assigns a **gate card** to you, surface it to the human — do NOT auto-resolve it. Gate cards are owner decisions, not PO decisions.
+The architect runs `design-council` (research + peer fan-out, convergence loop, ADR recording) autonomously. It may launch an RPC call to you with product-ambiguous questions — answer immediately with product context.
+
+Surface any architect **gate cards** to the human. Gate cards are owner decisions, not PO decisions.
+
+**Completion criterion:** architect design card reaches `done` status.
 
 ## Step 3 — Read the design output
 
