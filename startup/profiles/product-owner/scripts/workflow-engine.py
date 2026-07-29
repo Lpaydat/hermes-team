@@ -536,7 +536,25 @@ def phase_qa_trigger(board, project_dir):
     if last_sha == current_sha:
         return actions
 
-    # Master advanced — check if we already created a QA card for this commit
+    # Master advanced — but only trigger QA if there are merge commits
+    # (non-merge commits are PO writing specs/docs, not code landing)
+    try:
+        merge_result = subprocess.run(
+            ["git", "rev-list", "--merges", "--count", f"{last_sha}..{current_sha}"],
+            cwd=str(git_dir), capture_output=True, text=True, timeout=10
+        )
+        merge_count = int(merge_result.stdout.strip()) if merge_result.returncode == 0 else 0
+    except Exception:
+        merge_count = 0
+
+    # Always update state so we don't re-check the same range
+    state[state_key] = current_sha
+    save_qa_state(state)
+
+    if merge_count == 0:
+        return actions  # master moved but no merges — PO commits, not code
+
+    # Code merged — check if we already created a QA card for this commit
     idem_key = f"qa-merge-{current_sha}"
     db = board_db_path(board)
     if db.exists():
@@ -582,10 +600,6 @@ def phase_qa_trigger(board, project_dir):
             "--json",
         ])
         actions.append(f"qa-trigger: {'created' if ok else 'FAILED'} QA card for {current_sha} on {board}")
-
-    # Update state regardless of success to avoid retrying the same commit
-    state[state_key] = current_sha
-    save_qa_state(state)
 
     return actions
 
