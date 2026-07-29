@@ -526,7 +526,13 @@ def phase_qa_trigger(board, project_dir):
     state = load_qa_state()
     last_sha = state.get(state_key)
 
-    # First run or no change
+    # First run — seed state without creating a card (no baseline = nothing to compare)
+    if last_sha is None:
+        state[state_key] = current_sha
+        save_qa_state(state)
+        return actions
+
+    # No change
     if last_sha == current_sha:
         return actions
 
