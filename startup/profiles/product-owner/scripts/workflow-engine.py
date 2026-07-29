@@ -2,10 +2,12 @@
 """
 Workflow Engine — combined cron for the dev workflow.
 
-Runs three phases per project board, every tick:
-  1. bead-sync:   sync kanban card status → bd bead status (closes done beads)
-  2. dispatch:    bd ready → create PO dispatch card
-  3. scanner:     detect blocked tasks → escalate to proper profile
+Runs five phases per project board, every tick:
+  1. bead-sync:    sync kanban card status → bd bead status (closes done beads)
+  2. dispatch:     bd ready → create PO dispatch card (bugs → debugger directly)
+  3. human-escal:  human-flagged beads → operator HQ card
+  4. scanner:      detect blocked tasks → escalate to proper profile
+  5. qa-trigger:   detect new commits on master → create QA re-test card
 
 Reads active-projects.json for the project list. Empty list = silent exit.
 Each project maps to its own kanban board (1 project = 1 board).
@@ -484,6 +486,104 @@ def scan_board(board):
     return actions
 
 # ══════════════════════════════════════════════════════════════════════════
+# PHASE 4: QA TRIGGER — detect new commits on master → create QA card
+# ══════════════════════════════════════════════════════════════════════════
+
+QA_STATE_FILE = Path.home() / ".hermes-teams/startup/kanban/qa-merge-state.json"
+
+def load_qa_state():
+    if QA_STATE_FILE.exists():
+        try:
+            return json.loads(QA_STATE_FILE.read_text())
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+def save_qa_state(state):
+    QA_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    QA_STATE_FILE.write_text(json.dumps(state, indent=2))
+
+def phase_qa_trigger(board, project_dir):
+    """Detect new commits on master → create QA card for re-test."""
+    actions = []
+    git_dir = Path(project_dir)
+    if not (git_dir / ".git").exists():
+        return actions
+
+    # Get current master HEAD
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(git_dir), capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            return actions
+        current_sha = result.stdout.strip()[:12]
+    except Exception:
+        return actions
+
+    state_key = board
+    state = load_qa_state()
+    last_sha = state.get(state_key)
+
+    # First run or no change
+    if last_sha == current_sha:
+        return actions
+
+    # Master advanced — check if we already created a QA card for this commit
+    idem_key = f"qa-merge-{current_sha}"
+    db = board_db_path(board)
+    if db.exists():
+        conn = sqlite3.connect(str(db))
+        existing = conn.execute(
+            "SELECT 1 FROM tasks WHERE idempotency_key = ?", (idem_key,)
+        ).fetchone()
+        conn.close()
+        if existing:
+            # Already created — just update state
+            state[state_key] = current_sha
+            save_qa_state(state)
+            return actions
+
+    # Get recent commit messages for context
+    try:
+        log_result = subprocess.run(
+            ["git", "log", "--oneline", "-5"],
+            cwd=str(git_dir), capture_output=True, text=True, timeout=10
+        )
+        recent_commits = log_result.stdout.strip() if log_result.returncode == 0 else ""
+    except Exception:
+        recent_commits = ""
+
+    body = (
+        f"## Automated QA re-test — master advanced\n\n"
+        f"**New HEAD:** `{current_sha}`\n\n"
+        f"**Recent commits:**\n```\n{recent_commits}\n```\n\n"
+        f"Build the project, run it as a real user, and verify nothing is broken. "
+        f"File any findings as beads linked to the parent epic."
+    )
+
+    if DRY_RUN:
+        actions.append(f"qa-trigger: would create QA card for {current_sha} on {board}")
+    else:
+        ok, _ = run_kanban(board, [
+            "create", f"[qa] Re-test after merge: {current_sha}",
+            "--assignee", "qa",
+            "--body", body,
+            "--workspace", f"dir:{project_dir}",
+            "--priority", "15",
+            "--idempotency-key", idem_key,
+            "--json",
+        ])
+        actions.append(f"qa-trigger: {'created' if ok else 'FAILED'} QA card for {current_sha} on {board}")
+
+    # Update state regardless of success to avoid retrying the same commit
+    state[state_key] = current_sha
+    save_qa_state(state)
+
+    return actions
+
+# ══════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -522,6 +622,11 @@ def main():
             all_actions.extend(scan_board(board))
         except Exception as e:
             all_actions.append(f"scanner ERROR [{name}]: {e}")
+
+        try:
+            all_actions.extend(phase_qa_trigger(board, path))
+        except Exception as e:
+            all_actions.append(f"qa-trigger ERROR [{name}]: {e}")
 
     if all_actions:
         log(f"{len(all_actions)} action(s):")
