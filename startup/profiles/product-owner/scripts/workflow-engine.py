@@ -486,120 +486,85 @@ def scan_board(board):
     return actions
 
 # ══════════════════════════════════════════════════════════════════════════
-# PHASE 4: QA TRIGGER — detect new commits on master → create QA card
+# PHASE 4: QA TRIGGER — verifier/debugger card completes → create QA card
 # ══════════════════════════════════════════════════════════════════════════
 
-QA_STATE_FILE = Path.home() / ".hermes-teams/startup/kanban/qa-merge-state.json"
-
-def load_qa_state():
-    if QA_STATE_FILE.exists():
-        try:
-            return json.loads(QA_STATE_FILE.read_text())
-        except json.JSONDecodeError:
-            pass
-    return {}
-
-def save_qa_state(state):
-    QA_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    QA_STATE_FILE.write_text(json.dumps(state, indent=2))
-
 def phase_qa_trigger(board, project_dir):
-    """Detect new commits on master → create QA card for re-test."""
+    """When a verifier or debugger card completes, create a QA re-test card.
+
+    Dedup via idempotency key qa-after-<source-card-id>.
+    """
     actions = []
-    git_dir = Path(project_dir)
-    if not (git_dir / ".git").exists():
-        return actions
-
-    # Get current master HEAD
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(git_dir), capture_output=True, text=True, timeout=10
-        )
-        if result.returncode != 0:
-            return actions
-        current_sha = result.stdout.strip()[:12]
-    except Exception:
-        return actions
-
-    state_key = board
-    state = load_qa_state()
-    last_sha = state.get(state_key)
-
-    # First run — seed state without creating a card (no baseline = nothing to compare)
-    if last_sha is None:
-        state[state_key] = current_sha
-        save_qa_state(state)
-        return actions
-
-    # No change
-    if last_sha == current_sha:
-        return actions
-
-    # Master advanced — but only trigger QA if there are merge commits
-    # (non-merge commits are PO writing specs/docs, not code landing)
-    try:
-        merge_result = subprocess.run(
-            ["git", "rev-list", "--merges", "--count", f"{last_sha}..{current_sha}"],
-            cwd=str(git_dir), capture_output=True, text=True, timeout=10
-        )
-        merge_count = int(merge_result.stdout.strip()) if merge_result.returncode == 0 else 0
-    except Exception:
-        merge_count = 0
-
-    # Always update state so we don't re-check the same range
-    state[state_key] = current_sha
-    save_qa_state(state)
-
-    if merge_count == 0:
-        return actions  # master moved but no merges — PO commits, not code
-
-    # Code merged — check if we already created a QA card for this commit
-    idem_key = f"qa-merge-{current_sha}"
     db = board_db_path(board)
-    if db.exists():
-        conn = sqlite3.connect(str(db))
+    if not db.exists():
+        return actions
+
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+
+    # Find recently-completed verifier/debugger cards (last 1 hour) that
+    # don't have a matching QA card yet
+    one_hour_ago = int(time.time()) - 3600
+    rows = conn.execute(
+        """SELECT t.id, t.title, t.assignee, t.completed_at,
+                  r.summary, r.metadata
+           FROM tasks t
+           JOIN task_runs r ON r.task_id = t.id AND r.outcome = 'completed'
+           WHERE t.assignee IN ('verifier', 'debugger')
+             AND t.status = 'done'
+             AND t.completed_at > ?
+           ORDER BY t.completed_at DESC
+           LIMIT 20""",
+        (one_hour_ago,)
+    ).fetchall()
+
+    qa_keys = set()
+    if rows:
+        placeholders = ",".join("?" * len(rows))
         existing = conn.execute(
-            "SELECT 1 FROM tasks WHERE idempotency_key = ?", (idem_key,)
-        ).fetchone()
-        conn.close()
-        if existing:
-            # Already created — just update state
-            state[state_key] = current_sha
-            save_qa_state(state)
-            return actions
+            f"SELECT idempotency_key FROM tasks WHERE idempotency_key IN ({placeholders})",
+            [f"qa-after-{r['id']}" for r in rows]
+        ).fetchall()
+        qa_keys = {row[0] for row in existing}
 
-    # Get recent commit messages for context
-    try:
-        log_result = subprocess.run(
-            ["git", "log", "--oneline", "-5"],
-            cwd=str(git_dir), capture_output=True, text=True, timeout=10
+    conn.close()
+
+    for row in rows:
+        idem_key = f"qa-after-{row['id']}"
+        if idem_key in qa_keys:
+            continue
+
+        # Skip if the completed card was a probe/sub-review (not a merge)
+        title = row["title"] or ""
+        if title.startswith("[probe]") or title.startswith("verify t_"):
+            continue
+
+        # Build QA card from the completed card's context
+        summary = (row["summary"] or "")[:500]
+        source_type = "bug fix" if row["assignee"] == "debugger" else "feature merge"
+
+        body = (
+            f"## Automated QA re-test — {source_type} landed\n\n"
+            f"**Source card:** `{row['id']}` ({row['assignee']})\n"
+            f"**What landed:** {title}\n\n"
+            f"**Completion summary:**\n{summary}\n\n"
+            f"Build the project, run it as a real user, and verify nothing is broken. "
+            f"File any findings as beads linked to the parent epic."
         )
-        recent_commits = log_result.stdout.strip() if log_result.returncode == 0 else ""
-    except Exception:
-        recent_commits = ""
 
-    body = (
-        f"## Automated QA re-test — master advanced\n\n"
-        f"**New HEAD:** `{current_sha}`\n\n"
-        f"**Recent commits:**\n```\n{recent_commits}\n```\n\n"
-        f"Build the project, run it as a real user, and verify nothing is broken. "
-        f"File any findings as beads linked to the parent epic."
-    )
-
-    if DRY_RUN:
-        actions.append(f"qa-trigger: would create QA card for {current_sha} on {board}")
-    else:
-        ok, _ = run_kanban(board, [
-            "create", f"[qa] Re-test after merge: {current_sha}",
-            "--assignee", "qa",
-            "--body", body,
-            "--workspace", f"dir:{project_dir}",
-            "--priority", "15",
-            "--idempotency-key", idem_key,
-            "--json",
-        ])
-        actions.append(f"qa-trigger: {'created' if ok else 'FAILED'} QA card for {current_sha} on {board}")
+        if DRY_RUN:
+            actions.append(f"qa-trigger: would create QA card for {row['id']} on {board}")
+        else:
+            ok, _ = run_kanban(board, [
+                "create", f"[qa] Re-test: {title[:60]}",
+                "--assignee", "qa",
+                "--body", body,
+                "--workspace", f"dir:{project_dir}",
+                "--priority", "15",
+                "--idempotency-key", idem_key,
+                "--json",
+            ])
+            actions.append(f"qa-trigger: {'created' if ok else 'FAILED'} QA card after {row['id']} on {board}")
 
     return actions
 
