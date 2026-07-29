@@ -19,15 +19,19 @@ PO receives dispatch card
   → completes own card
 
 Tech-lead receives card
-  → kanban_delegate plugin → developer + verifier cards atomically
+  → kanban_chains → developer + verifier cards atomically
   → tech-lead blocks (dependency_wait)
   → developer builds via pi harness
   → verifier reviews (two-phase adversarial)
-  → PASS → merge to main → bead closed
+  → PASS → merge to main → verifier creates QA card → bead closed
   → FAIL → fix card to developer → re-verify loop
   → tech-lead auto-promotes when all verifiers done
   → completes
 ```
+
+## QA integration
+
+After the verifier merges to master, it creates a QA card (`assignee: qa`) on the same board. QA tests the assembled, running artifact. On FAIL, QA files beads and triages by type (bug→debugger, non-bug→tech-lead, spec→product-owner). On PASS, the feature is done.
 
 ## Board Model
 
