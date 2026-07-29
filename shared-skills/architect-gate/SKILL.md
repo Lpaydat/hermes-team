@@ -18,7 +18,7 @@ Create a kanban card (`assignee: architect`) on the project board with:
 - **Open technical questions** — anything you couldn't answer
 - **Stakes** — `low` (prototype/internal), `standard` (normal feature), `high` (revenue/safety/hard-to-reverse)
 
-**Completion criterion:** design card created on the project board with `assignee: architect`.
+**Completion criterion:** design card created on the project board with `assignee: architect`. Do NOT link the design card as a child of your task — use `kanban_block(kind="dependency")` to wait, not a parent-child link (linking creates a deadlock: your task blocks on the architect, the architect blocks on your task being done).
 
 ## Step 2 — Respond to architect queries
 
