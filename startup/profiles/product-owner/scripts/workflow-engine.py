@@ -527,8 +527,6 @@ def phase_qa_trigger(board, project_dir):
         ).fetchall()
         qa_keys = {row[0] for row in existing}
 
-    conn.close()
-
     for row in rows:
         idem_key = f"qa-after-{row['id']}"
         if idem_key in qa_keys:
@@ -538,6 +536,22 @@ def phase_qa_trigger(board, project_dir):
         title = row["title"] or ""
         if title.startswith("[probe]") or title.startswith("verify t_"):
             continue
+
+        # Skip debugger internal loop cards (they're not merges, just phases)
+        if row["assignee"] == "debugger" and not title.startswith("[auto]"):
+            continue
+
+        # Skip verifier cards that are children of debugger cards (loop_engine phases)
+        if row["assignee"] == "verifier":
+            parent = conn.execute(
+                "SELECT parent_id FROM task_links WHERE child_id = ?", (row["id"],)
+            ).fetchone()
+            if parent:
+                parent_task = conn.execute(
+                    "SELECT assignee FROM tasks WHERE id = ?", (parent[0],)
+                ).fetchone()
+                if parent_task and parent_task[0] == "debugger":
+                    continue
 
         # Build QA card from the completed card's context
         summary = (row["summary"] or "")[:500]
@@ -566,6 +580,7 @@ def phase_qa_trigger(board, project_dir):
             ])
             actions.append(f"qa-trigger: {'created' if ok else 'FAILED'} QA card after {row['id']} on {board}")
 
+    conn.close()
     return actions
 
 # ══════════════════════════════════════════════════════════════════════════
