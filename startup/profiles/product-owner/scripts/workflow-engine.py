@@ -7,7 +7,7 @@ Runs five phases per project board, every tick:
   2. dispatch:     bd ready → create PO dispatch card (bugs → debugger directly)
   3. human-escal:  human-flagged beads → operator HQ card
   4. scanner:      detect blocked tasks → escalate to proper profile
-  5. qa-trigger:   detect new commits on master → create QA re-test card
+  5. qa-trigger:   verifier/debugger card with "merged" in summary → create QA re-test card
 
 Reads active-projects.json for the project list. Empty list = silent exit.
 Each project maps to its own kanban board (1 project = 1 board).
@@ -290,7 +290,12 @@ def phase_dispatch(board, project_dir):
         if card_exists_for_bead(board, bead["id"]):
             continue
         # Route bugs to debugger, not tech-lead
-        if bead.get("issue_type") == "bug":
+        # Check issue_type AND title — bd versions may store bug type as "task"
+        # with the word "bug" in the title or labels
+        if bead.get("issue_type") == "bug" or (
+            bead.get("issue_type") == "task"
+            and any("bug" in (lab or "").lower() for lab in (bead.get("labels") or []))
+        ):
             actions.extend(dispatch_bug_to_debugger(board, project_dir, bead))
             continue
         route = next((WAYFINDER_ROUTES[lab] for lab in labels if lab in WAYFINDER_ROUTES), None)
@@ -392,6 +397,8 @@ def phase_human_escalations(board, project_dir):
 ESCALATION_CHAIN = {
     "developer": "tech-lead",
     "verifier": "tech-lead",
+    "debugger": "tech-lead",
+    "qa": "tech-lead",
     "tech-lead": "product-owner",
     "product-owner": None,
 }
@@ -543,7 +550,6 @@ def phase_qa_trigger(board, project_dir):
         # Detection: the completion summary mentions merge in a way that
         # indicates the merge happened as part of this card's work.
         # Patterns: "merged to master/main", "Merged <sha>", ". Merged "
-        import re
         merge_patterns = [
             r"merged to master", r"merged to main",
             r"\. merged ", r"^merged ",
