@@ -532,36 +532,34 @@ def phase_qa_trigger(board, project_dir):
         if idem_key in qa_keys:
             continue
 
-        # Skip if the completed card was a probe/sub-review (not a merge)
         title = row["title"] or ""
+        summary = (row["summary"] or "").lower()
+
+        # Skip probe/sub-review cards
         if title.startswith("[probe]") or title.startswith("verify t_"):
             continue
 
-        # Skip debugger internal loop cards (they're not merges, just phases)
-        if row["assignee"] == "debugger" and not title.startswith("[auto]"):
+        # Only trigger QA when code actually landed on master.
+        # Detection: the completion summary mentions merge in a way that
+        # indicates the merge happened as part of this card's work.
+        # Patterns: "merged to master/main", "Merged <sha>", ". Merged "
+        import re
+        merge_patterns = [
+            r"merged to master", r"merged to main",
+            r"\. merged ", r"^merged ",
+        ]
+        if not any(re.search(p, summary) for p in merge_patterns):
             continue
 
-        # Skip verifier cards that are children of debugger cards (loop_engine phases)
-        if row["assignee"] == "verifier":
-            parent = conn.execute(
-                "SELECT parent_id FROM task_links WHERE child_id = ?", (row["id"],)
-            ).fetchone()
-            if parent:
-                parent_task = conn.execute(
-                    "SELECT assignee FROM tasks WHERE id = ?", (parent[0],)
-                ).fetchone()
-                if parent_task and parent_task[0] == "debugger":
-                    continue
-
         # Build QA card from the completed card's context
-        summary = (row["summary"] or "")[:500]
+        summary_text = (row["summary"] or "")[:500]
         source_type = "bug fix" if row["assignee"] == "debugger" else "feature merge"
 
         body = (
             f"## Automated QA re-test — {source_type} landed\n\n"
             f"**Source card:** `{row['id']}` ({row['assignee']})\n"
             f"**What landed:** {title}\n\n"
-            f"**Completion summary:**\n{summary}\n\n"
+            f"**Completion summary:**\n{summary_text}\n\n"
             f"Build the project, run it as a real user, and verify nothing is broken. "
             f"File any findings as beads linked to the parent epic."
         )
