@@ -64,7 +64,7 @@ Feedback loops:
   QA PASS w/ findings → files bug beads (linked to epic) → workflow engine routes to debugger
   QA FAIL → triage: bug→debugger, non-bug→tech-lead, spec→PO
   Verifier iter ≥3 → ESCALATE → tech-lead → (hard bug) → debugger
-  Debugger EXIT A → fix+RCA → back to QA re-test
+  Debugger EXIT A → fix+RCA → verifier reviews+merges → QA re-test → done
   Debugger EXIT B → design flaw → ADR stub → architect gate
 ```
 
@@ -77,4 +77,4 @@ The pipeline uses two stores by design:
 
 Bugs filed by QA go through the workflow engine which routes `issue_type=bug` to debugger (not tech-lead). Bug beads should be `bd link`ed to the parent epic for traceability.
 
-For the full decision matrix and anti-patterns, see [`references/beads-vs-kanban-artifact-policy.md`](references/beads-vs-kanban-artifact-policy.md). For the 6 bugs found via end-to-end livetest, see [`references/livetest-findings-20260729.md`](references/livetest-findings-20260729.md).
+For the full decision matrix and anti-patterns, see [`references/beads-vs-kanban-artifact-policy.md`](references/beads-vs-kanban-artifact-policy.md). For the 9 bugs found via end-to-end livetest, see [`references/livetest-findings-20260729.md`](references/livetest-findings-20260729.md).

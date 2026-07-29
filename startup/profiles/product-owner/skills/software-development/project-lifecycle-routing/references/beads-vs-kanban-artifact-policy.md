@@ -29,3 +29,7 @@
 - Debugger scratch cycles as beads (ephemeral noise in the durable record).
 - Unparented bugs when an in-scope epic exists (breaks rollup queries).
 - Agents filing beads for work that's just decomposition of an existing bead.
+
+## Known gotcha: bd --type=bug
+
+`bd create --type=bug` may store `issue_type` as `task` depending on bd version/config. The workflow engine's `dispatch_bug_to_debugger()` checks `issue_type == "bug"`. If bd doesn't set it correctly, the engine falls through to the generic PO dispatch path. PO recognizes the content as a bug and routes manually — but this adds latency. Verify with `bd show <id> --json | jq .issue_type` after creating bug beads.

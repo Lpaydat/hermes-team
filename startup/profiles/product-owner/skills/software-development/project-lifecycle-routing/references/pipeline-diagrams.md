@@ -32,7 +32,7 @@ DISPATCH PHASE:
     → dev-dispatch (PO creates tech-lead cards)
 
 CONSTRUCTION PHASE:
-  tech-lead (kanban_delegate: creates dev + verifier atomically)
+  tech-lead (kanban_chains: creates dev + verifier atomically)
     → developer (harness wrapper, generates code)
     ↔ verifier (adversarial review, 3-stage: execute → fan out → synthesize)
     │   FAIL → fix card → re-iterate (inner loop, no tech-lead)
@@ -42,6 +42,7 @@ CONSTRUCTION PHASE:
 QA PHASE:
   QA (tests the assembled running artifact, no code reading)
     PASS → ACTUAL DONE
+    PASS w/ findings → files bug beads (linked to epic) → workflow engine → debugger
     FAIL → triage by type:
       bug (code wrong) → DEBUGGER
       non-bug (behavior wrong) → TECH-LEAD
@@ -49,7 +50,9 @@ QA PHASE:
 
 DEBUGGER LOOP:
   reproduce → hypothesize+fix (→ developer) → falsify (→ verifier) → converge
-    EXIT A: localized bug → fix + regression test + RCA → back to QA
+    EXIT A: localized bug → fix + regression test + RCA
+      → verifier reviews + merges fix branch
+      → verifier creates QA card → QA re-tests
     EXIT B: design flaw → RCA + ADR stub → architect gate (re-enters top)
 
 ESCALATION CHAIN:
