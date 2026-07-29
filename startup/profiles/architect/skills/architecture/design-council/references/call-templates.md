@@ -109,16 +109,22 @@ loop_engine({
                  "battery fail replans with its gaps.>")
       }
     },
-    {  # phase 1 — PO-HITL interview (T1, RE-ENTRANT)
+    {  # phase 1 — PO interview via RPC (T1, RE-ENTRANT)
       "execution": {
         "assignee": "architect",
         "title": "PO interview — <DECISION>",
         "body": ("RE-ENTRANT (resume is a fresh session): FIRST check the root blackboard "
-                 "council:po_interview — if present, kanban_complete immediately. Else (legacy) intercom "
-                 "action:ask to startup/product-owner with the open trade-off questions + the "
-                 "converged verdict. On reply: kanban_complete(metadata={'po_interview':<reply>}). "
-                 "On timeout or [target_not_connected]: kanban_block(kind='needs_input') on THIS "
-                 "card (sticky self-escalation) — never proceed without PO input.")
+                 "council:po_interview — if present, kanban_complete immediately. Else launch PO via "
+                 "file-based RPC: unset HERMES_KANBAN_* env vars, then run "
+                 "env -u HERMES_KANBAN_TASK -u HERMES_KANBAN_WORKSPACE -u HERMES_KANBAN_RUN_ID "
+                 "-u HERMES_KANBAN_CLAIM_LOCK -u HERMES_KANBAN_BOARD -u HERMES_KANBAN_DB -u HERMES_PROFILE "
+                 "timeout 300 hermes -p product-owner --skills design-consult-rpc "
+                 "-z \"Design consult for <DECISION>. Converged verdict: <summary>. "
+                 "Open trade-off questions: <questions>\" --cli 2>&1 | tail -80. "
+                 "Extract PO answer from <A> tags. On answer: "
+                 "kanban_complete(metadata={'po_interview':<reply>}). "
+                 "On timeout or no answer: kanban_block(kind='needs_input') on THIS "
+                 "card — never proceed without PO input.")
       }
     },
     {  # phase 2 — ADR record (T2, cap 2)

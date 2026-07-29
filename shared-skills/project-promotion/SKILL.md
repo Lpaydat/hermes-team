@@ -35,13 +35,14 @@ Structure adapts to the stack. Only `.context/`, `STATUS.md`, and `README.md` ar
 3. **Initialize STATUS.md** from template at `templates/STATUS.md`
 4. **Initialize git** (if not already) — `cd ~/projects/<slug> && git init && git add -A && git commit -m "promote: <slug> prototype to production"`
 5. **Create project kanban board** — `hermes kanban create --board <slug>`
-6. **Dispatch to PO** (NOT tech-lead) — create kanban task assigned to `product-owner` with board `<slug>`. Body: "Take this prototype to production. Read .context/grill/ for locked decisions, .context/dossier.md for market context, prototype/ for the working demo. You own: design goals, epics, milestones, beads tickets, dependencies. You control tech-lead for implementation and verifier for review."
+6. **Dispatch to PO** (NOT tech-lead) — create kanban task assigned to `product-owner` with board `<slug>`. Body: "Take this prototype to production. Read .context/grill/ for locked decisions, .context/dossier.md for market context, prototype/ for the working demo. Load `dev-planning` to: write the production spec, run `architect-gate` for production architecture design, decompose into tracer-bullet tickets via `to-tickets`, then dispatch through the pipeline."
 7. **Update portfolio** — move from "Awaiting Review" to "In Production" in `~/vault/ventures/portfolio.md`.
 
 ## After promotion
 
 - Builder is done. PO owns the project from here.
-- PO creates spec, epics, milestones, beads tickets — NOT the builder.
+- PO writes the production spec, runs architect-gate for production architecture, then decomposes into tickets.
+- The prototype's tech stack was for a demo — production needs real architecture design (tech stack, data model, module boundaries).
 - PO dispatches to tech-lead for implementation, verifier for review.
 - PO maintains STATUS.md.
 

@@ -44,16 +44,9 @@ Write to `<project-dir>/PRD.md`. Publish as a beads epic with `ready-for-agent`.
 
 ## Step 2: Architect gate
 
-If the project involves ANY technical decisions (stack, data model, sync strategy, deployment), create a design card for the architect.
+Load the `architect-gate` skill. It owns the design card creation, waiting for completion, and reading the design output. Do NOT inline the handoff — the skill is the single source of truth.
 
-Create a kanban card (`assignee: architect`) with:
-- **Spec link** — path to the PRD
-- **Grill transcript** — paste key decisions and resolved stress scenarios (the architect doesn't have your conversation)
-- **Settled decisions** — explicitly list what was decided in the grill so the architect doesn't re-litigate
-- **Open technical questions** — anything the grill couldn't answer
-- **Stakes** — `low` / `standard` / `high`
-
-Wait for the architect to complete. Read the design output (design doc + ADR series). Surface any gate cards for the user — do NOT auto-resolve them.
+The architect may need PO input on product-ambiguous decisions — it will launch an RPC call to you. Answer immediately with product context.
 
 **Gate card rule:** Gate cards are owner decisions, not PO decisions. When the architect assigns a gate card to `product-owner`, the PO's job is to surface it to the human (comment, block) — NOT to resolve it. A dispatched PO worker has no authority to make product decisions on the user's behalf.
 

@@ -1,6 +1,6 @@
 ---
 name: dev-planning
-description: "Plan dev work: discuss requirements, write a PRD, decompose into beads. Use when the user or another agent brings a feature to build. Reaches to-spec and to-tickets."
+description: "Plan dev work: discuss requirements, write a PRD, architect design, decompose into beads. Use when the user or another agent brings a feature to build. Reaches to-spec, architect gate, and to-tickets."
 ---
 
 # Dev Planning
@@ -27,9 +27,15 @@ Review the PRD with the other party before proceeding.
 
 **Completion criterion:** PRD bead exists in bd, PRD.md committed to the repo, other party has reviewed.
 
-### 3. Decompose into tracer-bullet beads
+### 3. Architect design
 
-Load the `to-tickets` skill. Break the PRD into _tracer-bullet_ slices — each delivers end-to-end value, not horizontal layers.
+Load the `architect-gate` skill. It owns the design card creation, waiting for completion, and reading the design output. Do NOT inline the handoff — the skill is the single source of truth.
+
+**Completion criterion:** architect design card completed, gate cards surfaced to the human, design doc + ADRs published.
+
+### 4. Decompose into tracer-bullet beads
+
+Load the `to-tickets` skill. Break the PRD + architect design into _tracer-bullet_ slices — each delivers end-to-end value, not horizontal layers. Each slice should cite the relevant ADRs.
 
 Run autonomously. Do NOT quiz the other party on granularity — if the decomposition is wrong, verification failures will surface it.
 
@@ -45,7 +51,7 @@ Review the bead list + dependency graph with the other party.
 
 **Completion criterion:** every slice is a bead with acceptance criteria and `ready-for-agent`. Dependencies linked via `bd link`. Other party has reviewed.
 
-### 4. Close the PRD bead
+### 5. Close the PRD bead
 
 ```bash
 bd close <prd-bead-id>
@@ -60,11 +66,12 @@ If it stays `open`, `bd ready` shows it as dispatchable — tech-lead tries to "
 - Create ALL beads in ONE session. Beads are the persistent memory of the plan.
 - Each bead must have acceptance criteria — the verifier checks these independently.
 - Use `bd link`, not `--deps`.
-- The other party reviews at two points: after PRD (step 2) and after beads (step 3).
+- The other party reviews at three points: after PRD (step 2), after architect (step 3), and after beads (step 4).
 - Never create tech-lead/dev/verifier cards — dispatch happens via the workflow engine cron.
 - Be _decisive_. When the other party gives a clear instruction, execute it. When the natural design has a single path, state it and move on — creating options where none exist is unnecessary complexity.
 - Create the project board before adding it to `active-projects.json`: `hermes kanban boards create <slug> --default-workdir <path>`. Then add `{name, path, board}` to the config.
+- **CRITICAL sequencing:** Do NOT add `ready-for-agent` to beads until step 3 (architect gate) is complete. The moment you register in `active-projects.json`, the workflow engine begins checking beads every tick.
 
 ## Reference
 
-- [references/workflow-architecture.md](references/workflow-architecture.md) — the full pipeline: PO plans → cron detects ready beads → PO dispatch card → PO creates tech-lead cards → kanban_delegate → dev → verifier → merge. Includes per-board model.
+- [references/workflow-architecture.md](references/workflow-architecture.md) — the full pipeline: PO plans → architect gate → cron detects ready beads → PO dispatch card → PO creates tech-lead cards → kanban_delegate → dev → verifier → merge. Includes per-board model.

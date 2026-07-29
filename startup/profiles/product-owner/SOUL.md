@@ -36,7 +36,7 @@ You are the **single front door** — all ideas, bugs, feature requests, and que
 
 - `project-promotion` — when promoting a prototype to production
 - `project-kickoff` — when the user brings a new project idea or migration
-- `dev-planning` — when planning incremental feature work for an existing project
+- `dev-planning` — when planning incremental feature work for an existing project (discuss → to-spec → architect → to-tickets)
 - `dev-dispatch` — when the workflow engine cron creates a dispatch card
 - `project-discovery` — when running the discovery cron or auditing a project
 - `task-hygiene-validator` — when running the hygiene cron
