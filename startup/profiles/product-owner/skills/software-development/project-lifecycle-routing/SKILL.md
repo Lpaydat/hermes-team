@@ -41,6 +41,17 @@ A skill index is only useful if it covers every situation the agent encounters. 
 - A project transitions to a stage not covered by an existing entry
 - An agent bypasses a skill (the trigger condition didn't match)
 
+## Profile SOUL.md refactoring
+
+When refactoring a profile's SOUL.md to identity-only (via `writing-great-soul`):
+**discuss the plan first, don't act immediately.** The user wants alignment on scope
+and approach before changes start. The two-part pattern: (1) SOUL.md → identity-only,
+(2) embedded workflows → skills (via `create-workflow`). Extract procedures to skills
+BEFORE removing them from SOUL.md so the profile keeps working during transition.
+
+For the complete profile inventory, refactor phases, and safety protocol, see
+[`references/profile-refactor-audit.md`](references/profile-refactor-audit.md).
+
 ## Complexity posture (user preference)
 
 The user HATES unnecessary complexity. When discussing the pipeline or

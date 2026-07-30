@@ -48,6 +48,12 @@ Scans kanban DB for recently-completed verifier/debugger cards → creates QA re
 
 **No git state file needed:** Unlike the git-based approach, this version has no `qa-merge-state.json` — dedup is purely through kanban idempotency keys.
 
+**Known limitations from full script review:**
+- The 1-hour lookback window means engine downtime >1h causes permanent QA trigger misses (card completed while engine was down → never processed).
+- `completed_at` comparison assumes epoch integers. If a kanban version stores datetime as strings, the `> ?` comparison silently skips all rows.
+- `import re` was initially placed inside the for-loop body (redundant — already imported at module level). Fixed but worth noting as a pattern to watch for.
+- The engine never exits non-zero on top-level exceptions (`sys.exit(0)` on any error). Cron never reports failure — if the engine is fundamentally broken, it silently does nothing every minute forever.
+
 ## Idempotency Keys Summary
 
 | Card type | Key format | Purpose |

@@ -1,6 +1,6 @@
 # Pipeline Livetest Findings (2026-07-29 → 2026-07-30)
 
-12 bugs found through 4 rounds of end-to-end livetests of the production pipeline. Each was found, root-caused, and fixed in the skill or config that governs that step.
+15 bugs found through 9 rounds of end-to-end livetests of the production pipeline. Each was found, root-caused, and fixed in the skill or config that governs that step.
 
 ## Bug 1: PO skips architect entirely
 
@@ -87,6 +87,36 @@
 **Root cause:** First-run state seeding was missing. The engine saw `last_sha = None` (no baseline) and treated the initial commit as "master advanced."
 **Fix:** Added first-run check: if `last_sha is None`, seed state with current HEAD and return empty actions. Only trigger on subsequent advances.
 **File:** `workflow-engine.py` (later replaced entirely by card-based approach)
+
+## Bug 13: QA trigger fires on PO spec/doc commits (git-based approach)
+
+**Symptom:** QA trigger fired when PO committed `.driver/` spec files and ADR docs — no code merged, but the git HEAD changed.
+**Root cause:** The git-based trigger detected ANY commit on master, not just merge commits. Added `git rev-list --merges --count` filter, but this introduced the first-run seeding bug (bug 12).
+**Fix:** Replaced the entire git-based approach with card-based detection. See bug 14.
+**File:** `workflow-engine.py`
+
+## Bug 14: Card-based QA trigger fires on debugger internal loop phases
+
+**Symptom:** Card-based trigger created spurious QA cards when the debugger's loop_engine completed internal verifier cards (falsification, RCA verification). 12 QA cards when only 5 were legitimate.
+**Root cause:** Parent-child and assignee filters couldn't distinguish loop_engine's internal verifier cards from real merge-gate verifier cards. The loop_engine creates complex parent chains (verifier→developer→loop) that don't match simple parent-assignee patterns.
+**Fix (after 4 iterations of increasing sophistication):** Regex pattern matching on completion summaries. Only triggers when the summary matches: `merged to master`, `merged to main`, `. merged `, `^merged `. Internal phases say "GREEN", "RED", "RCA" — never "merged to". Zero false positives validated against 18 historical cards.
+**Lesson:** Detect outcomes in natural language summaries, not structural relationships.
+**File:** `workflow-engine.py`
+
+## Bug 15: Bug routing — `issue_type == "bug"` insufficient (labels fallback needed)
+
+**Symptom:** Bug beads with `issue_type=task` (bd stores them this way in some versions) bypassed the debugger routing and went to tech-lead.
+**Root cause:** `bd create --type=bug` may store `issue_type` as `task`. The engine's check `issue_type == "bug"` missed these.
+**Fix:** Added labels fallback: also route to debugger when `issue_type == "task"` AND any label contains the keyword "bug".
+**File:** `workflow-engine.py`
+
+## Clean runs (stability confirmed)
+
+After all 15 bugs were fixed, two consecutive clean e2e runs confirmed stability:
+
+- **Run 8 (2026-07-30):** 3 slices, 3 sequential merges (~1h apart), 3 QA cards (all legitimate), 0 bugs, 0 structural failures, 0 debugger cycles needed.
+- **Run 9 (2026-07-30):** 2 slices, 4 QA cards (2 feature merges + 2 bug fix QA re-tests), 1 bug found by QA (OSError traceback), auto-routed to debugger via labels fallback, fixed+merged+QA re-tested PASS. Zero structural failures.
+
 ## Lesson
 
 Livetests are the only reliable way to find pipeline gaps. Each test surfaces bugs that skill inspection and code review miss. Run end-to-end and monitor every step — don't stop at "the proven part works."

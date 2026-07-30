@@ -92,4 +92,5 @@ plugins:
     loop_engine:
       allow_tool_override: false
 skill_enforcer:
-  mandatory: []
+  mandatory:
+  - design-council

@@ -96,15 +96,25 @@ PO → architect-gate → to-tickets → dispatch → tech-lead → dev↔verifi
 
 Items in [brackets] are automated by the workflow engine — no agent intervention needed.
 
-## Final clean run (2026-07-30, run 8)
+## Final clean runs (2026-07-30, runs 8+9)
 
-After all 15 gaps were fixed, a full e2e livetest completed with:
+After all 15 gaps were fixed, two consecutive full e2e livetests completed with zero structural failures:
+
+**Run 8:**
 - 3 slices, 3 sequential tech-lead cards (~1h apart)
 - 3 QA cards auto-triggered (one per merge, regex merge detection)
 - 0 spurious QA cards (zero false positives)
 - 0 bugs found by QA
 - 0 structural pipeline failures
 - 0 debugger cycles needed
+
+**Run 9:**
+- 2 slices (core CLI + type inference, edge cases + --strict)
+- 4 QA cards (2 feature merges + 2 bug fix QA re-tests — all legitimate)
+- 1 bug found by QA (OSError subclasses leak raw traceback)
+- Bug auto-routed to debugger via labels fallback (issue_type was "feature", caught by label check)
+- Debugger fix + verifier merge + QA re-test PASS
+- 0 structural pipeline failures
 
 The pipeline is production-ready. Dispatch is sequential (one bead per tech-lead
 card), so each merge creates a stable state of master that QA tests independently.
