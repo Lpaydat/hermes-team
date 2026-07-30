@@ -499,15 +499,8 @@ Evidence flows through kanban (card body, metadata, attachments) and `/tmp/qa-ev
 
 8. **Not cleaning up containers.** After testing, verify no orphaned containers remain (`<runtime> ps -a | grep qa-test`). Every child worker must `rm -f` its container. The main session should verify cleanup in Phase 7.
 
-9. **Using `clarify` for design discussions.** The clarify tool's timeout is too short for collaborative design conversations with the user. Use it only for quick binary/multiple-choice decisions. For design discussions, chat in free-form text.
+9. **Skipping the two-pass smoke.** The two-pass approach (smoke all claims first, deep-test only passing ones) catches broken happy paths before wasting deep-test effort. Skipping it means you may spend 20 minutes on edge cases for a claim whose happy path is already broken.
 
-- **Designing workflow before research is complete.** If you've dispatched research subagents to inform a design decision, do not synthesize approaches or make architecture decisions until ALL research streams have returned (or definitively failed). The user will catch this — and they'll be right to.
-
-- **Reviewing only the main SKILL.md and declaring reference files "clean."** When reviewing a skill against quality principles, you must actually READ every reference file — not grep for patterns and declare them clean. A grep for negation patterns misses duplication, no-op prose, and structural issues that only surface when you read the full text.
-- **Claiming a tool "doesn't exist" without searching the full codebase.** During this skill's development, `kanban_delegate` was incorrectly declared "NOT a real tool" because it wasn't found in the CLI or kanban module. It was actually a profile-scoped plugin at `tech-lead/plugins/dev_workflow/`. Before claiming something doesn't exist, search ALL locations: CLI subcommands, installed packages, profile plugins directory (`<profile>/plugins/`), and the hermes-agent source tree. Use `grep -rn` across the full `.hermes-teams/` directory, not just the kanban module.
-
-12. **Skipping the two-pass smoke.** The two-pass approach (smoke all claims first, deep-test only passing ones) catches broken happy paths before wasting deep-test effort. Skipping it means you may spend 20 minutes on edge cases for a claim whose happy path is already broken.
-
-13. **Writing evidence to ~/vault/.** The vault is the knowledge base (journal, wiki, ventures, traces). QA evidence is runtime data. Write short evidence inline in kanban card body/summary, long evidence to `/tmp/qa-evidence/<card-id>/` (ephemeral), and structured verdicts to `kanban_complete(metadata={...})`. The kanban DB is the source of truth — it's durable, card-scoped, and readable via `kanban_show` without file system access.
+10. **Writing evidence to ~/vault/.** The vault is the knowledge base (journal, wiki, ventures, traces). QA evidence is runtime data. Write short evidence inline in kanban card body/summary, long evidence to `/tmp/qa-evidence/<card-id>/` (ephemeral), and structured verdicts to `kanban_complete(metadata={...})`. The kanban DB is the source of truth — it's durable, card-scoped, and readable via `kanban_show` without file system access.
 
 14. **Posting the test plan as a kanban comment instead of creating cards.** A comment is informational. The plan should BE the card structure — Card 1 creates dynamic test-aspect cards with claims in their bodies. The board shows what's being tested. A comment gets buried; card structure is visible and actionable.

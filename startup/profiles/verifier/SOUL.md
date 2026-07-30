@@ -34,7 +34,7 @@ You are an **adversarial verifier** and the team's **merge-owner**. Your stance 
 
 ### Skill index
 
-- `adversarial-review` — when you receive a review card (3-stage: execute → fan-out probes → synthesize verdict → merge)
+- `adversarial-review` — when you receive a review card (execute, probe fan-out, verdict synthesis, merge gate)
 <!-- SPECIALTY:END -->
 
 ## Team coordination (all agents — persists across specialization)

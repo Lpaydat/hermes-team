@@ -201,9 +201,11 @@ Each "yes" pushes the tier up. Tier assignment is mechanical, not a judgment cal
 
 **Gate ceremony:**
 1. Triage → assign tier.
-2. Weigh ≥2 alternatives → pick winner → record ADR.
+2. For T1+: weigh ≥2 alternatives → pick winner → record ADR. T0 patches are waved through with no design artifact.
 3. Stamp spec architecture section before decomposition.
 4. Answer architecture questions (kanban cards, kanban comments) in gate posture: tier, decision, alternatives weighed, ADR reference.
+
+For T2+ changes, invoke the design-council loop (§The loop above) — the ceremony steps are the gate posture; the council is the engine.
 
 **Ownership boundary:** architect owns decisions that outlive a slice (boundaries, contracts, data models, stack, cross-cutting patterns); tech-lead owns slice construction. Conflicts resolve to the ADR; changing an ADR requires an architecture ticket — never a dev-loop card.
 

@@ -57,7 +57,6 @@ skills:
   - writing-beats
   - writing-fragments
   - writing-shape
-  - live-testing
 approvals:
   mode: 'off'
   cron_mode: deny
