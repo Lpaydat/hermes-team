@@ -78,11 +78,22 @@ Ten gaps found during end-to-end livetesting of the production pipeline. All fix
 **Root cause:** Parent-child relationships in the kanban DB are not reliable indicators of whether a card is an internal loop phase. The loop_engine uses `kanban_chains` which creates its own dependency model, not the direct parent links the filter checked.
 **Fix:** Replaced ALL relationship-based filters (parent-child, [auto] prefix, assignee chains) with regex merge detection on the completion summary. The trigger now fires ONLY when the summary (lowercased) matches: `merged to master`, `merged to main`, `. merged `, or `^merged `. Internal phases say "GREEN", "RED", "RCA", "verified" — never "merged to". Validated against 18 historical cards: 6 correct triggers (all real merges), 0 false positives.
 
+## Gap 16: Regex QA trigger fails — verifiers write "PASS" not "merged"
+**Symptom:** Feature merged to master (fast-forward, code files present), verifier card completed, but QA card never created. Board cleared with zero QA cards for a project that has real users.
+**Root cause:** The regex merge detection (gap 15) required specific phrases in the completion summary: "merged to master", "merged to main", ". merged", "^merged". But verifiers write "PASS — all 26 ACs verified..." — they describe the verdict, not the merge action. The word "merged" never appears. Additionally, the verifier fast-forwarded (no `--no-ff` merge commit), so `git rev-list --merges` returns 0 even though code landed.
+**Fix:** Replaced natural-language regex with **hybrid git-diff + verifier card detection**:
+1. Master HEAD advanced (`git rev-parse HEAD` vs state file baseline)
+2. Changed files include code extensions (`.py`, `.js`, `.ts`, etc.) via `git diff --name-only`
+3. A verifier/debugger card completed in the last hour (confirms it was a code merge, not manual)
+This is language-independent — it doesn't depend on what the agent wrote in its summary. State tracked via `qa-trigger-state.json` per board, with first-run seeding (no card on initial commit).
+
+**Root cause of ALL QA trigger failures (gaps 11-16):** relying on agent-written natural language or indirect git metadata to signal a merge. Agents write "PASS", "zero findings", "clean" — rarely the word "merged". Fast-forward merges have no merge commit for `--merges` count. The structural signal (git diff showing code files + a verifier card completing) is reliable where both language and commit metadata are not.
+
 ## Key Lesson
 
-The biggest lesson across all 15 gaps: **agent-creates-card patterns are fragile for process-compliance steps.** When a step must happen every time (QA re-test, bug linkage, merge trigger), move it to infrastructure (workflow engine hook) rather than relying on the agent reading its SOUL.md correctly. The agent's natural instinct is to complete its own work and close — not to spawn follow-up cards for other profiles.
+The biggest lesson across all 16 gaps: **agent-creates-card patterns are fragile for process-compliance steps.** When a step must happen every time (QA re-test, bug linkage, merge trigger), move it to infrastructure (workflow engine hook) rather than relying on the agent reading its SOUL.md correctly. The agent's natural instinct is to complete its own work and close — not to spawn follow-up cards for other profiles.
 
-The QA trigger evolution through 5 iterations (gaps 3→8→11→12→13→14→15) is the clearest example: each attempt fixed the previous failure mode but introduced a new edge case. The final regex approach (gap 15) is the first with zero false positives because it detects the outcome ("merged to master" in the completion summary) rather than inferring from relationships, titles, or git metadata.
+The QA trigger evolution through 6 iterations (gaps 3→8→11→12→13→14→15→16) is the clearest example: each attempt fixed the previous failure mode but introduced a new edge case. The final hybrid approach (gap 16) is the first that is truly language-independent and merge-strategy-independent — it detects code files in the git diff + a verifier card completing, not what the agent wrote or whether a merge commit exists.
 
 ## Pipeline after all fixes (verified end-to-end, 8+ full livetests)
 
