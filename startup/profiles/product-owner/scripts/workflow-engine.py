@@ -497,94 +497,145 @@ def scan_board(board):
 # ══════════════════════════════════════════════════════════════════════════
 
 def phase_qa_trigger(board, project_dir):
-    """When a verifier or debugger card completes, create a QA re-test card.
+    """When a verifier or debugger card completes AND master advanced, create a QA card.
 
-    Dedup via idempotency key qa-after-<source-card-id>.
+    Two signals required:
+    1. A verifier/debugger card completed in the last hour (not a probe/sub-review)
+    2. Master HEAD changed since the last QA trigger run
+
+    Both signals together eliminate false positives (PO spec commits without
+    a verifier card, or verifier cards without a merge).
+    Dedup via idempotency key qa-after-<sha>.
     """
     actions = []
     db = board_db_path(board)
     if not db.exists():
         return actions
 
+    # Signal 1: check if master advanced
+    git_dir = Path(project_dir)
+    if not (git_dir / ".git").exists():
+        return actions
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(git_dir), capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            return actions
+        current_sha = result.stdout.strip()[:12]
+    except Exception:
+        return actions
+
+    # State tracking: last SHA we triggered QA for
+    state_file = Path.home() / ".hermes-teams/startup/kanban/qa-trigger-state.json"
+    state = {}
+    if state_file.exists():
+        try:
+            state = json.loads(state_file.read_text())
+        except json.JSONDecodeError:
+            pass
+    last_sha = state.get(board)
+
+    # First run — seed state without creating a card
+    if last_sha is None:
+        state[board] = current_sha
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps(state, indent=2))
+        return actions
+
+    # No change on master — nothing to do
+    if last_sha == current_sha:
+        return actions
+
+    # Master advanced — check if code files changed (not just docs/specs)
+    try:
+        diff_result = subprocess.run(
+            ["git", "diff", "--name-only", f"{last_sha}..{current_sha}"],
+            cwd=str(git_dir), capture_output=True, text=True, timeout=10
+        )
+        changed_files = diff_result.stdout.strip().split('\n') if diff_result.returncode == 0 else []
+    except Exception:
+        changed_files = []
+
+    # Code file extensions — if any changed, this is a code landing
+    code_exts = {'.py', '.js', '.ts', '.rs', '.go', '.java', '.rb', '.sh', '.sql', '.yaml', '.yml', '.toml'}
+    has_code = any(any(f.endswith(ext) for ext in code_exts) for f in changed_files if f)
+
+    # Update state regardless — don't re-check the same range
+    state[board] = current_sha
+    state_file.write_text(json.dumps(state, indent=2))
+
+    if not has_code:
+        return actions  # master moved but no code files — PO specs/docs
+
+    # Signal 2: a verifier/debugger card completed recently (confirms it was a code merge, not manual)
     conn = sqlite3.connect(str(db))
     conn.row_factory = sqlite3.Row
-
-    # Find recently-completed verifier/debugger cards (last 1 hour) that
-    # don't have a matching QA card yet
     one_hour_ago = int(time.time()) - 3600
     rows = conn.execute(
         """SELECT t.id, t.title, t.assignee, t.completed_at,
-                  r.summary, r.metadata
+                  r.summary
            FROM tasks t
            JOIN task_runs r ON r.task_id = t.id AND r.outcome = 'completed'
            WHERE t.assignee IN ('verifier', 'debugger')
              AND t.status = 'done'
              AND t.completed_at > ?
            ORDER BY t.completed_at DESC
-           LIMIT 20""",
+           LIMIT 5""",
         (one_hour_ago,)
     ).fetchall()
-
-    qa_keys = set()
-    if rows:
-        placeholders = ",".join("?" * len(rows))
-        existing = conn.execute(
-            f"SELECT idempotency_key FROM tasks WHERE idempotency_key IN ({placeholders})",
-            [f"qa-after-{r['id']}" for r in rows]
-        ).fetchall()
-        qa_keys = {row[0] for row in existing}
-
-    for row in rows:
-        idem_key = f"qa-after-{row['id']}"
-        if idem_key in qa_keys:
-            continue
-
-        title = row["title"] or ""
-        summary = (row["summary"] or "").lower()
-
-        # Skip probe/sub-review cards
-        if title.startswith("[probe]") or title.startswith("verify t_"):
-            continue
-
-        # Only trigger QA when code actually landed on master.
-        # Detection: the completion summary mentions merge in a way that
-        # indicates the merge happened as part of this card's work.
-        # Patterns: "merged to master/main", "Merged <sha>", ". Merged "
-        merge_patterns = [
-            r"merged to master", r"merged to main",
-            r"\. merged ", r"^merged ",
-        ]
-        if not any(re.search(p, summary) for p in merge_patterns):
-            continue
-
-        # Build QA card from the completed card's context
-        summary_text = (row["summary"] or "")[:500]
-        source_type = "bug fix" if row["assignee"] == "debugger" else "feature merge"
-
-        body = (
-            f"## Automated QA re-test — {source_type} landed\n\n"
-            f"**Source card:** `{row['id']}` ({row['assignee']})\n"
-            f"**What landed:** {title}\n\n"
-            f"**Completion summary:**\n{summary_text}\n\n"
-            f"Build the project, run it as a real user, and verify nothing is broken. "
-            f"File any findings as beads linked to the parent epic."
-        )
-
-        if DRY_RUN:
-            actions.append(f"qa-trigger: would create QA card for {row['id']} on {board}")
-        else:
-            ok, _ = run_kanban(board, [
-                "create", f"[qa] Re-test: {title[:60]}",
-                "--assignee", "qa",
-                "--body", body,
-                "--workspace", f"dir:{project_dir}",
-                "--priority", "15",
-                "--idempotency-key", idem_key,
-                "--json",
-            ])
-            actions.append(f"qa-trigger: {'created' if ok else 'FAILED'} QA card after {row['id']} on {board}")
-
     conn.close()
+
+    # Filter out probe/sub-review cards
+    merge_cards = [r for r in rows
+                   if not (r["title"] or "").startswith("[probe]")
+                   and not (r["title"] or "").startswith("verify t_")]
+
+    if not merge_cards:
+        return actions  # master merged but no verifier card — probably manual
+
+    # Dedup by SHA
+    idem_key = f"qa-merge-{current_sha}"
+    conn2 = sqlite3.connect(str(db))
+    existing = conn2.execute(
+        "SELECT 1 FROM tasks WHERE idempotency_key = ?", (idem_key,)
+    ).fetchone()
+    conn2.close()
+    if existing:
+        return actions
+
+    # Create QA card
+    source = merge_cards[0]
+    source_type = "bug fix" if source["assignee"] == "debugger" else "feature merge"
+    title = source["title"] or ""
+    summary_text = (source["summary"] or "")[:500]
+
+    body = (
+        f"## Automated QA re-test — {source_type} landed on master\n\n"
+        f"**New HEAD:** `{current_sha}`\n"
+        f"**Source card:** `{source['id']}` ({source['assignee']})\n"
+        f"**What landed:** {title}\n\n"
+        f"**Completion summary:**\n{summary_text}\n\n"
+        f"Build the project, run it as a real user, and verify nothing is broken. "
+        f"File any findings as beads linked to the parent epic."
+    )
+
+    if DRY_RUN:
+        actions.append(f"qa-trigger: would create QA card for {current_sha} on {board}")
+    else:
+        ok, _ = run_kanban(board, [
+            "create", f"[qa] Re-test after merge: {current_sha}",
+            "--assignee", "qa",
+            "--body", body,
+            "--workspace", f"dir:{project_dir}",
+            "--priority", "15",
+            "--idempotency-key", idem_key,
+            "--json",
+        ])
+        actions.append(f"qa-trigger: {'created' if ok else 'FAILED'} QA card for {current_sha} on {board}")
+
     return actions
 
 # ══════════════════════════════════════════════════════════════════════════
