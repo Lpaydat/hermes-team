@@ -1,6 +1,6 @@
-# Pipeline Livetest Findings (2026-07-29)
+# Pipeline Livetest Findings (2026-07-29 → 2026-07-30)
 
-9 bugs found through end-to-end livetests of the production pipeline. Each was found, root-caused, and fixed in the skill or config that governs that step.
+12 bugs found through 4 rounds of end-to-end livetests of the production pipeline. Each was found, root-caused, and fixed in the skill or config that governs that step.
 
 ## Bug 1: PO skips architect entirely
 
@@ -43,7 +43,7 @@
 **Root cause:** Workflow engine `phase_dispatch` treated all non-wayfinder beads the same. No routing by `issue_type=bug`.
 **Fix:** Added `dispatch_bug_to_debugger()` to workflow-engine.py. Bug beads route directly to debugger, bypassing PO dispatch → tech-lead.
 **File:** `workflow-engine.py`
-**Note:** Not fully verified in livetest — idempotency key from earlier failed dispatch prevented re-dispatch. Code is syntactically valid and committed.
+**Note:** Verified in livetest 3+4 — `dispatch_bug_to_debugger()` fires correctly when `issue_type=bug`. Also added labels fallback (`issue_type == 'task'` + `'bug' in labels`) because bd versions may store the type differently.
 
 ## Bug 7: Debugger fix never merges
 
@@ -66,6 +66,27 @@
 **Fix:** Removed `--skills` from the kanban create call. Debugger loads its own skills via SOUL.md.
 **File:** `workflow-engine.py`
 
+## Bug 10: Debugger "already-fixed" case skips QA entirely
+
+**Symptom:** Debugger found the bug was already fixed on master (duplicate of a prior fix). Closed the bead without creating any QA card or verifier card. The running artifact was never re-tested.
+**Root cause:** Debugger SOUL.md EXIT A said create verifier+QA cards for the normal fix case, but the "already-fixed" edge case had no QA instruction. Debugger closed the bead and exited.
+**Fix:** Initially patched debugger SOUL.md to create QA card directly for already-fixed case. Later replaced with workflow engine phase 5 (qa-trigger) which auto-creates QA cards for ALL completed verifier/debugger cards with "merged" in summary.
+**File:** `debugger/SOUL.md`, `workflow-engine.py`
+
+## Bug 11: QA trigger fires on internal loop phases (spurious cards)
+
+**Symptom:** 12 QA cards created when only 5 were legitimate. Debugger's loop_engine internal verifier cards (falsification, RCA verification, discover phase) triggered the QA card-based trigger.
+**Root cause:** QA trigger checked `assignee IN ('verifier', 'debugger')` and `status = 'done'`, but didn't filter out internal loop phases. Parent-child checks failed because loop_engine uses complex hierarchies that don't follow simple parent-assignee patterns.
+**Fix (after 4 iterations):** Regex pattern matching on completion summaries. Only triggers when summary contains "merged to master", "merged to main", ". merged ", or "^merged ". Validated: 6 correct triggers, 0 false positives across 18 historical cards.
+**Lesson:** Detect outcomes in natural language summaries, not structural relationships. The verifier writing "merged to master" is ground truth — parent-child links and assignee checks are indirect and unreliable.
+**File:** `workflow-engine.py`
+
+## Bug 12: QA trigger first-run creates card for initial commit (no code)
+
+**Symptom:** QA trigger fired on the initial project commit (just spec/driver files, no code). QA tested an empty repo and filed "no source code" bugs.
+**Root cause:** First-run state seeding was missing. The engine saw `last_sha = None` (no baseline) and treated the initial commit as "master advanced."
+**Fix:** Added first-run check: if `last_sha is None`, seed state with current HEAD and return empty actions. Only trigger on subsequent advances.
+**File:** `workflow-engine.py` (later replaced entirely by card-based approach)
 ## Lesson
 
 Livetests are the only reliable way to find pipeline gaps. Each test surfaces bugs that skill inspection and code review miss. Run end-to-end and monitor every step — don't stop at "the proven part works."

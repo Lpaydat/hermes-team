@@ -58,15 +58,39 @@ see `references/dual-system-industry-comparison.md`.
 ```
 User → PO → (grill → spec → architect → to-tickets → approval)
   → beads → workflow engine → dev-dispatch → tech-lead
-  → kanban_chains(dev+verifier) → merge → verifier creates QA card → QA → done
+  → kanban_chains(dev+verifier) → merge → workflow engine auto-creates QA card → QA → done
   
 Feedback loops:
   QA PASS w/ findings → files bug beads (linked to epic) → workflow engine routes to debugger
   QA FAIL → triage: bug→debugger, non-bug→tech-lead, spec→PO
   Verifier iter ≥3 → ESCALATE → tech-lead → (hard bug) → debugger
-  Debugger EXIT A → fix+RCA → verifier reviews+merges → QA re-test → done
+  Debugger EXIT A → fix+RCA → verifier reviews+merges → workflow engine auto-creates QA card → QA → done
   Debugger EXIT B → design flaw → ADR stub → architect gate
 ```
+
+### Workflow engine phases (5)
+
+The engine runs every minute on cron. All 5 phases run per-project:
+
+1. **bead-sync** — kanban card status → bd bead status (closes done beads)
+2. **dispatch** — `bd ready` → PO dispatch card (bugs → debugger directly via `dispatch_bug_to_debugger`)
+3. **human-escal** — human-flagged beads → operator HQ card
+4. **scanner** — blocked tasks → escalate via ESCALATION_CHAIN (dev/verifier/debugger/qa → tech-lead, tech-lead → PO)
+5. **qa-trigger** — scans for recently-completed verifier/debugger cards whose summary mentions "merged" → creates QA re-test card automatically. Dedup via `qa-after-<card-id>`. Filters out probes, sub-reviews, and internal loop phases.
+
+**QA trigger design lesson:** The trigger went through 4 iterations:
+- v1 (git merge detection): false positives on PO spec/doc commits
+- v2 (card assignee + parent-child): missed loop_engine's complex parent chains
+- v3 (`"merged"` keyword): false positives ("re-open against merged master")
+- v4 (regex patterns: `"merged to master"`, `"merged to main"`, `". merged "`, `"^merged "`): zero false positives, validated against 18 historical cards
+
+The lesson: **detect the outcome in natural language summaries, not structural relationships.** The verifier writes "merged to master" when it merges — that's the ground truth. Parent-child links and assignee checks are indirect and unreliable when loop_engine creates complex card hierarchies.
+
+See [`references/workflow-engine-phases.md`](references/workflow-engine-phases.md) for the full phase reference.
+
+### QA timing tradeoff: per-merge vs post-all-merge
+
+The QA trigger fires after every merge. For an N-slice epic, this runs N QA cycles — but the first N−1 test intermediate states where other slices are absent. When the user questions whether this adds value or wastes cycles, load [`references/qa-timing-failure-modes.md`](references/qa-timing-failure-modes.md). Key insight: per-merge QA is structurally blind to cross-slice interaction bugs (the absent slices' code can't be exercised), but it's the only defense that catches regressions in existing code early enough to prevent propagation. The analysis covers four scenarios (interface breaks, latent runtime bugs, multi-slice integration failures, regressions) and recommends a hybrid: lightweight per-merge QA for regression detection plus a post-all-merge integration pass for the cross-slice failure space.
 
 ## Beads vs kanban boundary
 
@@ -75,6 +99,10 @@ The pipeline uses two stores by design:
 - **Beads** (`.beads/`, Dolt DB, git-synced) = **master plan**. Epics, feature slices, bugs, dependencies. Visible via `bd list`. Survives board resets. `bd ready` computes topological order.
 - **Kanban** (per-board SQLite) = **execution plan**. Cards created dynamically by agents (tech-lead via `kanban_chains`, verifier creates QA card, debugger via `loop_engine`). Not synced — local execution state.
 
-Bugs filed by QA go through the workflow engine which routes `issue_type=bug` to debugger (not tech-lead). Bug beads should be `bd link`ed to the parent epic for traceability.
+## Bug routing detail
+
+Bugs filed by QA go through the workflow engine. The engine checks `issue_type == 'bug'` OR `issue_type == 'task'` with `'bug'` in labels — because bd versions may store the type as `"task"` with the word in the title/labels. Bug beads route directly to debugger via `dispatch_bug_to_debugger()`, bypassing the PO dispatch → tech-lead path. Bug beads should be `bd link`ed to the parent epic for traceability.
+
+The ESCALATION_CHAIN covers all profiles: developer → tech-lead, verifier → tech-lead, debugger → tech-lead, qa → tech-lead, tech-lead → product-owner. Blocked cards escalate one level per scanner tick until they reach a human.
 
 For the full decision matrix and anti-patterns, see [`references/beads-vs-kanban-artifact-policy.md`](references/beads-vs-kanban-artifact-policy.md). For the 9 bugs found via end-to-end livetest, see [`references/livetest-findings-20260729.md`](references/livetest-findings-20260729.md).
