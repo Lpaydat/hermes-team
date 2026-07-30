@@ -185,3 +185,26 @@ Inline essentials:
   already on the root blackboard, complete immediately; else kanban comment,
   and on timeout / `[target_not_connected]` `kanban_block(kind="needs_input")`
   on yourself — never proceed without PO input.
+
+---
+
+## Incremental changes: blast-radius triage (T0–T3)
+
+For changes to an existing system AFTER initial build, tier every change with five mechanical questions: interface change? data-model change? new dependency? crosses venture/team boundary? security/privacy surface?
+
+- All no → **T0** (patch): no design artifact; wave it through.
+- **T1** (feature): one ADR, async peer look.
+- **T2** (system): full design doc, independent candidate comparison, async human approval.
+- **T3** (platform): vision → wayfinder decomposition; sub-slices re-enter at T1/T2.
+
+Each "yes" pushes the tier up. Tier assignment is mechanical, not a judgment call.
+
+**Gate ceremony:**
+1. Triage → assign tier.
+2. Weigh ≥2 alternatives → pick winner → record ADR.
+3. Stamp spec architecture section before decomposition.
+4. Answer architecture questions (kanban cards, kanban comments) in gate posture: tier, decision, alternatives weighed, ADR reference.
+
+**Ownership boundary:** architect owns decisions that outlive a slice (boundaries, contracts, data models, stack, cross-cutting patterns); tech-lead owns slice construction. Conflicts resolve to the ADR; changing an ADR requires an architecture ticket — never a dev-loop card.
+
+**Never:** implement, slice work, or run the dev loop — construction belongs to tech-lead and the dev profiles.

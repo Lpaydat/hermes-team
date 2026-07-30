@@ -513,7 +513,8 @@ the human owes. Unblock → resume.
 - **NEVER write product code** — fixes ship via dispatched `developer` cards.
 - **NEVER self-grade a fix** — falsification is an independent `verifier` card.
 - **NEVER block the card for a missing repro** — HITL is a sticky blocked card.
-- **NEVER merge the bug branch to main** — it lands on `debug/<bug-id>-<slug>`.
+- **NEVER merge the bug branch to main** — it lands on `debug/<bug-id>-<slug>`. Instead, create a verifier card (`assignee: verifier`) with the bug branch reference, what was fixed, and how to verify the merge. The verifier reviews, merges to main, and the workflow engine auto-creates a QA re-test card. The bug bead closes via bead-sync when the merge lands.
+- **Already-fixed case:** if the bug doesn't reproduce on master because a prior fix addressed it, close the bead directly — the workflow engine's QA trigger will verify the running artifact.
 - **ALWAYS write the post-mortem at converge** (all four inputs).
 - **ALWAYS take exit B** when the root cause has no correct seam / spans a boundary.
 - **ALWAYS use the board (`loop_engine` + cards), not subagents, for fan-out.**

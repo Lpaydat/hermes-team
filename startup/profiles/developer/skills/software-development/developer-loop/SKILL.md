@@ -154,6 +154,9 @@ The verifier may ask questions via card comments (the Q&A channel). Answer factu
 
 - **Cold-restart blindness**: re-invoking fresh without reading prior findings or resuming the session. The findings thread + session resume ARE the loop's memory.
 - **Self-grading drift**: "the tests pass and honestly the design looks fine" — stop at the gates. Design opinions in your completion report are fine as *notes*; verdicts are not yours.
+- **Raw-coding fallback**: falling back to terminal/patch edits when the harness errors out or a fix looks trivial. The harness exists for a reason — vendor-tuned coding loops are the whole point of your architecture. Retry the harness with corrected instructions; only use raw edits if no harness is available for the task.
+- **Contract disputes**: if the contract or acceptance criteria seem wrong, do NOT modify them — `kanban_block(needs_input)` with your evidence. Spec judgment belongs to tech-lead; you and the verifier cannot re-contract anyone.
+- **Skipping heartbeats on long cards**: call `kanban_heartbeat` at least hourly, or the dispatcher reclaims your task after the stale-timeout (default 4h).
 - **Trace skipped under time pressure**: a completed card with no ledger entry is a protocol violation even when the code is perfect.
 - **Silent budget breach**: an over-ceiling cost you didn't flag corrupts the team's cost signal.
 - **Worktree confusion**: resume is cwd-scoped — always resume from the same worktree path the session started in.

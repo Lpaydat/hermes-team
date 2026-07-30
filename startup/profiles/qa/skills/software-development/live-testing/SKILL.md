@@ -157,7 +157,7 @@ Also test **graceful degradation**: kill the DB, make an upstream return 500, fi
 
 Every claim, journey, and smoke check now has a verdict. Close the loop.
 
-**If any finding is Critical:** file findings as kanban cards assigned to `developer` (see §Filing findings), then `kanban_block(reason="dependency: N critical findings filed for fix")`. The card resumes when fixes are merged.
+**If any finding is Critical:** file findings as beads (see §Filing findings), then `kanban_block(reason="dependency: N critical findings filed for fix")`. The card resumes when the workflow engine routes the bug beads to the debugger and fixes are merged.
 
 **If findings are Important/Minor/Note only:** file findings, then complete the card with a test report including all findings. The team decides whether to fix before shipping.
 
@@ -434,7 +434,7 @@ Always include the **environment** with each finding: OS, runtime version, artif
 
 ## Filing findings
 
-When a claim is _disproven_, create a kanban card assigned to `developer` as a child of the QA card (so the dependency is tracked).
+**Every finding gets a bead** — filed with `bd create --type=bug` in the project's beads DB. Beads are durable, git-synced, visible in `bd list`, and the workflow engine routes them automatically (bug→debugger, non-bug→tech-lead, spec→product-owner). Link every bug bead to the parent epic with `bd link <bug-id> <epic-id>` so defect counts roll up.
 
 Load `references/finding-severity.md` for the full severity rubric.
 
@@ -445,16 +445,16 @@ Load `references/finding-severity.md` for the full severity rubric.
 | **Minor** | P3 | Can ship with. Cosmetic or low-impact. |
 | **Note** | P4 | Observation, not a bug. UX feedback, spec ambiguity. |
 
-**Card title:** `[QA][<severity>] <the claim that failed>`
-**Card body:**
-- **Claim tested:** the assertion from the spec
-- **Severity:** Critical / Important / Minor / Note (with P-level)
-- **Actual result:** what you observed
-- **Reproduction steps:** numbered, copy-pasteable commands
-- **Evidence:** actual command output / response / screenshot / evidence ledger path
-- **Environment:** OS, runtime version, artifact build, container image tag
+File findings **regardless of pass/fail verdict** — a PASS with P2 findings still ships, but the findings become follow-up work.
 
-Report symptoms and reproduction. The developer diagnoses root cause from the evidence.
+**Bead creation:**
+```
+bd create --type=bug --priority=<P-level> --title="<finding title>" \
+  --description="<claim tested, actual result, reproduction steps, evidence>"
+bd link <bug-id> <epic-id>
+```
+
+Route by type: bug→`debugger` (workflow engine handles this), non-bug→`tech-lead`, spec→`product-owner`.
 
 ### Testability feedback (Google TE pattern)
 
@@ -476,14 +476,14 @@ Evidence flows through kanban (card body, metadata, attachments) and `/tmp/qa-ev
 
 ## Terminology
 
-- **Findings** are filed as **kanban cards** assigned to `developer`, not "beads." Beads are the PO's spec slices — a different artifact entirely.
-- **Fix cards** are child kanban cards created by QA when a finding needs developer action.
+- **Findings** are filed as **beads** (`bd create --type=bug`), not kanban cards. Beads are durable, git-synced, and the workflow engine auto-routes them (bug→debugger, non-bug→tech-lead, spec→product-owner).
+- **Fix routing** is handled by the workflow engine — QA files the bead and the engine dispatches it. QA never creates fix cards directly.
 - **Evidence** flows through kanban: short evidence inline in card body/summary, long evidence in `/tmp/qa-evidence/<card-id>/` (ephemeral), visual evidence as `task_attachments`, structured verdicts in `kanban_complete(metadata={...})`. Never write to `~/vault/` — that's the knowledge base.
 - **Container image tag** format: `qa-test:<card-id>` — built once by Card 2 (Build), used by all dynamic test cards.
 
 ## Pitfalls
 
-1. **Using "beads" instead of kanban cards.** Beads belong to the product-owner (spec-slicing layer). QA files findings as kanban cards to `developer`. Confusing the two breaks the planning/execution boundary.
+1. **Filing findings as kanban cards instead of beads.** Findings are beads (`bd create --type=bug`), linked to the parent epic with `bd link`. The workflow engine auto-routes bug beads to the debugger. Filing as kanban cards to `developer` bypasses the routing and loses the durable record.
 
 2. **Clamping all phases in one session for medium/large artifacts.** Running all 8 phases in a single session produces 35–75K tokens of raw test output that buries the Phase 7 synthesis. For medium+ artifacts, use kanban fan-out with containers. For small artifacts, single-session is fine.
 
