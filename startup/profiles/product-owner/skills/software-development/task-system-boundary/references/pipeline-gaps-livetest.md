@@ -84,7 +84,7 @@ The biggest lesson across all 15 gaps: **agent-creates-card patterns are fragile
 
 The QA trigger evolution through 5 iterations (gaps 3→8→11→12→13→14→15) is the clearest example: each attempt fixed the previous failure mode but introduced a new edge case. The final regex approach (gap 15) is the first with zero false positives because it detects the outcome ("merged to master" in the completion summary) rather than inferring from relationships, titles, or git metadata.
 
-## Pipeline after all fixes (verified end-to-end, 3 full livetests)
+## Pipeline after all fixes (verified end-to-end, 8+ full livetests)
 
 ```
 PO → architect-gate → to-tickets → dispatch → tech-lead → dev↔verifier → merge
@@ -95,3 +95,18 @@ PO → architect-gate → to-tickets → dispatch → tech-lead → dev↔verifi
 ```
 
 Items in [brackets] are automated by the workflow engine — no agent intervention needed.
+
+## Final clean run (2026-07-30, run 8)
+
+After all 15 gaps were fixed, a full e2e livetest completed with:
+- 3 slices, 3 sequential tech-lead cards (~1h apart)
+- 3 QA cards auto-triggered (one per merge, regex merge detection)
+- 0 spurious QA cards (zero false positives)
+- 0 bugs found by QA
+- 0 structural pipeline failures
+- 0 debugger cycles needed
+
+The pipeline is production-ready. Dispatch is sequential (one bead per tech-lead
+card), so each merge creates a stable state of master that QA tests independently.
+The debounce technique in `qa-trigger-parallel-pipelines.md` is NOT needed with
+the current sequential dispatch model.

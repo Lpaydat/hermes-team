@@ -1,31 +1,63 @@
 # QA Trigger in Parallel Tracer-Bullet Pipelines
 
-When the PO decomposes an epic into N parallel tracer-bullet slices (each a dev+verifier pair via `kanban_chains`), slices merge to master independently and often near-simultaneously. Phase 5's per-card QA trigger fires once per merge — a 3-slice epic can produce 3 QA cards within minutes. Each QA card spawns a swarm (5-7 agent sessions for medium/large artifacts), so 3 cards = 15-21 sessions doing largely overlapping work on progressively larger states ({S1}, {S1+S2}, {S1+S2+S3}).
+## IMPORTANT CORRECTION: Dispatch is Sequential, Not Parallel
 
-This reference captures the design decision (keep per-merge, add debounce) and the implementation technique.
+**Livetest finding (2026-07-30):** The workflow engine dispatches ONE ready bead
+at a time to the tech-lead. Each tech-lead card receives ONE bead, creates
+dev+verifier cards, iterates until merge, completes. Then the engine dispatches
+the next ready bead. In a 3-slice livetest, slices merged ~1 hour apart
+(05:34, 06:33, 07:31). **The "merge burst" problem does NOT occur with
+sequential dispatch.**
+
+This means:
+- **Per-merge QA is correct** — each merge creates a stable, long-lived state
+  of master (~1 hour) that QA tests independently.
+- **The debounce technique below is unnecessary** unless the dispatch model
+  changes to parallel (multiple tech-lead cards running simultaneously).
+- The 3 QA cards in the clean livetest run were all legitimate — each tested a
+  genuinely different, stable state of master.
+
+## When This Reference Applies
+
+The debounce technique becomes relevant IF:
+- The dispatch model changes to parallel (multiple tech-lead cards per project)
+- The team runs multiple gateway instances per profile
+- A future harness dispatches all ready beads simultaneously
+
+In the current sequential model, keep per-merge QA as-is.
 
 ## Why NOT switch to post-all-merge (Approach B)
 
-The alternative — fire QA once after ALL slices of an epic merge — was evaluated and rejected:
+The alternative — fire QA once after ALL slices of an epic merge — was evaluated
+and rejected:
 
-- **Implementation complexity:** Requires tracing card → bead → epic to detect "all slices merged." The current trigger is self-contained per-card; epic-grouping restarts the 5-iteration failure-mode cycle (see pipeline-gaps-livetest.md, gaps 3→15). Estimated 2-4 days for a new trigger that may need its own livetest cycle.
-- **Single point of failure:** Engine downtime >1h (lookback window), a missed regex match, or a stuck slice = zero QA for the entire epic. Per-merge degrades gracefully — each card is independent.
-- **Later feedback:** Bugs in early-merging slices aren't caught until the last slice merges.
-- **Bisection value lost:** Per-merge QA on {S1} then {S1+S2} can isolate which slice introduced a regression. A single post-all-merge run can't.
+- **Implementation complexity:** Requires tracing card → bead → epic to detect
+  "all slices merged." The current trigger is self-contained per-card;
+  epic-grouping restarts the 5-iteration failure-mode cycle.
+- **Single point of failure:** Engine downtime >1h (lookback window), a missed
+  regex match, or a stuck slice = zero QA for the entire epic. Per-merge
+  degrades gracefully — each card is independent.
+- **Later feedback:** Bugs in early-merging slices aren't caught until the last
+  slice merges.
+- **Bisection value lost:** Per-merge QA on {S1} then {S1+S2} can isolate which
+  slice introduced a regression. A single post-all-merge run can't.
 
-The cost saving of B (1 swarm vs 3) is real but bounded and non-blocking — QA runs in the background and doesn't stall slice dev or merges.
+## The debounce technique (for future parallel dispatch)
 
-## The debounce technique (recommended refinement)
-
-Coalesce near-simultaneous merges into a single QA card via a time window. Purely time-based — no epic-grouping, no cross-card state.
+Coalesce near-simultaneous merges into a single QA card via a time window.
+Purely time-based — no epic-grouping, no cross-card state.
 
 **Logic:**
 1. When phase 5 detects a merge (existing regex path), before creating the QA card:
-2. Query for any QA card on this board in `todo`/`ready`/`running` status created in the last 10 minutes.
-3. If one exists: append this merge's context to it as a comment, skip card creation (debounced).
-4. If none exists: create the QA card as normal (it will catch any other merges within the next 10 min).
+2. Query for any QA card on this board in `todo`/`ready`/`running` status created
+   in the last 10 minutes.
+3. If one exists: append this merge's context to it as a comment, skip card
+   creation (debounced).
+4. If none exists: create the QA card as normal (it will catch any other merges
+   within the next 10 min).
 
-**Result:** 3 slices merging within 10 min → 1 QA card (not 3). Slices merging hours apart → still fires per-merge (preserves early feedback).
+**Result:** 3 slices merging within 10 min → 1 QA card (not 3). Slices merging
+hours apart → still fires per-merge (preserves early feedback).
 
 **Implementation (~30 lines in `phase_qa_trigger`):**
 
@@ -44,7 +76,6 @@ pending = conn.execute(
 ).fetchall()
 
 if pending:
-    # Append this merge's context to the pending QA card
     run_kanban(board, [
         "comment", pending[0]["id"],
         "--body", f"**Additional merge detected:** {title}\n\n{summary_text}"
@@ -55,23 +86,28 @@ if pending:
 # ... proceed with normal QA card creation
 ```
 
-## Sizing the debounce window
+## Decomposition Hierarchy (for reference)
 
-| Window | Effect |
-|--------|--------|
-| 5 min | Too short — slices often merge 5-10 min apart in parallel dev. Misses coalescing. |
-| 10 min | Sweet spot for 2-4 slice epics with parallel dev. Catches most bursts. |
-| 20+ min | Risk of delaying feedback for genuinely sequential merges. Slices that merge 20+ min apart probably represent independent work batches. |
+```
+Epic (bead, P1)
+├── Slice 1 (bead, P2) — feature: complete, shippable on its own
+│   └── dev/verifier cards (kanban, ephemeral) — one PR's worth of work
+├── Slice 2 (bead, P2) — feature: slice 1 + more capability
+│   └── dev/verifier cards (kanban, ephemeral)
+└── Slice 3 (bead, P2) — feature: slice 2 + robustness
+    └── dev/verifier cards (kanban, ephemeral)
+```
 
-Start at 10 min, adjust based on observed merge clustering.
-
-## When to revisit (escalation path)
-
-If debounce proves insufficient (slices consistently merge >10 min apart but per-merge token cost is prohibitive):
-
-**B-lite:** Fire QA after the LAST slice of an epic merges, but with a fallback — if no "all slices merged" detection fires within 2 hours of the first merge, fire per-merge QA for whatever has merged. This gives B's efficiency in the common case with A's safety net. Still requires card→bead→epic tracing — don't implement until debounce is proven inadequate.
+Each slice IS a feature, not a fragment needing assembly. Slices are progressive
+enhancements. The tech-lead receives one slice bead at a time (sequential
+dispatch) and creates dev+verifier execution cards via `kanban_chains`.
 
 ## Full analysis
 
-The complete trade-off matrix (efficiency, risk coverage, latency, implementation complexity, failure modes) is in the session artifact:
+The complete trade-off matrix (efficiency, risk coverage, latency, implementation
+complexity, failure modes) is in the session artifact:
 `docs/analysis/qa-trigger-per-merge-vs-post-all-merge.md` (project repo)
+
+Real-world CI/CD research (Google TAP, GitLab merge trains, GitHub merge queue,
+Facebook push-on-green, CD book) is in:
+`merge-burst-qa-research.md` (project repo)
