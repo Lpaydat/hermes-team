@@ -829,11 +829,13 @@ def test_real_trigger_fires_workflow():
         assert any("STARTED workflow" in a for a in actions), \
             f"Expected STARTED workflow, got: {actions}"
 
-        # Verify a new instance was created
+        # Verify a new instance was created (may be other active instances from other tests)
         active = fixture.engine.state.load_active_instances()
-        assert len(active) == 1, f"Expected 1 active instance, got {len(active)}"
+        # Filter to instances triggered by THIS test's card
+        triggered = [i for i in active if i.trigger_context.get("card_id") == trigger_card_id]
+        assert len(triggered) >= 1, f"Expected triggered-wf instance for card {trigger_card_id}, got {len(triggered)}"
 
-        inst = active[0]
+        inst = triggered[0]
         assert inst.workflow_id == "triggered-wf"
         assert inst.trigger_context.get("card_id") == trigger_card_id
         assert inst.trigger_context.get("verdict") == "PASS"
