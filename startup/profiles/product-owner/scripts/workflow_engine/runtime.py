@@ -251,14 +251,39 @@ class Engine:
     def _check_instance(self, inst: WorkflowInstance) -> list[str]:
         """Check a single workflow instance: advance nodes, handle completions."""
         actions = []
+
         wf = self.store.load(inst.workflow_id)
         if not wf:
             actions.append(f"SKIP instance {inst.instance_id}: template {inst.workflow_id} not found")
             return actions
 
-        ctx = inst.context()
+        # PHASE 1: Check dispatched nodes for completion FIRST
+        # This updates node states before we check which nodes can dispatch
+        for node in wf.nodes:
+            ns = inst.node_states.get(node.id)
+            if not ns or ns.status != NodeStatus.DISPATCHED or not ns.card_id:
+                continue
 
-        # Check each pending node
+            card = get_card(inst.board, ns.card_id)
+            if not card:
+                continue
+
+            if card.status == "done":
+                # Node completed — read output
+                meta = get_card_metadata(inst.board, ns.card_id)
+                output = meta.get("metadata", {})
+                self.state.update_node_state(
+                    inst.instance_id, node.id, NodeStatus.DONE, ns.card_id, output
+                )
+                # Update the in-memory instance too so downstream deps see it
+                ns.status = NodeStatus.DONE
+                ns.output = output
+                actions.append(f"DONE node {node.id} (card {ns.card_id}) on {inst.board}")
+            elif card.status == "blocked":
+                actions.append(f"BLOCKED node {node.id} (card {ns.card_id}) — waiting for dynamic children")
+
+        # PHASE 2: Check pending nodes for dispatch (deps may have just completed)
+        ctx = inst.context()
         for node in wf.nodes:
             ns = inst.node_states.get(node.id)
             if not ns or ns.status != NodeStatus.PENDING:
@@ -282,27 +307,6 @@ class Engine:
                 actions.append(f"DISPATCHED node {node.id} on {inst.board} → card {msg}")
             else:
                 actions.append(f"FAILED to dispatch node {node.id} on {inst.board}: {msg}")
-
-        # Check dispatched nodes for completion
-        for node in wf.nodes:
-            ns = inst.node_states.get(node.id)
-            if not ns or ns.status != NodeStatus.DISPATCHED or not ns.card_id:
-                continue
-
-            card = get_card(inst.board, ns.card_id)
-            if not card:
-                continue
-
-            if card.status == "done":
-                # Node completed — read output
-                meta = get_card_metadata(inst.board, ns.card_id)
-                output = meta.get("metadata", {})
-                self.state.update_node_state(
-                    inst.instance_id, node.id, NodeStatus.DONE, ns.card_id, output
-                )
-                actions.append(f"DONE node {node.id} (card {ns.card_id}) on {inst.board}")
-            elif card.status == "blocked":
-                actions.append(f"BLOCKED node {node.id} (card {ns.card_id}) — waiting for dynamic children")
 
         # Check if all nodes done → complete instance
         all_done = all(
@@ -436,7 +440,9 @@ class Engine:
             except (json.JSONDecodeError, TypeError):
                 meta = {}
 
-        instance_id = f"wf_{int(time.time())}_{wf.id}"
+        import uuid
+        unique = uuid.uuid4().hex[:8]
+        instance_id = f"wf_{int(time.time())}_{wf.id}_{unique}"
         now = int(time.time())
 
         # Trigger context: data from the triggering card
@@ -470,7 +476,8 @@ class Engine:
 
     def _boards_to_check(self) -> list[str]:
         """Get list of boards to check for triggers."""
-        boards_dir = Path.home() / ".hermes-teams/startup/kanban/boards"
+        from .kanban_adapter import KANBAN_HOME
+        boards_dir = KANBAN_HOME
         if not boards_dir.exists():
             return []
         return [p.name for p in boards_dir.iterdir() if p.is_dir() and (p / "kanban.db").exists()]
@@ -499,7 +506,11 @@ class Engine:
         if not wf:
             raise ValueError(f"Workflow template not found: {workflow_id}")
 
-        instance_id = f"wf_{int(time.time())}_{workflow_id}"
+        # Add a unique suffix to avoid collisions when multiple instances
+        # are created in the same second
+        import uuid
+        unique = uuid.uuid4().hex[:8]
+        instance_id = f"wf_{int(time.time())}_{workflow_id}_{unique}"
         now = int(time.time())
 
         inst = WorkflowInstance(
