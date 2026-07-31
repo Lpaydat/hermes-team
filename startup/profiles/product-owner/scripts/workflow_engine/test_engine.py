@@ -1138,7 +1138,12 @@ def test_no_metadata():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_output_schema_validation():
-    """A card with output not matching the schema should still complete (soft validation)."""
+    """A card with output not matching the schema should FAIL the node (hard validation).
+
+    Enterprise-grade behavior: when a node's card completes with metadata that
+    violates the node's declared output.schema (JSON Schema), the node is marked
+    FAILED (not DONE), and downstream nodes that depend on it must NOT dispatch.
+    """
     world = FakeWorld()
     world.add_template({
         "id": "schema-test",
@@ -1167,16 +1172,133 @@ def test_output_schema_validation():
     conn.close()
     world.complete_card(qa_card, metadata={"something_else": "no verdict"})
 
-    # Tick: node should still complete (engine does soft validation, doesn't block)
+    # Tick: node should FAIL hard (validation error), not complete
     actions = world.tick()
-    assert any("DONE" in a and "qa" in a for a in actions), \
-        f"Expected qa DONE despite schema mismatch, got: {actions}"
-    # Downstream should still advance
-    assert any("DISPATCHED" in a and "done" in a for a in actions), \
-        f"Expected done DISPATCHED, got: {actions}"
+    assert any("VALIDATION FAILED" in a and "qa" in a for a in actions), \
+        f"Expected qa VALIDATION FAILED, got: {actions}"
+    # Downstream should NOT advance (dependency failed)
+    assert not any("DISPATCHED" in a and "done" in a for a in actions), \
+        f"done node must NOT dispatch when qa failed validation, got: {actions}"
+
+    # The node state should be FAILED, not DONE
+    ns = world.engine.state.load_active_instances()[0].node_states.get("qa")
+    assert ns is not None and ns.status == NodeStatus.FAILED, \
+        f"qa node status should be FAILED, got {ns.status if ns else None}"
 
     world.cleanup()
     print("OK: test_output_schema_validation")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: State cleanup / GC — old trigger_keys and completed instances GC'd
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_state_cleanup_gc():
+    """StateDB.cleanup() removes old trigger_keys, completed instances,
+    node_states, and stale watermarks past max_age_days. Recent rows are kept."""
+    world = FakeWorld()
+
+    # Insert an OLD trigger_key (8 days ago)
+    old_ts = int(time.time()) - (8 * 86400)
+    conn = sqlite3.connect(str(world.state_db_path))
+    conn.execute(
+        "INSERT INTO trigger_keys (key, created_at) VALUES (?, ?)",
+        ("old-trig-key", old_ts),
+    )
+    # Insert a RECENT trigger_key (1 hour ago)
+    conn.execute(
+        "INSERT INTO trigger_keys (key, created_at) VALUES (?, ?)",
+        ("recent-trig-key", int(time.time()) - 3600),
+    )
+
+    # Insert an OLD completed instance + node_state (8 days ago)
+    conn.execute(
+        """INSERT INTO workflow_instances
+           (instance_id, workflow_id, board, project_dir, trigger_context,
+            parent_instance_id, created_at, status, completed_at, node_ids)
+           VALUES (?, 'wf-x', 'test-board', '', '{}', NULL, ?, 'completed', ?, '[]')""",
+        ("old-instance", old_ts, old_ts),
+    )
+    conn.execute(
+        """INSERT INTO node_states (instance_id, node_id, status, card_id, output)
+           VALUES (?, 'a', 'done', 'c1', '{}')""",
+        ("old-instance",),
+    )
+
+    # Insert a RECENT completed instance (1 hour ago) — should survive
+    recent_ts = int(time.time()) - 3600
+    conn.execute(
+        """INSERT INTO workflow_instances
+           (instance_id, workflow_id, board, project_dir, trigger_context,
+            parent_instance_id, created_at, status, completed_at, node_ids)
+           VALUES (?, 'wf-y', 'test-board', '', '{}', NULL, ?, 'completed', ?, '[]')""",
+        ("recent-instance", recent_ts, recent_ts),
+    )
+    conn.execute(
+        """INSERT INTO node_states (instance_id, node_id, status, card_id, output)
+           VALUES (?, 'b', 'done', 'c2', '{}')""",
+        ("recent-instance",),
+    )
+
+    # Insert an OLD watermark (8 days ago) and a RECENT one (now)
+    conn.execute(
+        "INSERT INTO trigger_watermark (board, last_ts) VALUES ('stale-board', ?)",
+        (old_ts,),
+    )
+    conn.execute(
+        "INSERT INTO trigger_watermark (board, last_ts) VALUES ('fresh-board', ?)",
+        (int(time.time()),),
+    )
+    conn.commit()
+    conn.close()
+
+    # Run cleanup with default 7-day threshold
+    counts = world.engine.state.cleanup(max_age_days=7)
+
+    assert counts["trigger_keys"] == 1, f"Expected 1 old trigger_key deleted, got {counts}"
+    assert counts["workflow_instances"] == 1, f"Expected 1 old instance deleted, got {counts}"
+    assert counts["node_states"] == 1, f"Expected 1 old node_state deleted, got {counts}"
+    assert counts["trigger_watermark"] == 1, f"Expected 1 stale watermark deleted, got {counts}"
+
+    # Verify the OLD rows are gone and RECENT ones survive
+    conn = sqlite3.connect(str(world.state_db_path))
+    old_key = conn.execute(
+        "SELECT 1 FROM trigger_keys WHERE key = ?", ("old-trig-key",)
+    ).fetchone()
+    recent_key = conn.execute(
+        "SELECT 1 FROM trigger_keys WHERE key = ?", ("recent-trig-key",)
+    ).fetchone()
+    old_inst = conn.execute(
+        "SELECT 1 FROM workflow_instances WHERE instance_id = ?", ("old-instance",)
+    ).fetchone()
+    recent_inst = conn.execute(
+        "SELECT 1 FROM workflow_instances WHERE instance_id = ?", ("recent-instance",)
+    ).fetchone()
+    old_ns = conn.execute(
+        "SELECT 1 FROM node_states WHERE instance_id = ?", ("old-instance",)
+    ).fetchone()
+    recent_ns = conn.execute(
+        "SELECT 1 FROM node_states WHERE instance_id = ?", ("recent-instance",)
+    ).fetchone()
+    stale_wm = conn.execute(
+        "SELECT 1 FROM trigger_watermark WHERE board = ?", ("stale-board",)
+    ).fetchone()
+    fresh_wm = conn.execute(
+        "SELECT 1 FROM trigger_watermark WHERE board = ?", ("fresh-board",)
+    ).fetchone()
+    conn.close()
+
+    assert old_key is None, "old trigger_key should be deleted"
+    assert recent_key is not None, "recent trigger_key should survive"
+    assert old_inst is None, "old instance should be deleted"
+    assert recent_inst is not None, "recent instance should survive"
+    assert old_ns is None, "old node_state should be deleted"
+    assert recent_ns is not None, "recent node_state should survive"
+    assert stale_wm is None, "stale watermark should be deleted"
+    assert fresh_wm is not None, "fresh watermark should survive"
+
+    world.cleanup()
+    print("OK: test_state_cleanup_gc")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -4382,6 +4504,7 @@ if __name__ == "__main__":
         test_malformed_metadata,
         test_no_metadata,
         test_output_schema_validation,
+        test_state_cleanup_gc,
         test_dead_branch,
         test_long_chain,
         test_unknown_card_status,

@@ -58,6 +58,94 @@ Correct order:
 
 The engine creates one kanban card per workflow node. Profiles create dynamic child cards at runtime (via `kanban_chains`, `loop_engine`, probe fan-out). The engine does NOT track these children. `kanban_complete` on the parent node card is the sole completion signal. A tech-lead node that ran 5 dev+verifier pairs over 3 hours is "done" when the tech-lead calls `kanban_complete`.
 
+### Hard output validation (enterprise-grade)
+
+When a node's card completes, the engine validates the card's metadata against
+the node's declared `output.schema` (JSON Schema, via the `validate_output`
+adapter helper which uses `jsonschema` with a `required`-field fallback). **A
+validation failure marks the node `FAILED` — not `DONE` — and downstream nodes
+that depend on it must NOT advance.** This prevents garbage output from
+poisoning the rest of the workflow.
+
+Implementation lives in PHASE 1 of `_check_instance`, in the `card.status ==
+"done"` branch, BEFORE the existing DONE-transition:
+
+```python
+if node.output and node.output.schema:
+    valid, err = validate_output(inst.board, ns.card_id, node.output.schema)
+    if not valid:
+        self.state.update_node_state(
+            inst.instance_id, node.id, NodeStatus.FAILED, ns.card_id, output)
+        ns.status = NodeStatus.FAILED
+        actions.append(f"VALIDATION FAILED node {node.id} (card {ns.card_id}): {err}")
+        continue
+# ... normal DONE transition follows
+```
+
+The downstream-blocking is automatic: PHASE 2's `deps_done` check only passes
+when every dep is `NodeStatus.DONE`, and a `FAILED` dep is never DONE. The
+`all_done` instance-completion check likewise fails on a FAILED node, so the
+instance never completes with a broken node. No special FAILED handling needed
+in the dispatch/completion paths — the DONE-gating already covers it.
+
+**When you change soft→hard validation, update tests that expected the old soft
+behavior.** The signature test is `test_output_schema_validation` (in
+`test_engine.py`): under soft validation it asserted `qa DONE` + downstream
+`DISPATCHED`; under hard validation it must assert `VALIDATION FAILED` +
+downstream NOT dispatched + `ns.status == NodeStatus.FAILED`. This is a
+"old-behavior assertion" update (category 2 from the dual-nature maintenance
+note) — the test's intent shifts from "proves soft validation" to "proves hard
+validation blocks downstream."
+
+### State cleanup / GC
+
+`StateDB.cleanup(max_age_days=7)` garbage-collects old state rows and runs once
+per `tick()` (cheap — a few DELETEs). It removes:
+
+1. **trigger_keys** older than `max_age_days` (by `created_at`).
+2. **completed workflow_instances** older than `max_age_days` (by `completed_at`
+   where `status='completed'`), AND their **node_states** rows (manual delete —
+   the FK has no `ON DELETE CASCADE` pragma enforcement by default, so you must
+   delete child rows before parents).
+3. **trigger_watermark** entries whose `last_ts` is older than `max_age_days`.
+
+Returns a `{table: count}` dict of rows deleted. `tick()` logs a `GC: removed N
+old state rows (...)` action only when `total_gc > 0`, so a steady-state tick
+with nothing to GC produces no noise. Because every test fixture creates
+recent rows (created now), cleanup-on-tick does NOT disturb normal tests — only
+tests that explicitly insert old rows see deletions.
+
+The per-item DELETE pattern for node_states uses an `IN (...)` clause built from
+a placeholder per collected instance_id (`",".join("?" for _ in old_ids)`) —
+never string-interpolate IDs directly (SQL injection + type coercion bugs).
+
+### Foreach implementation (dispatch half complete, completion half pending)
+
+A foreach node has a `foreach` field (e.g. `"${nodes.tickets.output.bead_ids}"`)
+that resolves to a list. PHASE 2 dispatch routes `node.foreach` nodes to
+`_dispatch_foreach_node`, which: strips the `${...}` wrapper to get the context
+key, looks up the list in `ctx`, creates one card per item (with `${item}` and
+`${item_index}` available in the body template, idempotency key
+`wf:{instance}:{node}:{idx}`), stores card_ids in the node state output under
+`_foreach_cards`, and sets `ns.card_id` to the FIRST card id for backward-compat
+with single-card code paths.
+
+**Two halves, do both — the dispatch half alone deadlocks:**
+- **Dispatch half (done):** `_dispatch_foreach_node` creates the cards, marks
+  DISPATCHED, stores `_foreach_cards` list in output.
+- **Completion half (NOT done):** PHASE 1 must detect a DISPATCHED node whose
+  output has a non-empty `_foreach_cards`, check ALL those cards for `done`,
+  and only then mark the node DONE with an aggregated `results` list. Without
+  this, the node stays DISPATCHED forever → downstream never advances →
+  instance never completes.
+
+**Edge cases the completion half must handle:** empty list (mark DONE
+immediately with empty `results`, no cards created — the dispatch half already
+does this), validation-per-item (run `validate_output` per card; one failing
+card marks the node FAILED), and the existing card-regression checks (PHASE 1b)
+which iterate a single `ns.card_id` — foreach nodes have many cards, so those
+guards must iterate `_foreach_cards` instead.
+
 ### Trigger dedup: card ID keys, not timestamps
 
 Use a `trigger_keys` table that records `trig:<workflow_id>:<card_id>` for every card that triggered a workflow. Timestamp-based watermarks are unreliable — the same card can re-trigger if the lookback window includes it. The card ID key is permanent and unambiguous.
@@ -72,6 +160,17 @@ See `references/fakeworld-testing-pattern.md` for the complete testing methodolo
 - **Fake `create_card`** to write directly to SQLite instead of calling `hermes kanban` CLI
 - **Simulate completions** by inserting rows with `status='done'` + metadata JSON
 - **Test the tick loop** by calling `engine.tick()` and asserting on returned actions
+
+## Probe-before-pin: empirically verify edge-case behavior before asserting
+
+When writing tests that pin coercion or boundary behavior (what `str()` does
+to a dict, whether an empty `${}` survives the regex, how `None` compares in a
+condition), **do not guess — probe first.** Run a throwaway `python3 -c` one-liner
+to observe the real output, THEN write the assertion against what you actually
+saw. This is especially important for this engine because `resolve_template`
+uses `str()` (Python repr, not JSON) and the cleanup regex has non-obvious
+boundary behavior (`[^}]+` requires ≥1 char, so `${}` is NOT stripped). See
+`references/dataflow-testing.md` for the full coercion table and probe recipe.
 
 ## Unhappy-path / error-handling tests
 
@@ -90,6 +189,106 @@ write "integration tests for error handling" or "unhappy path tests," cover
 that checklist. See `references/unhappy-path-testing.md` for the table of
 happy-vs-unhappy-vs-adversarial posture, the 10-condition checklist with exact
 assertions, and the FakeWorld conventions these tests follow.
+
+## Bad-input / robustness testing (the fourth test class)
+
+Bad-input tests feed the parser/store **garbage at the load boundary** —
+syntax errors, missing fields, wrong types, duplicate IDs, binary files, null
+templates, 1000-node stress, invalid JSON Schemas — and assert the engine
+**either rejects gracefully (returns `None`, raises `ValueError`) or handles
+without crashing.** This sits between unhappy-path (known runtime error
+conditions) and adversarial (find bugs). It targets the `from_dict` /
+`from_file` / `TemplateStore.load` / `resolve_template` / `evaluate_condition`
+parsing layer specifically, not the tick loop.
+
+As of 2026-07-31 the four crash-gaps that were once documented with
+`xfail(strict=True)` are **CLOSED** — `TemplateStore.load` was broadened to
+catch the relevant exception types, and the four xfail decorators were removed
+(the test bodies were left intact as ordinary positive assertions). See the
+"Converting xfail-strict tests after the engine is hardened" lifecycle note in
+the xfail posture section below, and `references/bad-input-testing.md` for the
+resolved crash-gap history.
+
+### Methodology: probe FIRST, then write assertions
+
+**Do not assume how the engine behaves on a given malformed input — probe it
+empirically first.** Write a throwaway script (`/tmp/probe.py`, deleted
+afterward) that constructs each malformed input, runs it through the real
+parser/store, and prints the actual result or exception. Then encode that
+observed behavior as the assertion. A test suite that asserts guessed behavior
+is fiction. This matters especially here because the exception handlers are
+narrow (see pitfall below) and some inputs crash while seemingly-similar ones
+are caught.
+
+### The `xfail(strict=True)` posture for crash-gap documentation
+
+Three test natures now exist for engine tests:
+
+| Posture | When | Suite state | Assertion |
+|---------|------|-------------|-----------|
+| **bug-finder** (adversarial) | Engine has a real bug you found | **FAILs** with `BUG:` message = the report | asserts desired behavior; passes only after the engine is fixed |
+| **unhappy-path** | Known error condition, engine handles it | all-green | asserts graceful handling (no crash, returns a list) |
+| **crash-gap (`xfail`-strict)** | Engine CURRENTLY crashes on an input and you want the gap tracked visibly without breaking the green suite | green (xfail) | asserts the DESIRED graceful behavior; **xfailed because the engine can't deliver it yet** |
+
+Use `@pytest.mark.xfail(strict=True, reason="…")` when:
+- The input genuinely crashes the engine today (uncaught exception).
+- You want it visible in the suite as a known gap, not silently passing-for-the-wrong-reason.
+- The fix is a real hardening task (broaden an exception handler), not a one-liner you should just do now.
+
+**Why `strict=True`:** if someone later hardens the engine to handle the input,
+the test starts **XPASSing** (unexpected pass), which pytest reports as a
+**failure**. That forces conversion from xfail → a real positive assertion.
+Without `strict`, the hardening would go unnoticed and the xfail would silently
+become a lie. The `reason=` string must say what's broken AND what the fix
+looks like, so the future converter knows what assertion to write.
+
+```python
+@pytest.mark.xfail(reason="TemplateStore.load only catches "
+                          "(JSONDecodeError, KeyError); a TypeError from "
+                          "bad 'nodes' type is NOT caught and crashes the "
+                          "caller. Known gap — catch Exception in load().",
+                   strict=True)
+def test_nodes_wrong_type_via_store_handled():
+    store, d = _tmp_store()
+    _write(d, "wf", json.dumps({"id": "wf", "name": "y", "nodes": 5}))
+    assert store.load("wf") is None
+```
+
+### Converting xfail-strict tests after the engine is hardened (the lifecycle)
+
+When the engine is hardened to close a crash-gap, every xfail-strict test on
+that gap flips to **XPASS**, which pytest reports as a FAILURE. The conversion
+is mechanical but must be done deliberately:
+
+1. **Remove the `@pytest.mark.xfail(...)` decorator only.** The test BODY stays
+   unchanged — it was already written to assert the DESIRED graceful behavior,
+   which is exactly what the hardened engine now delivers. Deleting the body or
+   rewriting the assertion is wrong; the body *is* the correct positive test.
+2. **Do not touch comments/docstrings that mention "xfail"** — they're harmless
+   historical context. A `grep xfail` will still hit docstrings/comments after
+   the decorator is gone; that's expected, not a sign of incomplete work.
+3. **Verify in isolation.** Run pytest on JUST the converted node IDs (not the
+   whole file) and assert the outcomes explicitly: **0 xfail, 0 XPASS, N/N
+   PASSED.** An isolated runner is more reliable than eyeballing a full-suite
+   run, which may contain unrelated failures that obscure the xfail result.
+   (One pitfall when scripting this: pass multiple `file::node_id` selectors as
+   *separate argv elements* to pytest — joining them into one space-separated
+   string makes pytest treat the whole thing as a single unmatched selector and
+   collects zero tests.)
+
+**Hardening can break SIBLING tests, not just the xfailed ones.** When the
+engine hardening that closes a crash-gap also tightens `from_dict` validation
+(e.g. `depends_on` now must be a list and raises `TypeError`; `output` non-dict
+no longer raises `AttributeError` but is handled gracefully), other bad-input
+tests written against the OLD loose behavior will FAIL — even though they were
+never xfailed. The conversion is NOT always isolated to the xfail-decorated
+tests. After any store/parser hardening, run the *entire* bad-input file and
+triage every failure through the dual-nature lens (real-bug vs.
+old-behavior-assertion), the same way adversarial-test maintenance works. Do
+not assume "I removed 4 decorators, therefore 4 tests changed."
+
+See `references/bad-input-testing.md` for the full 62-test catalog, the
+probe-first workflow, and the (now-resolved) crash-gap history.
 
 ## Adversarial testing
 
@@ -126,26 +325,56 @@ Key adversarial categories:
 - **Data corruption** — malformed field *content* rather than graph shape: null values where strings are expected, unicode/emoji/null-bytes, 10k-char payloads, condition-parser edge cases (double quotes, trailing garbage, malformed operators), template-injection via data values. See `references/data-corruption-tests.md` for the full catalog of 20 tests. **Core weakness: zero input validation in `from_dict`** — the JSON-null-vs-missing-key trap (`n.get("body_template", "")` returns `None` for an explicit `null`, not `""`), and `resolve_template`'s `str()` on non-string values embeds Python repr instead of JSON. The condition parser (`evaluate_condition`) silently fails on double quotes, ignores trailing garbage (`re.match` not `re.fullmatch`), and returns `False` with no diagnostic for unrecognized expressions.
 
 **Adversarial-test methodology:** read all engine source first, list concrete code-level weaknesses, then write one test per weakness whose docstring states the exact line/statement it targets (`WEAKNESS: ...`). Tests encode current behavior (passing) or catch the bug (failing → regression guard after fix). See `references/adversarial-test-catalog.md` and `references/data-corruption-tests.md` for worked examples.
+## Test suite shape: seven files, seven tiers
 
-## Test suite shape: four files, four tiers
-
-As of 2026-07-31, the engine has **250+ tests across 6 files**, with more being\nadded. The suite is organized by tier:
+As of 2026-07-31, the engine has **310+ tests across 7 files**, with more being
+added. The suite is organized by tier:
 
 | File | Tests | Tier | What it proves |
 |------|-------|------|----------------|
 | `test_engine.py` | 103 | FakeWorld (mocked) | Engine logic — tick ordering, variable resolution, state, all adversarial |
 | `test_composition.py` | 10 | FakeWorld (mocked) | Trigger-based composition: A→B chains, A→B→C nesting, A↔B recursion, parallel fan-out, failure isolation, data flow |
-| `test_dataflow.py` | 62 | FakeWorld (mocked) | Variable resolution edge cases |
+| `test_dataflow.py` | 62 | FakeWorld (mocked) | Variable resolution edge cases (typed values, recursive expansion, empty/escaped vars, mutation between ticks; see `references/dataflow-testing.md`) |
+| `test_bad_templates.py` | 62 | Bad-input / robustness | Malformed JSON, wrong types, null/binary templates, 1000-node stress (4 former `xfail`-strict crash-gaps now resolved → regular passing tests) |
 | `test_integration.py` | 16 | Hybrid (real boards, simulated completions) | Real SQLite schema, real CLI card creation, real metadata/trigger reads |
 | `test_unhappy.py` | 10 | Real unhappy paths | Nonexistent boards, locked DBs, error statuses, schema mismatch |
 | `test_adversarial.py` | 10 | Real adversarial | Trigger chains, state corruption, template hot-reload, workflow storms |
-
-Additional files being added: `test_bad_templates.py` (malformed JSON/null/binary).
 
 **User expects the test suite to GROW with each session.** When the user says
 "more tests" or "try to break it," dispatch subagents (max 3 per batch) to
 write new test files targeting specific categories. Each subagent should
 create its own file, not modify existing ones.
+
+## Current feature status (honest scorecard)
+
+The engine has features at different maturity levels. **Do not claim "solid" or "done" without checking this table.** A green test suite that includes xfail tests, soft validation, and unbounded-growth tests is a green checkmark on a red wall — the count masks weakpoints.
+
+| Feature | Status | Tested? | Notes |
+|---------|--------|---------|-------|
+| Sequential nodes | DONE | 15+ tests | Core path, solid |
+| Conditional edges | DONE | 15+ tests | Simple operators: `==`, `!=`, `exists`, `is empty` |
+| Fan-out (parallel) | IMPLICIT | 3 tests | Via shared `depends_on` — no explicit fan-out node type |
+| Fan-in (wait-all) | IMPLICIT | 2 tests | Via multiple `depends_on` — no explicit fan-in node type |
+| Foreach iteration | IN PROGRESS | dispatch tested, completion logic pending | `_dispatch_foreach_node` creates one card per list item; PHASE 1 completion aggregation NOT yet wired. See "Foreach implementation" below. |
+| Subworkflow node | NOT BUILT | — | Composition works via triggers only, no `type: "subworkflow"` |
+| Output validation | HARD | 1 test | `validate_output()` against `node.output.schema` on card completion; failure → `NodeStatus.FAILED`, downstream blocked. See "Hard output validation" below. |
+| Concurrency safety | PARTIAL | Tests prove locks work, not race-freedom | File lock + thread lock, but check-then-create gap remains |
+| State cleanup | DONE | 1 test | `StateDB.cleanup(max_age_days=7)` runs every tick; removes old trigger_keys, completed instances + node_states, stale watermarks. See "State cleanup / GC" below. |
+| Bad input handling | CLOSED (was 4 gaps) | 62 tests, all regular | All four `xfail(strict=True)` crash-gaps (wrong-type nodes, null template, binary file, double-encoded JSON) were resolved by broadening `TemplateStore.load`'s exception handler. Decorators removed; test bodies retained as positive assertions. |
+
+When the user asks "is the engine solid?", answer with this table, not "253 tests all green." The test count is necessary but not sufficient. The user explicitly caught this: *"hmm, #2,3,5,6 meant test not all green isn't it? or it just green with only tests that ignore the weakpoints, right?"*
+
+## Incremental migration: run alongside the old cron
+
+The engine is designed to replace the 645-line cron one phase at a time. The approach:
+1. Run BOTH the old cron AND the new engine simultaneously
+2. Disable one cron phase (e.g., `phase_qa_trigger`)
+3. Let the new engine's template (e.g., `qa-loop.json`) handle that phase
+4. Livetest to verify the engine fires correctly
+5. If it works, disable the next cron phase
+6. Repeat until the cron is fully replaced
+
+**Do not do a big-bang replacement.** Each phase migration is independently testable and reversible.
 
 ## Incremental validation before full integration
 
@@ -184,7 +413,8 @@ Tests should assert `status in ("todo", "ready")`.
 ## Composition & subworkflow testing
 
 Trigger-based composition is how workflows chain today (no native `subworkflow`
-node type yet — see `docs/workflow-composition-design.md` for the planned\nmodel). One workflow's node completes → its card metadata matches another
+node type yet — see `docs/workflow-composition-design.md` for the planned
+model). One workflow's node completes → its card metadata matches another
 workflow's `card_completed` trigger → the child workflow starts. Test this
 with `test_composition.py` patterns.
 
@@ -261,14 +491,18 @@ The workflow for fixing all adversarial bugs:
 - **Atomic UPSERT with COALESCE: the NOT NULL trap.** To merge a partial update (caller omits `card_id` or `output`) without a read-then-write, use `INSERT ... ON CONFLICT DO UPDATE SET card_id=COALESCE(?, node_states.card_id), output=CASE WHEN ?=1 THEN ? ELSE node_states.output END`. But the `VALUES` clause must supply a **non-NULL** placeholder for any NOT NULL column, or the INSERT half fails before the conflict is ever reached: `output TEXT NOT NULL DEFAULT '{}'` rejects an explicit NULL even though ON CONFLICT would have merged it. Fix: pass a non-NULL default into VALUES (`output_json if output_json is not None else "{}"`), then let the ON CONFLICT clause apply COALESCE/CASE so the existing value is preserved for omitted fields. The COALESCE merge on a *single* SQL statement is what makes concurrent field-level updates safe — two threads each setting a different field both survive.
 - **Stale-node filtering needs a snapshot, not the live template.** `load_active_instances` can't see the template store, so it can't filter node states against the current template directly. Solution: store a `node_ids` JSON array (the valid node IDs) on the instance *at creation time*, and filter node states loaded from the DB against that snapshot during load. This catches nodes removed from the template after the instance started. The in-memory `_check_instance` then does a second filter against the live template for defense in depth.
 - **`completed_at` is the zombie-detector column.** Store `completed_at` (epoch seconds) on the instance row when `complete_instance` runs. In `_check_instance`, check `inst.completed_at is not None` *first* — if an instance was previously completed and somehow reactivated (manual SQL `UPDATE ... status='active'`), skip it and re-mark complete. This prevents phantom work from a "finished" instance.
+- **Inserting a new test before an existing function: give `old_string` enough trailing context.** When you use `patch` to insert a new test *above* an existing `def test_X():`, including only the prior function's last line + the `def` line as the anchor risks the `def` line (and the dict literal's first key) being consumed into the replacement and lost. Symptom: a `Pyright "X" is not defined` error on the runner's test list, or a missing `"id":` key in a template dict. Fix: anchor on the *prior* function's closing lines + a blank-line gap, and after patching, immediately read the splice site (`read_file` with offset/limit around the boundary) to confirm the downstream function definition + first dict key survived. If they didn't, restore them with a second targeted patch before running tests.
 - **Never `ORDER BY created_at` to fetch the latest card.** `created_at` is seconds-resolution epoch; multiple cards created in the same second (constant in fast tests) tie and the order is arbitrary. This produces flaky, non-deterministic test failures that pass on one run and fail on the next. Use `ORDER BY rowid DESC` — `rowid` is the auto-incrementing insertion order and is always monotonic. This bit a circular-trigger test where `get_card_id_by_assignee` kept returning the wrong (older) card.
 - **Patch `LOCK_FILE` in test fixtures or every tick silently SKIPs.** The engine uses `fcntl.flock(LOCK_FILE)` for cross-process locking. If a production engine process is running (or the lock file points at the real path), every test tick returns `["SKIP tick: another engine process holds the lock"]` instead of dispatching. Tests then assert on empty action lists and pass for the wrong reason. In your test fixture, patch `rt.LOCK_FILE = tmpdir / "test-engine.lock"` and restore in cleanup. See `references/fakeworld-testing-pattern.md` ("The fourth critical monkey-patch").
+- **`TemplateStore.load`'s exception handler was narrowed, then broadened (resolved).** Historically `store.load()` wrapped `Workflow.from_dict()` in `except (json.JSONDecodeError, KeyError)` ONLY, so malformed inputs raising *other* types (`TypeError`, `UnicodeDecodeError`, `AttributeError`) propagated uncaught and crashed the caller — and `store.all()`, which loops `load()`. As of 2026-07 the handler was broadened to catch the full set (`TypeError, UnicodeDecodeError, AttributeError, ValueError`, or a blanket `except Exception`), and the four crash-gap tests were converted from `xfail(strict=True)` to ordinary positive assertions. **The lesson is the conversion lifecycle, not the gap**: when you harden `store.load` (or `from_dict`), the xfail tests flip to XPASS=FAILURE and must have their decorators removed (bodies unchanged), AND sibling tests written against the old loose `from_dict` behavior may also start failing — run the whole bad-input file and triage every failure. `Workflow.from_file()` is still narrower than `load()` — it propagates *all* exceptions including `JSONDecodeError` by design (it's the raw parser; the store is the softening layer).
 
 ## Linked files
 
 - `references/fakeworld-testing-pattern.md` — complete testing methodology with code
+- `references/composition-tests.md` — trigger-based composition testing: A→B chains, A→B→C nesting, A↔B recursion, parallel fan-out, failure isolation, data flow, per-card dedup behavior
 - `references/hybrid-integration-testing.md` — real boards + simulated completions (the third testing tier: real CLI card creation, direct-SQLite completion simulation, RealBoardFixture pattern, gating real-agent tests behind --real)
 - `references/unhappy-path-testing.md` — the third test class (happy/unhappy/adversarial posture table) + the 10-condition error-handling checklist with exact assertions
+- `references/bad-input-testing.md` — the fourth test class: feeding garbage to the parser/store (malformed JSON, wrong types, null/binary templates, 1000-node stress); the probe-first methodology; the three test postures table (bug-finder / unhappy-path / xfail-strict crash-gap); the four confirmed `TemplateStore.load` crash-gaps
 - `references/real-integration-testing.md` — the echo-test pattern for proving the engine against real kanban + real dispatcher + real agent profiles
 - `references/adversarial-test-catalog.md` — 13 adversarial test scenarios that found 2 real bugs
 - `references/engine-hardening-techniques.md` — the concrete engine fixes for the state-lifecycle + concurrency bugs (zombie `completed_at` guard, deleted-board detection, COALESCE-merge UPSERT, node_ids snapshot, card-regression phase), with before/after and which tests they flip
@@ -278,3 +512,4 @@ The workflow for fixing all adversarial bugs:
 - `references/concurrency-tests.md` — 6 concurrency tests (double dispatch, lost updates, duplicate trigger instances, overlapping ticks, DB-lock crashes, partial-write duplicates); 6 confirmed bugs; the `threading.Barrier` technique for making race windows deterministic
 - `references/trigger-system-tests.md` — 12 trigger-subsystem tests (trigger storms, empty-condition bomb, cross-board contamination, flat metadata lookup, NULL completed_at, self-trigger via engine cards); 6 confirmed bugs
 - `references/scenario-adversarial-tests.md` — scenario-based (vs weakness-based) adversarial testing: name 10 system-level integration scenarios (trigger chains, circular triggers, card hijacking, rapid starts, blocked nodes, state corruption, template hot-reload, concurrent board access, engine-kill recovery, workflow storms), each documenting observed behavior including unbounded-cycle growth and cache-never-invalidates findings
+- `references/dataflow-testing.md` — variable-resolution & data-flow edge cases (62 tests): the probe-before-pin methodology, the full str()-coercion table, recursive-expansion order-dependence, the empty-${} regex gap, the body-readback FakeWorld pattern, and output-mutation snapshot semantics

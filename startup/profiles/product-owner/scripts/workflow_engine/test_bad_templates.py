@@ -163,11 +163,6 @@ def test_nodes_wrong_type_from_dict(bad_nodes, exc):
         Workflow.from_dict({"id": "x", "name": "y", "nodes": bad_nodes})
 
 
-@pytest.mark.xfail(reason="TemplateStore.load only catches JSONDecodeError + "
-                          "KeyError; a TypeError from bad 'nodes' type is NOT "
-                          "caught and crashes the caller. Known gap — "
-                          "hardening store.load to catch Exception would fix.",
-                   strict=True)
 def test_nodes_wrong_type_via_store_handled():
     """The same wrong-type 'nodes', loaded through the store, SHOULD be caught
     and return None — but today it raises. xfail until the store is hardened."""
@@ -367,10 +362,6 @@ def test_empty_dict_template_from_dict():
 # 11. Double-encoded JSON (a JSON string containing JSON)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@pytest.mark.xfail(reason="Double-encoded JSON parses to a str, then "
-                          "from_dict does str.get('id') → AttributeError, "
-                          "which store.load does NOT catch. Known gap.",
-                   strict=True)
 def test_double_encoded_json_via_store_handled():
     """A file that is JSON-encoded JSON (json.dumps(json.dumps({...}))) parses
     to a *string*, not a dict. from_dict then fails. The store should catch this
@@ -604,10 +595,6 @@ def test_condition_none_context_value():
 # 17. null / None as the entire template
 # ═══════════════════════════════════════════════════════════════════════════
 
-@pytest.mark.xfail(reason="A 'null' JSON file parses to None; from_dict then "
-                          "does `None in data` → TypeError, which store.load "
-                          "does NOT catch. Known gap.",
-                   strict=True)
 def test_null_template_via_store_handled():
     """A file containing the literal JSON `null` should be rejected by the store
     as None — but today it raises TypeError out of store.load."""
@@ -626,12 +613,6 @@ def test_null_template_from_dict_raises():
 # 18. Template file that is actually binary (not text)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@pytest.mark.xfail(reason="store.load calls path.read_text() which raises "
-                          "UnicodeDecodeError on non-UTF-8 bytes. NOT caught "
-                          "by the store's (JSONDecodeError, KeyError) handler. "
-                          "Known gap — read_text(errors='replace') or a wider "
-                          "except would fix.",
-                   strict=True)
 def test_binary_template_file_via_store_handled():
     """A binary file masquerading as .json should be rejected as None, not crash
     with UnicodeDecodeError. Today it crashes."""

@@ -395,6 +395,66 @@ class StateDB:
         finally:
             conn.close()
 
+    def cleanup(self, max_age_days: int = 7) -> dict[str, int]:
+        """Garbage-collect old state rows. Call once per tick (cheap: a few DELETEs).
+
+        Removes:
+          - trigger_keys older than max_age_days
+          - completed workflow_instances older than max_age_days (+ their node_states)
+          - trigger_watermark entries whose last_ts is older than max_age_days
+
+        Returns a dict with counts of rows deleted per table (for logging/tests).
+        """
+        self._ensure_schema()
+        cutoff = int(time.time()) - (max_age_days * 86400)
+        counts: dict[str, int] = {
+            "trigger_keys": 0,
+            "workflow_instances": 0,
+            "node_states": 0,
+            "trigger_watermark": 0,
+        }
+        conn = _db_connect(self.db_path)
+        try:
+            # 1. Delete old trigger_keys
+            cur = conn.execute(
+                "DELETE FROM trigger_keys WHERE created_at < ?", (cutoff,)
+            )
+            counts["trigger_keys"] = cur.rowcount
+
+            # 2. Find old completed instances, delete their node_states, then them.
+            old_instances = conn.execute(
+                """SELECT instance_id FROM workflow_instances
+                   WHERE status = 'completed' AND completed_at IS NOT NULL
+                     AND completed_at < ?""",
+                (cutoff,),
+            ).fetchall()
+            if old_instances:
+                old_ids = [r["instance_id"] for r in old_instances]
+                placeholders = ",".join("?" for _ in old_ids)
+                cur = conn.execute(
+                    f"DELETE FROM node_states WHERE instance_id IN ({placeholders})",
+                    old_ids,
+                )
+                counts["node_states"] = cur.rowcount
+                cur = conn.execute(
+                    f"DELETE FROM workflow_instances WHERE instance_id IN ({placeholders})",
+                    old_ids,
+                )
+                counts["workflow_instances"] = cur.rowcount
+
+            # 3. Delete stale trigger_watermark entries (last_ts older than cutoff)
+            cur = conn.execute(
+                "DELETE FROM trigger_watermark WHERE last_ts < ?", (cutoff,)
+            )
+            counts["trigger_watermark"] = cur.rowcount
+
+            conn.commit()
+        except sqlite3.OperationalError as e:
+            log.warning("cleanup failed: %s", e)
+        finally:
+            conn.close()
+        return counts
+
 
 class Engine:
     """The workflow engine — tick loop that advances workflows."""
@@ -424,6 +484,19 @@ class Engine:
                 return ["SKIP tick: another engine process holds the lock"]
 
             actions: list[str] = []
+
+            # 0. Garbage-collect old state (trigger_keys, completed instances,
+            #    stale watermarks). Cheap — a few DELETE queries once per tick.
+            gc = self.state.cleanup()
+            total_gc = sum(gc.values())
+            if total_gc:
+                actions.append(
+                    f"GC: removed {total_gc} old state rows "
+                    f"({gc['trigger_keys']} trigger_keys, "
+                    f"{gc['workflow_instances']} instances, "
+                    f"{gc['node_states']} node_states, "
+                    f"{gc['trigger_watermark']} watermarks)"
+                )
 
             # 1. Check completions on active instances
             for inst in self.state.load_active_instances():
@@ -488,7 +561,42 @@ class Engine:
         # PHASE 1: Check dispatched nodes for completion FIRST
         for node in wf.nodes:
             ns = inst.node_states.get(node.id)
-            if not ns or ns.status != NodeStatus.DISPATCHED or not ns.card_id:
+            if not ns or ns.status != NodeStatus.DISPATCHED:
+                continue
+
+            # FOREACH completion: check all child cards
+            foreach_cards = ns.output.get("_foreach_cards") if ns.output else None
+            if foreach_cards is not None:
+                all_done = True
+                results = []
+                for fcid in foreach_cards:
+                    fcard = get_card(inst.board, fcid)
+                    if not fcard:
+                        actions.append(f"WARNING foreach node {node.id}: card {fcid} not found (dangling)")
+                        all_done = False
+                        break
+                    if fcard.status == "done":
+                        fmeta = get_card_metadata(inst.board, fcid)
+                        results.append(fmeta.get("metadata", {}))
+                    elif fcard.status == "blocked":
+                        all_done = False
+                    else:
+                        all_done = False
+
+                if all_done:
+                    aggregated = {"_foreach_cards": foreach_cards, "results": results}
+                    self.state.update_node_state(
+                        inst.instance_id, node.id, NodeStatus.DONE, ns.card_id, aggregated
+                    )
+                    ns.status = NodeStatus.DONE
+                    ns.output = aggregated
+                    actions.append(f"DONE foreach node {node.id} ({len(foreach_cards)} cards) on {inst.board}")
+                elif any(get_card(inst.board, c) and get_card(inst.board, c).status == "blocked" for c in foreach_cards if get_card(inst.board, c)):
+                    actions.append(f"BLOCKED foreach node {node.id} — one or more cards blocked")
+                continue
+
+            # Standard single-card completion check
+            if not ns.card_id:
                 continue
 
             card = get_card(inst.board, ns.card_id)
@@ -500,6 +608,31 @@ class Engine:
             if card.status == "done":
                 meta = get_card_metadata(inst.board, ns.card_id)
                 output = meta.get("metadata", {})
+
+                # HARD OUTPUT VALIDATION (enterprise-grade):
+                # Validate the card's metadata against the node's declared
+                # output.schema (JSON Schema Draft 2020-12). If it fails, mark
+                # the node FAILED (not DONE) so downstream nodes that depend on
+                # it never advance. This prevents garbage output from poisoning
+                # the rest of the workflow.
+                if node.output and node.output.schema:
+                    valid, err = validate_output(inst.board, ns.card_id, node.output.schema)
+                    if not valid:
+                        log.warning(
+                            "VALIDATION FAILED node %s (card %s) on %s: %s",
+                            node.id, ns.card_id, inst.board, err,
+                        )
+                        self.state.update_node_state(
+                            inst.instance_id, node.id, NodeStatus.FAILED, ns.card_id, output
+                        )
+                        ns.status = NodeStatus.FAILED
+                        ns.output = output
+                        actions.append(
+                            f"VALIDATION FAILED node {node.id} (card {ns.card_id}) "
+                            f"on {inst.board}: {err}"
+                        )
+                        continue
+
                 self.state.update_node_state(
                     inst.instance_id, node.id, NodeStatus.DONE, ns.card_id, output
                 )
@@ -555,11 +688,19 @@ class Engine:
             if node.condition and not evaluate_condition(node.condition, ctx):
                 continue
 
-            ok, msg = self._dispatch_node(inst, node, ctx)
-            if ok:
-                actions.append(f"DISPATCHED node {node.id} on {inst.board} → card {msg}")
+            if node.foreach:
+                # Foreach node: resolve the list, create one card per item.
+                ok, msg = self._dispatch_foreach_node(inst, node, ctx)
+                if ok:
+                    actions.append(f"DISPATCHED node {node.id} (foreach: {msg} cards) on {inst.board}")
+                else:
+                    actions.append(f"FAILED to dispatch foreach node {node.id} on {inst.board}: {msg}")
             else:
-                actions.append(f"FAILED to dispatch node {node.id} on {inst.board}: {msg}")
+                ok, msg = self._dispatch_node(inst, node, ctx)
+                if ok:
+                    actions.append(f"DISPATCHED node {node.id} on {inst.board} → card {msg}")
+                else:
+                    actions.append(f"FAILED to dispatch node {node.id} on {inst.board}: {msg}")
 
         # Check if all nodes done → complete instance
         if wf.nodes:
@@ -633,6 +774,97 @@ class Engine:
             return True, card_id
 
         return False, "no card id in output"
+
+    def _dispatch_foreach_node(self, inst: WorkflowInstance, node: Node, ctx: dict) -> tuple[bool, str]:
+        """Dispatch a foreach node: resolve the list, create one card per item.
+
+        The node's `foreach` field is a template variable like
+        "${nodes.tickets.output.bead_ids}" that resolves to a list. We create
+        one card per item, each card's body templated with the specific item
+        (available as ${item} in the body template, plus the raw item appended).
+
+        Card ids are stored in the node state's output under the `_foreach_cards`
+        key. The node is marked DISPATCHED; PHASE 1 checks all cards for
+        completion and aggregates outputs when done.
+        """
+        # Resolve the foreach variable to a list
+        foreach_var = node.foreach
+        # Strip ${...} wrapper to get the context key
+        if foreach_var.startswith("${") and foreach_var.endswith("}"):
+            var_key = foreach_var[2:-1]
+        else:
+            var_key = foreach_var
+        items = ctx.get(var_key)
+
+        if items is None:
+            return False, f"foreach variable '{foreach_var}' resolved to None"
+        if not isinstance(items, list):
+            return False, f"foreach variable '{foreach_var}' is not a list (got {type(items).__name__})"
+
+        if not items:
+            # Empty list — nothing to do, mark DONE immediately with empty aggregate
+            self.state.update_node_state(
+                inst.instance_id, node.id, NodeStatus.DONE, None,
+                {"_foreach_cards": [], "results": []},
+            )
+            ns = inst.node_states.get(node.id)
+            if ns:
+                ns.status = NodeStatus.DONE
+                ns.output = {"_foreach_cards": [], "results": []}
+            return True, "0"
+
+        workspace = f"dir:{inst.project_dir}" if inst.project_dir else None
+        card_ids: list[str] = []
+
+        for idx, item in enumerate(items):
+            # Build per-item context: the original ctx + ${item} = current item
+            item_ctx = dict(ctx)
+            item_ctx["item"] = item
+            item_ctx["item_index"] = idx
+            body = resolve_template(node.body_template or "", item_ctx)
+
+            idem_key = f"wf:{inst.instance_id}:{node.id}:{idx}"
+
+            # Check if already created (idempotency across ticks)
+            existing = find_cards_by_idempotency_key(inst.board, idem_key)
+            if existing:
+                card_ids.append(existing[0].id)
+                continue
+
+            ok, output = create_card(
+                board=inst.board,
+                title=f"[{node.id}#{idx}] {node.skill or 'task'}",
+                assignee=node.profile,
+                body=body,
+                idempotency_key=idem_key,
+                priority=10,
+                workspace=workspace,
+            )
+            if not ok:
+                return False, f"card creation failed for item {idx}: {output}"
+            try:
+                data = json.loads(output)
+                cid = data.get("id", "")
+            except (json.JSONDecodeError, TypeError):
+                cid = ""
+            if not cid:
+                return False, f"no card id for item {idx}"
+            card_ids.append(cid)
+
+        # Store all card ids in the node state output, mark DISPATCHED.
+        # Keep ns.card_id as the first card id for backward-compat with code
+        # that checks a single card_id (e.g. regression guards).
+        output = {"_foreach_cards": card_ids, "results": []}
+        self.state.update_node_state(
+            inst.instance_id, node.id, NodeStatus.DISPATCHED,
+            card_ids[0] if card_ids else None, output,
+        )
+        ns = inst.node_states.get(node.id)
+        if ns:
+            ns.status = NodeStatus.DISPATCHED
+            ns.card_id = card_ids[0] if card_ids else None
+            ns.output = output
+        return True, str(len(card_ids))
 
     def _check_triggers(self) -> list[str]:
         """Check all boards for new card completions that match workflow triggers."""

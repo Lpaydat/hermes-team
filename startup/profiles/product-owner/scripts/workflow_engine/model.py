@@ -58,16 +58,31 @@ class Workflow:
             trigger = Trigger(source=t["source"], condition=t.get("condition", {}))
 
         nodes = []
-        for n in data.get("nodes", []):
+        raw_nodes = data.get("nodes", [])
+        if not isinstance(raw_nodes, list):
+            raise TypeError(f"'nodes' must be a list, got {type(raw_nodes).__name__}")
+
+        for n in raw_nodes:
+            if not isinstance(n, dict):
+                raise TypeError(f"Each node must be a dict, got {type(n).__name__}")
+            if "id" not in n:
+                raise KeyError("Node missing required field: 'id'")
+            if "profile" not in n:
+                raise KeyError("Node missing required field: 'profile'")
+
             inp = None
-            if "input" in n:
+            if "input" in n and isinstance(n["input"], dict):
                 inp = NodeInput(
                     schema=n["input"].get("schema", {}),
                     sources=n["input"].get("sources", {}),
                 )
             out = None
-            if "output" in n:
+            if "output" in n and isinstance(n["output"], dict):
                 out = NodeOutput(schema=n["output"].get("schema", {}))
+
+            deps = n.get("depends_on", [])
+            if not isinstance(deps, list):
+                raise TypeError(f"Node '{n['id']}': depends_on must be list, got {type(deps).__name__}")
 
             nodes.append(Node(
                 id=n["id"],
@@ -77,7 +92,7 @@ class Workflow:
                 input=inp,
                 output=out,
                 card_mode=n.get("card_mode", "template"),
-                depends_on=n.get("depends_on", []),
+                depends_on=deps,
                 condition=n.get("condition"),
                 foreach=n.get("foreach"),
             ))
