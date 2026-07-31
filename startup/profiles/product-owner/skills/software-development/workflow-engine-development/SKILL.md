@@ -426,6 +426,8 @@ added. The suite is organized by tier:
 | `test_adversarial.py` | 10 | Real adversarial | Trigger chains, state corruption, template hot-reload, workflow storms |
 | `test_explicit_edges.py` | 5 | FakeWorld (mocked) | Explicit edge declarations: basic sequential, conditional routing, fan-out, backwards compat, edge parsing |
 
+**Total: 270 tests across 9 files.**
+
 **User expects the test suite to GROW with each session.** When the user says
 "more tests" or "try to break it," dispatch subagents (max 3 per batch) to
 write new test files targeting specific categories. Each subagent should
@@ -453,7 +455,7 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 | Card creation modes | DONE | — | `template` (default, single card), `delegate` (meta-card assigned to profile, profile creates children), `chain` (parent card + N child cards with `--parent` links). `create_card` gained `parent` param. |
 | Dynamic coexistence | DOCUMENTED | — | No `kanban_chains` or `loop_engine` integration. Dynamic plugins work independently (the engine doesn't see their cards). The engine supports dynamic workflows via `blocked` status: profiles create children via `kanban_chains`/`loop_engine`, engine watches parent card only. Documented in `MIGRATION.md`. |
 | Card creation modes | DONE | — | `template` (default, single card), `delegate` (meta-card assigned to profile, profile creates children), `chain` (parent card + N child cards with `--parent` links). `create_card` gained `parent` param. |
-| Incremental migration | WIRED | — | New engine cron job (`New Workflow Engine — tick`) runs alongside old cron every 1m. 5-phase migration plan in `MIGRATION.md` (QA trigger → bug routing → dispatch → escalation → full pipeline). Each phase disables one old cron function and lets the new engine's template handle it. Phase 1 (QA trigger) not yet livetested. |
+| Incremental migration | WIRED + PROVEN | — | New engine cron job (`New Workflow Engine — tick`) runs alongside old cron every 1m. 5-phase migration plan in `MIGRATION.md` (QA trigger → bug routing → dispatch → escalation → full pipeline). Real pipeline livetest PASSED through new engine (mini-pipeline: build→review→qa with explicit conditional edges). Phase 1 cron cutover not yet done. |
 
 When the user asks "is the engine solid?", answer with this table, not "265 tests all green." The test count is necessary but not sufficient. The user explicitly caught this: *"hmm, #2,3,5,6 meant test not all green isn't it? or it just green with only tests that ignore the weakpoints, right? and does this graph engine support fan-out/in yet? and conditional edges too?"*
 
@@ -591,6 +593,18 @@ After the FakeWorld suite passes, prove the engine against real kanban + real di
 
 1. **Create a minimal 2-node workflow** (e.g., `echo-test.json` — developer writes a file, verifier reads it). The workflow should be simple enough to complete in ~2 minutes but exercise: card creation, dependency resolution, completion detection, metadata reading, instance completion.
 
+### Real pipeline livetest with explicit edges (proven 2026-07-31)
+
+After the 2-node echo-test, run a real 3-node pipeline with explicit conditional edges. The `mini-pipeline.json` template proved the full cycle:
+
+- `build` (developer) → `review` (verifier) → `qa` (qa) via explicit edges
+- Conditional edge: `${nodes.review.output.verdict} == 'PASS'` routes to QA only on PASS
+- Full autonomous cycle: engine dispatches → real agent claims → real agent completes with metadata → engine advances → conditional edge evaluates → next node dispatches → WORKFLOW COMPLETE
+
+**Bonus finding:** trigger-based composition and explicit-edge routing fire SIMULTANEOUSLY. When the verifier card completed with verdict=PASS, BOTH the explicit edge (review→qa in the mini-pipeline) AND the qa-loop trigger (card_completed with assignee=qa, metadata.verdict=PASS) fired. The qa-loop started a second workflow instance while the mini-pipeline advanced its QA node. This is correct behavior — triggers watch all boards, edges route within a single workflow instance. They don't conflict.
+
+The `mini-pipeline.json` template is a good reference for writing real pipeline templates. See `references/real-pipeline-pattern.md` for the template + tick-by-tick trace.
+
 2. **Create a real board and project dir.** `hermes kanban boards create <slug>`, `git init` in the project dir. The engine's `_board_to_project_dir` must map the board name to the project path.
 
 3. **Start the workflow manually** via `main.py start <template> --board <board> --project-dir <path>`.
@@ -647,6 +661,7 @@ The workflow for fixing all adversarial bugs:
 - **TemplateStore cache must invalidate on file mtime.** Without mtime checking, the `--loop` mode (long-running engine process) never picks up template edits on disk — running instances AND new instances all use the originally-cached version. Fix: store `self._cache_mtime[workflow_id] = path.stat().st_mtime` on cache, and on cache hit compare `path.stat().st_mtime > cached_mtime` — if the file is newer, delete the cache entry and force reload.
 - **When you add a kwarg to `create_card`, update the FakeWorld `_fake_create_card` mock signature too.** The FakeWorld harness monkey-patches `rt.create_card = self._fake_create_card`. If the adapter gains a new parameter (e.g. `parent=None` for chain mode) and the mock's signature doesn't include it, every dispatch call crashes with `TypeError: _fake_create_card() got an unexpected keyword argument 'parent'` — and because the mock is set once in `__init__`, the error doesn't surface until the first tick. **Any change to `create_card`'s signature requires a matching change to `_fake_create_card` in `test_engine.py`** (and any other file that defines its own fake). The Pyright LSP catches the adapter-side call (`No parameter named "parent"`), but does NOT catch the mock-side mismatch because the mock is assigned at runtime via attribute injection. Search for `_fake_create_card` across all test files when you touch `create_card`.
 - **Foreach blocked-check must not call `get_card` 3× per card.** The foreach PHASE 1 completion check originally used `any(get_card(...) and get_card(...).status == "blocked" for c in foreach_cards if get_card(...))` — this calls `get_card` up to 3 times per card in the list (once in the `if` filter, once in the `and` check, once in the condition body). For N cards, that's 3N board queries per tick. Fix: track an `any_blocked` boolean during the main completion loop (where each card is already fetched once), then use `elif any_blocked:` for the blocked-report action. Single pass, N queries total.
+- **Integration test isolation: shared state DB cross-contamination.** The `test_real_trigger_fires_workflow` test asserts on active instance count from `fixture.engine.state.load_active_instances()`. Even though the fixture isolates its OWN state DB, the engine's trigger check scans ALL boards — leftover completed cards from a real pipeline livetest on the livetest board match the trigger condition (`assignee=qa, metadata.verdict=PASS`) and fire extra instances in the test's isolated DB. Symptom: "Expected 1 active instance, got 3." Fix: filter assertions to the SPECIFIC test card (`trigger_context.get("card_id") == trigger_card_id`) rather than asserting on total count. The real pipeline livetest and integration tests share the same board namespace — clean up active instances between runs, or scope assertions to specific trigger cards.
 
 ## Linked files
 
@@ -667,4 +682,5 @@ The workflow for fixing all adversarial bugs:
 - `references/dataflow-testing.md` — variable-resolution & data-flow edge cases (62 tests): the probe-before-pin methodology, the full str()-coercion table, recursive-expansion order-dependence, the empty-${} regex gap, the body-readback FakeWorld pattern, and output-mutation snapshot semantics
 - `references/dead-field-grep-technique.md` — code-review technique for catching "vapor config": fields that are parsed but never read by the runtime. Grep the execution layer, not the parse layer.
 - `references/round2-review-iterative-bug-introduction.md` — how round-1 code-review fixes introduced 3 new production bugs (input validation key mismatch, conditional-skip deadlock, FAILED-node deadlock). The pattern: fixes need their own review. Two rounds minimum.
+- `references/real-pipeline-pattern.md` — the mini-pipeline.json template + tick-by-tick trace from the real pipeline livetest (build→review→qa with explicit conditional edges). Includes cleanup recipe and what it proves/doesn't prove.
 - `MIGRATION.md` (in the engine package dir) — 5-phase migration plan for replacing the old cron: QA trigger → bug routing → dispatch → escalation → full pipeline. Documents dynamic workflow support via blocked status.

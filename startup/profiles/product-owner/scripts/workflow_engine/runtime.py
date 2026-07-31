@@ -1294,6 +1294,20 @@ class Engine:
                     # Paginate through ALL matching completions (no LIMIT 20 drop)
                     all_completions = find_recent_completions(board, since)
                     for card in all_completions:
+                        # Prevent self-triggering: if this card was created by
+                        # the SAME workflow that the trigger belongs to, skip it.
+                        # This prevents infinite loops (qa-loop's own QA card
+                        # re-triggering qa-loop) without breaking cross-workflow
+                        # composition (workflow-a's card triggering workflow-b).
+                        if card.idempotency_key:
+                            # idempotency_key format: wf:<instance_id>:<node_id>
+                            # instance_id format: wf_<timestamp>_<workflow_id>_<hash>
+                            idem_parts = card.idempotency_key.split(":")
+                            if len(idem_parts) >= 2:
+                                instance_part = idem_parts[1]
+                                # Check if this instance belongs to the trigger's workflow
+                                if f"_{wf.id}_" in instance_part:
+                                    continue
                         if self._matches_trigger(card, wf.trigger.condition):
                             trig_key = f"trig:{wf.id}:{card.id}"
 
