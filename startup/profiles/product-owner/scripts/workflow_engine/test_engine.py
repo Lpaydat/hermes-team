@@ -890,11 +890,566 @@ def test_branching_workflow():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Circular dependency — engine should not infinite-loop
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_circular_dependency():
+    """Two nodes depending on each other should not hang the engine."""
+    world = FakeWorld()
+    world.add_template({
+        "id": "circular",
+        "name": "Circular dependency",
+        "nodes": [
+            {"id": "a", "profile": "qa", "skill": "live-testing",
+             "body_template": "A", "depends_on": ["b"]},
+            {"id": "b", "profile": "qa", "skill": "live-testing",
+             "body_template": "B", "depends_on": ["a"]},
+        ],
+    })
+
+    world.start("circular")
+
+    # Tick: neither node can dispatch (both waiting on the other)
+    actions = world.tick()
+    assert not any("DISPATCHED" in a for a in actions), \
+        f"Circular deps should not dispatch, got: {actions}"
+    # Engine should not crash
+    assert count_cards(world.board_db) == 0
+
+    world.cleanup()
+    print("OK: test_circular_dependency")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Nonexistent template — start_manual should raise
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_nonexistent_template():
+    """Starting a workflow with an unknown template ID should raise ValueError."""
+    world = FakeWorld()
+    try:
+        world.start("does-not-exist")
+        raise AssertionError("Should have raised ValueError")
+    except ValueError as e:
+        assert "not found" in str(e).lower()
+    world.cleanup()
+    print("OK: test_nonexistent_template")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Empty workflow — zero nodes should complete immediately
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_empty_workflow():
+    """A workflow with zero nodes should complete immediately on first tick."""
+    world = FakeWorld()
+    world.add_template({
+        "id": "empty",
+        "name": "Empty",
+        "nodes": [],
+    })
+
+    world.start("empty")
+    actions = world.tick()
+    # No nodes to dispatch, but also no nodes to check → no crash
+    # The all_done check should not fire for empty workflows (guarded by `and wf.nodes`)
+    assert not any("DISPATCHED" in a for a in actions), \
+        f"Empty workflow should not dispatch, got: {actions}"
+
+    world.cleanup()
+    print("OK: test_empty_workflow")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Trigger dedup — same card should not trigger twice
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_trigger_dedup():
+    """The same completed card should not start two workflow instances."""
+    world = FakeWorld()
+    world.add_template({
+        "id": "dedup-test",
+        "name": "Dedup test",
+        "trigger": {
+            "source": "card_completed",
+            "condition": {"assignee": "verifier", "status": "done", "metadata.verdict": "PASS"},
+        },
+        "nodes": [
+            {"id": "qa", "profile": "qa", "skill": "live-testing",
+             "body_template": "Test"},
+        ],
+    })
+
+    # One completed verifier card
+    world.add_card("t_v1", assignee="verifier", status="done",
+                   metadata={"verdict": "PASS"}, completed_at=int(time.time()))
+
+    # Tick 1: should start one instance
+    actions1 = world.tick()
+    assert sum(1 for a in actions1 if "STARTED" in a) == 1
+
+    # Tick 2: same card, watermark should prevent re-trigger
+    actions2 = world.tick()
+    started_again = [a for a in actions2 if "STARTED" in a]
+    assert len(started_again) == 0, \
+        f"Should not re-trigger same card, got: {started_again}"
+
+    world.cleanup()
+    print("OK: test_trigger_dedup")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Multiple completions in one tick
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_multiple_completions_one_tick():
+    """Two parallel nodes completing should both advance in one tick."""
+    world = FakeWorld()
+    world.add_template({
+        "id": "multi-complete",
+        "name": "Multi complete",
+        "nodes": [
+            {"id": "root", "profile": "product-owner", "skill": "dev-planning",
+             "body_template": "Plan"},
+            {"id": "dev", "profile": "developer", "skill": "developer-loop",
+             "body_template": "Build", "depends_on": ["root"]},
+            {"id": "research", "profile": "researcher", "skill": "web-research",
+             "body_template": "Research", "depends_on": ["root"]},
+            {"id": "merge", "profile": "architect", "skill": "design-council",
+             "body_template": "Merge results", "depends_on": ["dev", "research"]},
+        ],
+    })
+
+    world.start("multi-complete")
+    world.tick()  # dispatch root
+
+    # Complete root
+    conn = sqlite3.connect(str(world.board_db))
+    root_card = conn.execute("SELECT id FROM tasks WHERE assignee='product-owner'").fetchone()[0]
+    conn.close()
+    world.complete_card(root_card, metadata={"spec": "/tmp/spec.md"})
+
+    # Tick: dispatch dev + research
+    world.tick()
+
+    # Complete BOTH dev and research
+    conn = sqlite3.connect(str(world.board_db))
+    dev_card = conn.execute("SELECT id FROM tasks WHERE assignee='developer'").fetchone()[0]
+    research_card = conn.execute("SELECT id FROM tasks WHERE assignee='researcher'").fetchone()[0]
+    conn.close()
+    world.complete_card(dev_card, metadata={"code": "main.py"})
+    world.complete_card(research_card, metadata={"report": "report.md"})
+
+    # Single tick: both should be marked done, merge should dispatch
+    actions = world.tick()
+    done_count = sum(1 for a in actions if "DONE" in a)
+    assert done_count == 2, f"Expected 2 DONEs, got {done_count}: {actions}"
+    assert any("merge" in a and "DISPATCHED" in a for a in actions), \
+        f"Expected merge DISPATCHED, got: {actions}"
+
+    world.cleanup()
+    print("OK: test_multiple_completions_one_tick")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Malformed metadata — engine should not crash
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_malformed_metadata():
+    """A card with invalid JSON metadata should not crash the engine."""
+    world = FakeWorld()
+    world.add_template({
+        "id": "malformed",
+        "name": "Malformed metadata",
+        "nodes": [
+            {"id": "step1", "profile": "developer", "skill": "developer-loop",
+             "body_template": "Build"},
+            {"id": "step2", "profile": "verifier", "skill": "adversarial-review",
+             "body_template": "Verify ${nodes.step1.output.verdict}",
+             "depends_on": ["step1"]},
+        ],
+    })
+
+    world.start("malformed")
+    world.tick()
+
+    # Complete step1 with malformed metadata
+    conn = sqlite3.connect(str(world.board_db))
+    step1_card = conn.execute("SELECT id FROM tasks WHERE assignee='developer'").fetchone()[0]
+    # Insert run with broken JSON
+    conn.execute(
+        "INSERT INTO task_runs (task_id, outcome, summary, metadata) VALUES (?, 'completed', 'done', 'NOT VALID JSON{{{')",
+        (step1_card,),
+    )
+    conn.execute("UPDATE tasks SET status='done', completed_at=? WHERE id=?", (int(time.time()), step1_card))
+    conn.commit()
+    conn.close()
+
+    # Tick: should not crash, step1 marked done with empty output
+    actions = world.tick()
+    assert any("DONE" in a and "step1" in a for a in actions), \
+        f"Expected step1 DONE despite malformed metadata, got: {actions}"
+    # step2 should still dispatch (deps met, no condition)
+    assert any("DISPATCHED" in a and "step2" in a for a in actions), \
+        f"Expected step2 DISPATCHED, got: {actions}"
+
+    world.cleanup()
+    print("OK: test_malformed_metadata")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: No metadata at all
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_no_metadata():
+    """A card completed with no metadata should still advance (empty output dict)."""
+    world = FakeWorld()
+    world.add_template({
+        "id": "no-meta",
+        "name": "No metadata",
+        "nodes": [
+            {"id": "a", "profile": "qa", "skill": "live-testing",
+             "body_template": "Test"},
+            {"id": "b", "profile": "qa", "skill": "live-testing",
+             "body_template": "Test again", "depends_on": ["a"]},
+        ],
+    })
+
+    world.start("no-meta")
+    world.tick()
+
+    # Complete with no metadata
+    conn = sqlite3.connect(str(world.board_db))
+    a_card = conn.execute("SELECT id FROM tasks WHERE assignee='qa'").fetchone()[0]
+    conn.close()
+    world.complete_card(a_card, metadata=None)
+
+    # Tick: a done, b should dispatch
+    actions = world.tick()
+    assert any("DONE" in a and "node a" in a for a in actions)
+    assert any("DISPATCHED" in a and "node b" in a for a in actions)
+
+    world.cleanup()
+    print("OK: test_no_metadata")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Output schema validation — invalid output should be flagged
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_output_schema_validation():
+    """A card with output not matching the schema should still complete (soft validation)."""
+    world = FakeWorld()
+    world.add_template({
+        "id": "schema-test",
+        "name": "Schema test",
+        "nodes": [
+            {"id": "qa", "profile": "qa", "skill": "live-testing",
+             "body_template": "Test",
+             "output": {"schema": {
+                 "type": "object",
+                 "required": ["verdict"],
+                 "properties": {
+                     "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+                 }
+             }}},
+            {"id": "done", "profile": "product-owner", "skill": "dev-dispatch",
+             "body_template": "Done", "depends_on": ["qa"]},
+        ],
+    })
+
+    world.start("schema-test")
+    world.tick()
+
+    # Complete qa with INVALID output (missing verdict)
+    conn = sqlite3.connect(str(world.board_db))
+    qa_card = conn.execute("SELECT id FROM tasks WHERE assignee='qa'").fetchone()[0]
+    conn.close()
+    world.complete_card(qa_card, metadata={"something_else": "no verdict"})
+
+    # Tick: node should still complete (engine does soft validation, doesn't block)
+    actions = world.tick()
+    assert any("DONE" in a and "qa" in a for a in actions), \
+        f"Expected qa DONE despite schema mismatch, got: {actions}"
+    # Downstream should still advance
+    assert any("DISPATCHED" in a and "done" in a for a in actions), \
+        f"Expected done DISPATCHED, got: {actions}"
+
+    world.cleanup()
+    print("OK: test_output_schema_validation")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Dead branch — condition never passes, workflow can't complete
+# ═══════════════════════════════════════════════════ DONE══════════════════
+
+def test_dead_branch():
+    """A conditional node whose condition never passes should leave the workflow stuck."""
+    world = FakeWorld()
+    world.add_template({
+        "id": "dead-branch",
+        "name": "Dead branch",
+        "nodes": [
+            {"id": "check", "profile": "qa", "skill": "live-testing",
+             "body_template": "Check"},
+            {"id": "pass_path", "profile": "product-owner", "skill": "dev-dispatch",
+             "body_template": "Ship it", "depends_on": ["check"],
+             "condition": "${nodes.check.output.verdict} == 'PASS'"},
+        ],
+    })
+
+    world.start("dead-branch")
+    world.tick()
+
+    # Complete check with FAIL
+    conn = sqlite3.connect(str(world.board_db))
+    check_card = conn.execute("SELECT id FROM tasks WHERE assignee='qa'").fetchone()[0]
+    conn.close()
+    world.complete_card(check_card, metadata={"verdict": "FAIL"})
+
+    actions = world.tick()
+    assert any("DONE" in a and "check" in a for a in actions), \
+        f"Expected check DONE, got: {actions}"
+    # pass_path should NOT dispatch (condition fails)
+    assert not any("DISPATCHED" in a and "pass_path" in a for a in actions), \
+        f"pass_path should not dispatch on FAIL, got: {actions}"
+    # Workflow should NOT complete (pass_path is pending forever)
+    assert not any("WORKFLOW COMPLETE" in a for a in actions), \
+        f"Workflow should not complete with dead branch, got: {actions}"
+
+    world.cleanup()
+    print("OK: test_dead_branch")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Long chain — 5+ sequential nodes
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_long_chain():
+    """A 5-node linear chain should complete end-to-end."""
+    world = FakeWorld()
+    nodes = []
+    for i in range(5):
+        node = {"id": f"step{i}", "profile": "qa", "skill": "live-testing",
+                "body_template": f"Step {i}"}
+        if i > 0:
+            node["depends_on"] = [f"step{i-1}"]
+        nodes.append(node)
+
+    world.add_template({"id": "long-chain", "name": "Long chain", "nodes": nodes})
+    world.start("long-chain")
+
+    for i in range(5):
+        world.tick()
+        # Find the dispatched card for this step
+        conn = sqlite3.connect(str(world.board_db))
+        card = conn.execute("SELECT id FROM tasks WHERE idempotency_key LIKE '%step{i}'".replace("{i}", str(i))).fetchone()
+        if not card:
+            # Try finding by latest non-done card
+            card = conn.execute("SELECT id FROM tasks WHERE status != 'done' ORDER BY created_at DESC LIMIT 1").fetchone()
+        assert card, f"No card found for step{i}"
+        world.complete_card(card[0], metadata={"step": i})
+        conn.close()
+
+    # Final tick: should complete
+    actions = world.tick()
+    assert any("WORKFLOW COMPLETE" in a for a in actions), \
+        f"Expected workflow complete after 5 steps, got: {actions}"
+
+    world.cleanup()
+    print("OK: test_long_chain")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Unknown card status — card in weird state
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_unknown_card_status():
+    """A card with an unrecognized status should be ignored (not done, not blocked)."""
+    world = FakeWorld()
+    world.add_template({
+        "id": "unknown-status",
+        "name": "Unknown status",
+        "nodes": [
+            {"id": "a", "profile": "qa", "skill": "live-testing",
+             "body_template": "Test"},
+        ],
+    })
+
+    world.start("unknown-status")
+    world.tick()
+
+    # Set card to weird status
+    conn = sqlite3.connect(str(world.board_db))
+    card = conn.execute("SELECT id FROM tasks WHERE assignee='qa'").fetchone()[0]
+    conn.execute("UPDATE tasks SET status='weird_status' WHERE id=?", (card,))
+    conn.commit()
+    conn.close()
+
+    # Tick: should not crash, should not mark done
+    actions = world.tick()
+    assert not any("DONE" in a for a in actions), \
+        f"Unknown status should not be DONE, got: {actions}"
+    assert not any("BLOCKED" in a for a in actions), \
+        f"Unknown status should not be BLOCKED, got: {actions}"
+    # Instance should still be active
+    instances = world.engine.state.load_active_instances()
+    assert len(instances) == 1
+
+    world.cleanup()
+    print("OK: test_unknown_card_status")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Trigger with title_prefix filter
+# ═════════════════════════════════════════ assignee════════════════════════
+
+def test_trigger_with_title_prefix():
+    """Trigger should respect title_prefix to filter cards (e.g. skip [probe] cards)."""
+    world = FakeWorld()
+    world.add_template({
+        "id": "prefix-test",
+        "name": "Prefix test",
+        "trigger": {
+            "source": "card_completed",
+            "condition": {
+                "assignee": "verifier",
+                "status": "done",
+                "title_prefix": "[verify]",
+            },
+        },
+        "nodes": [{"id": "qa", "profile": "qa", "skill": "live-testing",
+                   "body_template": "Test"}],
+    })
+
+    # Card that matches prefix
+    world.add_card("t_match", title="[verify] feature X", assignee="verifier",
+                   status="done", metadata={"verdict": "PASS"}, completed_at=int(time.time()))
+    # Card that doesn't match prefix (a probe card)
+    world.add_card("t_no_match", title="[probe] fresh-eyes", assignee="verifier",
+                   status="done", metadata={"verdict": "PASS"}, completed_at=int(time.time()))
+
+    actions = world.tick()
+    started = [a for a in actions if "STARTED" in a]
+    assert len(started) == 1, \
+        f"Expected 1 trigger (matching prefix only), got: {started}"
+
+    world.cleanup()
+    print("OK: test_trigger_with_title_prefix")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Missing upstream output — template var doesn't resolve
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_missing_upstream_output():
+    """If upstream output is missing, template var should resolve to empty string."""
+    world = FakeWorld()
+    world.add_template({
+        "id": "missing-output",
+        "name": "Missing output",
+        "nodes": [
+            {"id": "plan", "profile": "product-owner", "skill": "dev-planning",
+             "body_template": "Plan"},
+            {"id": "build", "profile": "developer", "skill": "developer-loop",
+             "body_template": "Build using spec at ${nodes.plan.output.spec_path}",
+             "depends_on": ["plan"]},
+        ],
+    })
+
+    world.start("missing-output")
+    world.tick()
+
+    # Complete plan with NO spec_path in output
+    conn = sqlite3.connect(str(world.board_db))
+    plan_card = conn.execute("SELECT id FROM tasks WHERE assignee='product-owner'").fetchone()[0]
+    conn.close()
+    world.complete_card(plan_card, metadata={"unrelated": "stuff"})
+
+    # Tick: plan done, build should dispatch (missing var → empty)
+    actions = world.tick()
+    assert any("DISPATCHED" in a and "build" in a for a in actions), \
+        f"Build should dispatch even with missing upstream output, got: {actions}"
+
+    world.cleanup()
+    print("OK: test_missing_upstream_output")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Multiple triggers on same board — different workflows react to different cards
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_multiple_triggers_same_board():
+    """Two different trigger templates should react to different cards."""
+    world = FakeWorld()
+
+    # Trigger 1: verifier PASS → qa workflow
+    world.add_template({
+        "id": "qa-trigger",
+        "name": "QA trigger",
+        "trigger": {
+            "source": "card_completed",
+            "condition": {"assignee": "verifier", "status": "done", "metadata.verdict": "PASS"},
+        },
+        "nodes": [{"id": "qa", "profile": "qa", "skill": "live-testing",
+                   "body_template": "QA re-test"}],
+    })
+
+    # Trigger 2: qa FAIL → debug workflow
+    world.add_template({
+        "id": "debug-trigger",
+        "name": "Debug trigger",
+        "trigger": {
+            "source": "card_completed",
+            "condition": {"assignee": "qa", "status": "done", "metadata.verdict": "FAIL"},
+        },
+        "nodes": [{"id": "debug", "profile": "debugger", "skill": "debug-loop",
+                   "body_template": "Fix the bug"}],
+    })
+
+    # Add both types of completed cards
+    world.add_card("t_verifier", title="[verify] feature", assignee="verifier",
+                   status="done", metadata={"verdict": "PASS"}, completed_at=int(time.time()))
+    world.add_card("t_qa", title="[qa] test", assignee="qa",
+                   status="done", metadata={"verdict": "FAIL"}, completed_at=int(time.time()))
+
+    actions = world.tick()
+    started = [a for a in actions if "STARTED" in a]
+    assert len(started) == 2, \
+        f"Expected 2 workflows started (one per trigger), got: {started}"
+    assert any("qa-trigger" in a for a in started)
+    assert any("debug-trigger" in a for a in started)
+
+    world.cleanup()
+    print("OK: test_multiple_triggers_same_board")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGE CASE: Board not found — operations on nonexistent board
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_board_not_found():
+    """Operations on a nonexistent board should not crash."""
+    from workflow_engine.kanban_adapter import get_card, find_recent_completions
+
+    # get_card on nonexistent board
+    result = get_card("nonexistent-board-xyz", "t_fake")
+    assert result is None, f"Expected None for nonexistent board, got: {result}"
+
+    # find_recent_completions on nonexistent board
+    result = find_recent_completions("nonexistent-board-xyz", 0)
+    assert result == [], f"Expected empty list for nonexistent board, got: {result}"
+
+    print("OK: test_board_not_found")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # RUN ALL TESTS
 # ═══════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     tests = [
+        # Happy paths
         test_empty_tick,
         test_manual_start_dispatches_node,
         test_node_completion_advances,
@@ -904,26 +1459,33 @@ if __name__ == "__main__":
         test_conditional_node,
         test_trigger_detection,
         test_trigger_no_match,
-        test_test_trigger_no_match := test_trigger_no_match,  # keep ref
         test_idempotency_key_on_card,
         test_parallel_dispatch,
         test_blocked_node_reported,
         test_restart_recovery,
         test_multiple_instances,
         test_branching_workflow,
+        # Edge cases & unhappy paths
+        test_circular_dependency,
+        test_nonexistent_template,
+        test_empty_workflow,
+        test_trigger_dedup,
+        test_multiple_completions_one_tick,
+        test_malformed_metadata,
+        test_no_metadata,
+        test_output_schema_validation,
+        test_dead_branch,
+        test_long_chain,
+        test_unknown_card_status,
+        test_trigger_with_title_prefix,
+        test_missing_upstream_output,
+        test_multiple_triggers_same_board,
+        test_board_not_found,
     ]
-    # Remove duplicate
-    tests = [t for t in tests if t is not test_test_trigger_no_match or tests.count(t) == 1]
-    seen = set()
-    unique_tests = []
-    for t in tests:
-        if id(t) not in seen:
-            seen.add(id(t))
-            unique_tests.append(t)
 
     passed = 0
     failed = 0
-    for test in unique_tests:
+    for test in tests:
         try:
             test()
             passed += 1
@@ -935,7 +1497,7 @@ if __name__ == "__main__":
             failed += 1
 
     print(f"\n{'='*50}")
-    print(f"Results: {passed} passed, {failed} failed, {len(unique_tests)} total")
+    print(f"Results: {passed} passed, {failed} failed, {len(tests)} total")
     if failed == 0:
         print("ALL TESTS PASSED")
     else:
