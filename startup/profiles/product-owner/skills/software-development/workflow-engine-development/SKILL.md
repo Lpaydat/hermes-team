@@ -34,7 +34,7 @@ A workflow engine is a thin scheduler (~300-500 lines) with these components:
 
 **Location:** `~/.hermes-teams/startup/scripts/workflow_engine/` — shared infrastructure, NOT inside any single profile's directory. Generic tools that serve all profiles belong at the `startup/` level alongside `bin/`, `skills/`, and `kanban/`. The user caught this: *"why put it in product-owner and even in profiles/? or in startup/? can this workflow uses by other profile or other team?"*
 
-**No framework needed.** The kanban DB holds execution state (card status = node status), beads holds plan state, and the engine's own SQLite holds variable bindings (rebuildable cache). Don't reach for langgraph or other state machine libraries — the kanban dependency graph IS the state machine.
+**Triggers:** `card_completed`, `bead_ready`, `scheduled` (cron), `manual`.
 
 ## Key design decisions
 
@@ -252,6 +252,37 @@ lose quotes — the shell interprets them. Use `printf '%s' '{"key":"value"}'` o
 write to a temp file and `cat` it. The FakeWorld `_fake_create_card` must also
 store the `body` column — a long-standing bug (body was always empty) that masked
 variable resolution failures in tests.
+
+### Schedule and wait node implementation (time-based control flow)
+
+Two node types for time-based control:
+
+**Schedule node (`type: "schedule"`):**
+- Blocks until a cron expression matches the current time
+- Full cron syntax: `* * * * *` (every min), `0 9 * * 1` (Mon 9am), `*/5 * * * *` (every 5 min), `0-30 * * * *` (mins 0-30)
+- Fires once per matching minute (dedup via `_last_fired` timestamp in node output)
+- Empty schedule string fires immediately (no blocking)
+- Once fired, marks DONE permanently (doesn't re-fire)
+- Field: `schedule: "0 3 * * *"`
+
+**Wait node (`type: "wait"`):**
+- Polls a condition string each tick until it evaluates true
+- Uses same condition format as `node.condition`: `${nodes.x.output.ready} == 'true'`
+- Stays PENDING until condition passes, then marks DONE
+- Empty condition string fires immediately
+- Field: `wait_condition: "${nodes.src.output.verdict} == 'PASS'"`
+
+**Scheduled trigger (`source: "scheduled"`):**
+- Starts a new workflow instance when a cron expression fires
+- Condition: `{"schedule": "0 9 * * 1"}`
+- Dedup via trigger_keys (`sched:{wf_id}:{minute_start}`) prevents re-firing within the same minute
+- Uses trigger_watermark table to track last fire time
+
+**Cron parser** (shared between schedule node and scheduled trigger): a simple inline `cron_match(value, expr)` function supporting `*`, comma-separated values, ranges (`-`), and step values (`*/n`, `lo-hi/step`). Uses `time.gmtime()` components. Minute-level precision is sufficient since the engine ticks every 60s.
+
+**Key implementation detail for schedule nodes:** the node output stores `_fired: true` and `_last_fired: <minute_start_epoch>` to prevent re-firing. On the first matching tick, `minute_start > last_fired` passes and the node fires. Subsequent ticks in the same minute see `minute_start <= last_fired` and skip. On the NEXT matching minute, `minute_start` is a new value and the node... wait, no — once `_fired` is set, the node returns `True` immediately (already fired). This is correct: schedule nodes fire ONCE and advance. They don't re-fire each cron cycle (use the scheduled TRIGGER for recurring starts, not the schedule NODE).
+
+**Mermaid shapes:** schedule nodes use `{label}` (decision/stadium shape), wait nodes use `[/label\]` (parallelogram).
 
 ### Explicit edges (Edge dataclass)
 
@@ -503,8 +534,9 @@ added. The suite is organized by tier:
 | `test_adversarial.py` | 10 | Real adversarial | Trigger chains, state corruption, template hot-reload, workflow storms |
 | `test_explicit_edges.py` | 5 | FakeWorld (mocked) | Explicit edge declarations: basic sequential, conditional routing, fan-out, backwards compat, edge parsing |
 | `test_command.py` | 6 | FakeWorld (mocked) | Command node: basic execution, JSON output parsing, failure handling, command→task data flow, variable substitution, stderr capture |
+| `test_schedule_wait.py` | 7 | FakeWorld (mocked) | Schedule node (cron fire/block/step), wait node (immediate/blocks/empty), scheduled trigger |
 
-**Total: 276 tests across 10 files.** All pass, 0 failures, 0 xfail.
+**Total: 283 tests across 11 files.** All pass, 0 failures, 0 xfail.
 
 **Engine location:** `~/.hermes-teams/startup/scripts/workflow_engine/` (shared, NOT profile-specific).
 
@@ -517,6 +549,8 @@ create its own file, not modify existing ones.
 
 The engine has features at different maturity levels. **Do not claim "solid" or "done" without checking this table.** A green test suite that includes xfail tests, soft validation, and unbounded-growth tests is a green checkmark on a red wall — the count masks weakpoints.
 
+The engine now has **5 node types** (`task`, `command`, `subworkflow`, `schedule`, `wait`) and **4 trigger sources** (`card_completed`, `bead_ready`, `scheduled`, `manual`). When asked about capabilities, reference this table.
+
 | Feature | Status | Tested? | Notes |
 |---------|--------|---------|-------|
 | Sequential nodes | DONE | 15+ tests | Core path, solid |
@@ -527,6 +561,9 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 | Foreach iteration | DONE | dispatch + completion tested | `_dispatch_foreach_node` creates one card per list item; PHASE 1 checks all `_foreach_cards` for completion, aggregates results. See "Foreach implementation" below. |
 | Subworkflow node | DONE | 7 tests | `type: "subworkflow"` with `workflow_ref`, `input_mapping`, `output_mapping`. Parent blocks until child completes. Supports 3-level nesting, idempotent dispatch. See "Subworkflow implementation" below. |
 | Command node | DONE | 6 tests (`test_command.py`) | `type: "command"` runs shell scripts synchronously, zero tokens. No kanban card, no agent. stdout parsed as JSON if possible. Exit 0 = DONE, non-zero = FAILED. Context rebuilt after completion for downstream nodes. See "Command node implementation" below. |
+| Schedule node | DONE | 7 tests (`test_schedule_wait.py`) | `type: "schedule"` blocks until a cron expression fires. Full cron syntax (*, specific values, ranges, step values `*/n`). Fires once per matching minute, then marks DONE. Empty schedule fires immediately. See "Schedule and wait node implementation" below. |
+| Wait node | DONE | (same suite) | `type: "wait"` polls a condition string each tick until it evaluates true. Uses same condition format as `node.condition`. Stays PENDING until condition passes, then marks DONE. Empty condition fires immediately. See "Schedule and wait node implementation" below. |
+| Scheduled trigger | DONE | (same suite) | `source: "scheduled"` starts a workflow on a cron schedule. Condition field: `{"schedule": "0 9 * * 1"}`. Dedup via trigger_keys prevents re-firing within same minute. |
 | Output validation | HARD | 2+ tests | `validate_output()` against `node.output.schema` on card completion; failure → `NodeStatus.FAILED`, downstream blocked. |
 | Concurrency safety | DONE | 6 tests, all passing | File lock (fcntl) + thread lock + WAL mode + atomic UPSERT. Tests prove locks serialize ticks and prevent double-dispatch. |
 | State cleanup | DONE | 2 tests | `StateDB.cleanup(max_age_days=7)` runs every tick; removes old trigger_keys, completed instances + node_states, stale watermarks. |
