@@ -73,6 +73,24 @@ See `references/fakeworld-testing-pattern.md` for the complete testing methodolo
 - **Simulate completions** by inserting rows with `status='done'` + metadata JSON
 - **Test the tick loop** by calling `engine.tick()` and asserting on returned actions
 
+## Unhappy-path / error-handling tests
+
+A third test class that sits between happy-path and adversarial. Each test
+verifies the engine **handles a known error condition gracefully** — no crash,
+`tick()` returns a list (doesn't raise), the condition is reported in actions,
+and no zombie instance is left behind. Unlike adversarial tests (which *find*
+bugs and may FAIL as the bug report), **unhappy-path tests should be all-green.**
+
+The reusable error surface has 10 named conditions: nonexistent board,
+card-creation failure (locked DB), missing profile, error card status
+(`gave_up`/`timed_out`), board schema mismatch, nonexistent skill,
+empty/all-unresolved body template, empty-string profile, spam tick (no
+duplicate dispatch), and out-of-order completion (fan-in deps). When asked to
+write "integration tests for error handling" or "unhappy path tests," cover
+that checklist. See `references/unhappy-path-testing.md` for the table of
+happy-vs-unhappy-vs-adversarial posture, the 10-condition checklist with exact
+assertions, and the FakeWorld conventions these tests follow.
+
 ## Adversarial testing
 
 After happy paths pass, write tests that try to BREAK the engine. The catalog has grown across five rounds (general, graph-pathology, data-corruption, state-lifecycle, concurrency) and found **20 real engine bugs** total.
@@ -109,13 +127,65 @@ Key adversarial categories:
 
 **Adversarial-test methodology:** read all engine source first, list concrete code-level weaknesses, then write one test per weakness whose docstring states the exact line/statement it targets (`WEAKNESS: ...`). Tests encode current behavior (passing) or catch the bug (failing → regression guard after fix). See `references/adversarial-test-catalog.md` and `references/data-corruption-tests.md` for worked examples.
 
+## Hybrid integration testing (real boards, simulated completions)
+
+A third testing tier between FakeWorld (fully mocked) and real integration testing.
+Creates **real kanban boards** and dispatches **real cards** via the engine's CLI
+path, but **simulates card completions via direct SQLite writes** instead of
+waiting for real agents. Runs in 1-3s per test while proving the real plumbing
+(real SQLite schema, real CLI card creation, real metadata/trigger reads).
+
+See `references/hybrid-integration-testing.md` for the complete pattern:
+- The `_simulate_completion` recipe (mimics `kanban_complete`'s two SQL ops)
+- `RealBoardFixture` — real board + temp state DB per test, cleanup via `--delete`
+- Board isolation (unique slugs, temp state DBs)
+- Gating real-agent tests behind `--real`
+
+Key gotcha: **real boards default created cards to `ready` status, not `todo`.**
+Tests should assert `status in ("todo", "ready")`.
+
+## Real integration testing (beyond FakeWorld)
+
+After the FakeWorld suite passes, prove the engine against real kanban + real dispatcher. The pattern:
+
+1. **Create a minimal 2-node workflow** (e.g., `echo-test.json` — developer writes a file, verifier reads it). The workflow should be simple enough to complete in ~2 minutes but exercise: card creation, dependency resolution, completion detection, metadata reading, instance completion.
+
+2. **Create a real board and project dir.** `hermes kanban boards create <slug>`, `git init` in the project dir. The engine's `_board_to_project_dir` must map the board name to the project path.
+
+3. **Start the workflow manually** via `main.py start <template> --board <board> --project-dir <path>`.
+
+4. **Tick to dispatch.** Run `main.py tick` — the engine creates a real kanban card. The real dispatcher claims it, spawns the real agent profile.
+
+5. **Wait for real completion.** The agent runs, does the work, completes the card with metadata. No manual intervention.
+
+6. **Tick to advance.** Run `main.py tick` again — the engine reads the completion, marks the node done, dispatches the next node.
+
+7. **Verify the full cycle.** All nodes complete, instance marked COMPLETE, no active instances remain.
+
+**This is the proof that the engine mechanics work end-to-end.** FakeWorld proves the logic; the real integration test proves the plumbing (CLI calls, SQLite schema, dispatcher handoff, gateway pickup).
+
+## Fix ALL bugs from adversarial tests, not just the easy ones
+
+When adversarial tests find bugs, the user expects ALL of them fixed — not just the easy ones with a note that the rest are "known v1 limitations." The user's exact words: *"fix every bugs instead of just some easy ones. and clean up too."* This applies to the entire engine, not just the parts that are quick to fix.
+
+The workflow for fixing all adversarial bugs:
+1. Run the full suite, collect ALL failures
+2. Categorize: real engine bugs vs test-expecting-old-behavior
+3. Fix ALL engine bugs (even concurrency — add file locks, WAL mode, atomic UPSERT)
+4. Update tests that encoded old buggy behavior to assert new hardened behavior
+5. Clean up the test file structure (remove helper functions, flat runner list)
+6. Get to 0 failures
+
 ## Pitfalls
 
+- **Real boards default created cards to `ready` status, not `todo`.** The engine's `create_card` calls `hermes kanban create`, which sets `status='ready'` for assignable cards on real boards. When writing tests against real boards, assert `status in ("todo", "ready")` — don't hardcode `"todo"`. FakeWorld (monkey-patched) boards may differ since they bypass the real CLI status assignment.
+- **`_simulate_completion` must set `started_at` if it was NULL.** The real `task_runs` table has `started_at INTEGER NOT NULL`. If you simulate a completion on a card that never went through the dispatcher (no `started_at` set), the INSERT fails. Use `UPDATE tasks SET started_at=COALESCE(started_at, ?)` before inserting the task_run. Similarly, `task_runs.outcome='completed'` is the filter that `get_card_metadata` and `find_recent_completions` query on — any other value makes the card invisible to the adapter.
 - **Check completions first.** If you dispatch before checking completions, downstream nodes wait an extra tick. This is the #1 tick-loop bug.
 - **Don't use timestamp watermarks for trigger dedup.** Cards completed within the lookback window will re-trigger on every tick. Use card ID keys.
 - **Don't use `INSERT OR REPLACE` for fake card creation in tests.** Multiple cards created in the same millisecond get the same ID. Use a counter.
 - **Handle state DB deletion.** `StateDB.load_active_instances()` crashes if tables don't exist. Add `_ensure_schema()` to every read method.
 - **Python package name must use underscores.** A directory named `workflow-engine` can't be imported as `workflow_engine`. Rename the directory, not the import.
+- **`active-projects.json` has a nested format, not a flat dict.** The real Hermes `active-projects.json` at `~/.hermes-teams/startup/active-projects.json` uses `{"active_projects": [{"name": ..., "path": ..., "board": ...}], "paused_projects": [...], "schema": {...}}` — NOT `{board: path}`. The engine's `_board_to_project_dir` must handle both formats: iterate `data["active_projects"]` and match on the `board` field, with a fallback to `{board: path}` for test simplicity. Getting this wrong means the engine can't find project dirs for trigger-started workflows.
 - **Don't append test functions after the `if __name__ == "__main__"` runner block.** The runner calls `sys.exit()` at its end, so functions defined after it are never executed → `NameError` when the runner's list references them. Insert new test defs *before* the `# RUN ALL TESTS` header and add them to the `tests = [...]` list. If a concurrent worker edits the same test file, verify with `grep -n 'if __name__\|def run_'` that helpers are defined above the runner before executing.
 - **JSON null is not a missing key.** In `from_dict`, `n.get("field", "")` returns `None` when the key exists with value `null`, not the `""` default. Coerce every optional string field with `n.get("field") or ""` so `None`, missing, and empty all map to `""`. An explicit `null` in `body_template`/`profile` otherwise crashes `resolve_template`/`re.sub` or writes a NULL assignee column.
 - **Make race windows deterministic with `threading.Barrier`, not bare threads.** Bare `threading.Thread` tests pass ~99% of the time because the scheduler rarely interleaves at the exact vulnerable seam (check-then-act, read-then-write). Place a `Barrier(2)` *at the seam* — between the existence-check and the create, or between the SELECT and the UPDATE — so both threads reach the vulnerable point simultaneously. Always set `barrier.wait(timeout=5)` and `t.join(timeout=10)` so a broken harness fails fast instead of hanging the suite.
@@ -130,6 +200,9 @@ Key adversarial categories:
 ## Linked files
 
 - `references/fakeworld-testing-pattern.md` — complete testing methodology with code
+- `references/hybrid-integration-testing.md` — real boards + simulated completions (the third testing tier: real CLI card creation, direct-SQLite completion simulation, RealBoardFixture pattern, gating real-agent tests behind --real)
+- `references/unhappy-path-testing.md` — the third test class (happy/unhappy/adversarial posture table) + the 10-condition error-handling checklist with exact assertions
+- `references/real-integration-testing.md` — the echo-test pattern for proving the engine against real kanban + real dispatcher + real agent profiles
 - `references/adversarial-test-catalog.md` — 13 adversarial test scenarios that found 2 real bugs
 - `references/engine-hardening-techniques.md` — the concrete engine fixes for the state-lifecycle + concurrency bugs (zombie `completed_at` guard, deleted-board detection, COALESCE-merge UPSERT, node_ids snapshot, card-regression phase), with before/after and which tests they flip
 - `references/graph-pathology-tests.md` — 10 graph topology/pathology tests (cycles, disconnected components, impossible conditions, star/fan-out) and the silent-deadlock core weakness
