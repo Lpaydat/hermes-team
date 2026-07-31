@@ -104,15 +104,15 @@
       "schedule_display": "* * * * *",
       "repeat": {
         "times": null,
-        "completed": 30912
+        "completed": 30934
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T21:44:57.246903+07:00",
-      "next_run_at": "2026-07-31T15:43:00+07:00",
-      "last_run_at": "2026-07-31T15:42:39.128455+07:00",
+      "next_run_at": "2026-07-31T16:05:00+07:00",
+      "last_run_at": "2026-07-31T16:04:39.298528+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -144,23 +144,24 @@
       "schedule_display": "* * * * *",
       "repeat": {
         "times": null,
-        "completed": 0
+        "completed": 22
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-31T15:42:15.115183+07:00",
-      "next_run_at": "2026-07-31T15:43:00+07:00",
-      "last_run_at": null,
-      "last_status": null,
-      "last_error": null,
+      "next_run_at": "2026-07-31T16:05:00+07:00",
+      "last_run_at": "2026-07-31T16:04:36.040889+07:00",
+      "last_status": "error",
+      "last_error": "Script not found: /home/lpaydat/.hermes-teams/startup/profiles/product-owner/scripts/startup/profiles/product-owner/scripts/workflow_engine/main.py",
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
       "enabled_toolsets": null,
-      "workdir": null
+      "workdir": null,
+      "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-31T15:42:39.128783+07:00"
+  "updated_at": "2026-07-31T16:04:39.298899+07:00"
 }

@@ -206,6 +206,30 @@ instance completion check in PHASE 1 runs before the child's own completion
 check). This means a subworkflow cycle takes at minimum 3 ticks: dispatch child
 → child completes → parent detects completion. Tests must account for this.
 
+### Explicit edges (Edge dataclass)
+
+The engine supports BOTH implicit edges (via `Node.depends_on[]` + `Node.condition`) and explicit edges (via a top-level `"edges"` array in the JSON template). Explicit edges take precedence when present.
+
+**JSON template with explicit edges:**
+```json
+{
+  "edges": [
+    {"from": "check", "to": "ship", "condition": "${nodes.check.output.verdict} == 'PASS'"},
+    {"from": "check", "to": "fix", "condition": "${nodes.check.output.verdict} == 'FAIL'"}
+  ]
+}
+```
+
+**Runtime behavior (PHASE 2):**
+- When `wf.edges` is non-empty, the runtime resolves dependencies by finding all edges pointing TO each node
+- Skip propagation: if a dependency is SKIPPED or FAILED, the downstream node is also marked SKIPPED
+- Conditional routing: for nodes with multiple incoming edges, ANY edge whose condition passes activates the node. If no edge condition passes, the node is SKIPPED
+- `to_mermaid` renders explicit edges when present, implicit depends_on edges when not
+
+**Backwards compatibility:** templates without an `"edges"` key use the original implicit `depends_on` + `condition` path. No changes needed to existing templates.
+
+See `test_explicit_edges.py` (5 tests) for basic sequential, conditional routing, fan-out, backwards compat, and edge parsing verification.
+
 ## Trigger dedup: card ID keys, not timestamps
 
 Use a `trigger_keys` table that records `trig:<workflow_id>:<card_id>` for every card that triggered a workflow. Timestamp-based watermarks are unreliable — the same card can re-trigger if the lookback window includes it. The card ID key is permanent and unambiguous.
@@ -387,7 +411,7 @@ Key adversarial categories:
 **Adversarial-test methodology:** read all engine source first, list concrete code-level weaknesses, then write one test per weakness whose docstring states the exact line/statement it targets (`WEAKNESS: ...`). Tests encode current behavior (passing) or catch the bug (failing → regression guard after fix). See `references/adversarial-test-catalog.md` and `references/data-corruption-tests.md` for worked examples.
 ## Test suite shape: eight files, eight tiers
 
-As of 2026-07-31, the engine has **265+ tests across 8 files**, with more being
+As of 2026-07-31, the engine has **270+ tests across 9 files**, with more being
 added. The suite is organized by tier:
 
 | File | Tests | Tier | What it proves |
@@ -400,6 +424,7 @@ added. The suite is organized by tier:
 | `test_integration.py` | 16 | Hybrid (real boards, simulated completions) | Real SQLite schema, real CLI card creation, real metadata/trigger reads |
 | `test_unhappy.py` | 10 | Real unhappy paths | Nonexistent boards, locked DBs, error statuses, schema mismatch |
 | `test_adversarial.py` | 10 | Real adversarial | Trigger chains, state corruption, template hot-reload, workflow storms |
+| `test_explicit_edges.py` | 5 | FakeWorld (mocked) | Explicit edge declarations: basic sequential, conditional routing, fan-out, backwards compat, edge parsing |
 
 **User expects the test suite to GROW with each session.** When the user says
 "more tests" or "try to break it," dispatch subagents (max 3 per batch) to
@@ -414,7 +439,7 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 |---------|--------|---------|-------|
 | Sequential nodes | DONE | 15+ tests | Core path, solid |
 | Conditional nodes | DONE | 15+ tests | Simple operators: `==`, `!=`, `exists`, `is empty`. Condition-false nodes marked SKIPPED (terminal state), not left PENDING. **Note: these are node-level conditions, NOT edge-level conditions** — see "Edges model" below. |
-| Edges model | **N/A (implied)** | via depends_on tests | No `edges` concept exists in the data model. Edges are implied via `Node.depends_on[]` + a single per-node `condition` string. `to_mermaid` renders `dep -->|condition| node`, which conflates a node's own condition with the edge that leads to it. **If a spec literally says "nodes and edges with conditional edges," this is a model mismatch** — the engine has nodes-with-conditions, not edges-with-conditions. A spec-axis review caught this (2026-07-31). |
+| Edges model | DONE | 5 tests (`test_explicit_edges.py`) | Explicit `Edge` dataclass (`from_node`, `to_node`, `condition`). Declared via `"edges": [{"from": "a", "to": "b", "condition": "..."}]` in JSON templates. Runtime uses explicit edges when present, falls back to implicit `depends_on` + `condition` when not (backwards compatible). Conditional routing: multi-edge where any condition-passing edge activates. Skip propagation: if a dep is SKIPPED/FAILED, downstream skips too. `to_mermaid` renders explicit edges when present. |
 | Fan-out (parallel) | IMPLICIT | 3 tests | Via shared `depends_on` — no explicit fan-out node type |
 | Fan-in (wait-all) | IMPLICIT | 2 tests | Via multiple `depends_on` — no explicit fan-in node type |
 | Foreach iteration | DONE | dispatch + completion tested | `_dispatch_foreach_node` creates one card per list item; PHASE 1 checks all `_foreach_cards` for completion, aggregates results. See "Foreach implementation" below. |
@@ -426,9 +451,9 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 | Input validation | DONE | via dispatch tests | `node.input.schema.required[]` checked before dispatch; missing inputs → `NodeStatus.FAILED` with `INPUT VALIDATION FAILED` action. **Must validate against `input.sources` mapping** (which maps context keys to input variables), NOT arbitrary prefix matching — see pitfall below. Implemented in PHASE 2 before the dispatch branch. |
 | Beads integration | PARTIAL | — | `bead_ready` trigger source implemented: runs `bd ready --json`, matches by `type`/`label`, starts instances with `trigger.bead_id` in context. Dedup via `trigger_keys` table. No bidirectional bead-write-back yet. |
 | Card creation modes | DONE | — | `template` (default, single card), `delegate` (meta-card assigned to profile, profile creates children), `chain` (parent card + N child cards with `--parent` links). `create_card` gained `parent` param. |
-| Dynamic coexistence | STATIC ONLY | — | No `kanban_chains` or `loop_engine` integration. Engine only executes JSON templates. Dynamic plugins work independently (the engine doesn't see their cards). |
+| Dynamic coexistence | DOCUMENTED | — | No `kanban_chains` or `loop_engine` integration. Dynamic plugins work independently (the engine doesn't see their cards). The engine supports dynamic workflows via `blocked` status: profiles create children via `kanban_chains`/`loop_engine`, engine watches parent card only. Documented in `MIGRATION.md`. |
 | Card creation modes | DONE | — | `template` (default, single card), `delegate` (meta-card assigned to profile, profile creates children), `chain` (parent card + N child cards with `--parent` links). `create_card` gained `parent` param. |
-| Incremental migration | NOT STARTED | — | Old 696-line cron untouched and still active. No migration phases, no cron entry for new engine. Engine coexists in separate dir only. |
+| Incremental migration | WIRED | — | New engine cron job (`New Workflow Engine — tick`) runs alongside old cron every 1m. 5-phase migration plan in `MIGRATION.md` (QA trigger → bug routing → dispatch → escalation → full pipeline). Each phase disables one old cron function and lets the new engine's template handle it. Phase 1 (QA trigger) not yet livetested. |
 
 When the user asks "is the engine solid?", answer with this table, not "265 tests all green." The test count is necessary but not sufficient. The user explicitly caught this: *"hmm, #2,3,5,6 meant test not all green isn't it? or it just green with only tests that ignore the weakpoints, right? and does this graph engine support fan-out/in yet? and conditional edges too?"*
 
@@ -621,6 +646,7 @@ The workflow for fixing all adversarial bugs:
 - **`_ensure_schema` must be on ALL StateDB methods, not just reads.** The schema-creation guard was initially added to read methods (`load_active_instances`, `get_watermark`) but not write methods (`create_instance`, `update_node_state`, `complete_instance`, `set_watermark`). If the state DB file is deleted mid-workflow and a write method runs first, it crashes because the table doesn't exist. Apply `_ensure_schema()` at the top of every public StateDB method, not just reads.
 - **TemplateStore cache must invalidate on file mtime.** Without mtime checking, the `--loop` mode (long-running engine process) never picks up template edits on disk — running instances AND new instances all use the originally-cached version. Fix: store `self._cache_mtime[workflow_id] = path.stat().st_mtime` on cache, and on cache hit compare `path.stat().st_mtime > cached_mtime` — if the file is newer, delete the cache entry and force reload.
 - **When you add a kwarg to `create_card`, update the FakeWorld `_fake_create_card` mock signature too.** The FakeWorld harness monkey-patches `rt.create_card = self._fake_create_card`. If the adapter gains a new parameter (e.g. `parent=None` for chain mode) and the mock's signature doesn't include it, every dispatch call crashes with `TypeError: _fake_create_card() got an unexpected keyword argument 'parent'` — and because the mock is set once in `__init__`, the error doesn't surface until the first tick. **Any change to `create_card`'s signature requires a matching change to `_fake_create_card` in `test_engine.py`** (and any other file that defines its own fake). The Pyright LSP catches the adapter-side call (`No parameter named "parent"`), but does NOT catch the mock-side mismatch because the mock is assigned at runtime via attribute injection. Search for `_fake_create_card` across all test files when you touch `create_card`.
+- **Foreach blocked-check must not call `get_card` 3× per card.** The foreach PHASE 1 completion check originally used `any(get_card(...) and get_card(...).status == "blocked" for c in foreach_cards if get_card(...))` — this calls `get_card` up to 3 times per card in the list (once in the `if` filter, once in the `and` check, once in the condition body). For N cards, that's 3N board queries per tick. Fix: track an `any_blocked` boolean during the main completion loop (where each card is already fetched once), then use `elif any_blocked:` for the blocked-report action. Single pass, N queries total.
 
 ## Linked files
 
@@ -641,3 +667,4 @@ The workflow for fixing all adversarial bugs:
 - `references/dataflow-testing.md` — variable-resolution & data-flow edge cases (62 tests): the probe-before-pin methodology, the full str()-coercion table, recursive-expansion order-dependence, the empty-${} regex gap, the body-readback FakeWorld pattern, and output-mutation snapshot semantics
 - `references/dead-field-grep-technique.md` — code-review technique for catching "vapor config": fields that are parsed but never read by the runtime. Grep the execution layer, not the parse layer.
 - `references/round2-review-iterative-bug-introduction.md` — how round-1 code-review fixes introduced 3 new production bugs (input validation key mismatch, conditional-skip deadlock, FAILED-node deadlock). The pattern: fixes need their own review. Two rounds minimum.
+- `MIGRATION.md` (in the engine package dir) — 5-phase migration plan for replacing the old cron: QA trigger → bug routing → dispatch → escalation → full pipeline. Documents dynamic workflow support via blocked status.
