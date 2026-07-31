@@ -237,19 +237,18 @@ def test_duplicate_ids_shadow_not_accumulate():
 # 6. depends_on as a string instead of a list
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_depends_on_as_string_silently_stored():
-    """from_dict stores depends_on verbatim (n.get('depends_on', [])). A string
-    is stored as-is — no validation that it's a list. This is a latent bug:
-    downstream 'for dep in node.depends_on' would iterate the string's chars.
-    Documented here so a future validator can tighten it."""
-    wf = Workflow.from_dict({
-        "id": "x", "name": "y",
-        "nodes": [{"id": "a", "profile": "qa",
-                   "body_template": "x", "depends_on": "nonexistent"}],
-    })
-    assert wf.nodes[0].depends_on == "nonexistent"
-    assert not isinstance(wf.nodes[0].depends_on, list), \
-        "depends_on is stored verbatim; a string is NOT coerced to a list"
+def test_depends_on_as_string_rejected():
+    """from_dict now validates that depends_on is a list. A string raises TypeError.
+    Previously this was silently stored — now correctly rejected at parse time."""
+    try:
+        Workflow.from_dict({
+            "id": "x", "name": "y",
+            "nodes": [{"id": "a", "profile": "qa",
+                       "body_template": "x", "depends_on": "nonexistent"}],
+        })
+        raise AssertionError("Should have raised TypeError for string depends_on")
+    except TypeError:
+        pass  # Correctly rejected
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -437,14 +436,16 @@ def test_invalid_json_schema_stored_verbatim():
 
 
 def test_output_not_a_dict():
-    """output.schema is fetched via .get('schema', {}) — if 'output' itself is a
-    non-dict (e.g. a string), .get raises AttributeError."""
-    with pytest.raises(AttributeError):
-        Workflow.from_dict({
-            "id": "x", "name": "y",
-            "nodes": [{"id": "a", "profile": "qa",
-                       "output": "not-a-dict"}],
-        })
+    """output field that's a non-dict (e.g. a string) is now safely skipped.
+    from_dict uses isinstance check, so output is set to None (no schema).
+    Previously this raised AttributeError — now handled gracefully."""
+    wf = Workflow.from_dict({
+        "id": "x", "name": "y",
+        "nodes": [{"id": "a", "profile": "qa",
+                   "output": "not-a-dict"}],
+    })
+    # output is None because non-dict output is silently skipped
+    assert wf.nodes[0].output is None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
