@@ -32,6 +32,8 @@ A workflow engine is a thin scheduler (~300-500 lines) with these components:
 4. **Runtime** (`runtime.py`) — Engine tick loop: checks triggers, dispatches nodes, reads completions, resolves variables
 5. **Main** (`main.py`) — CLI entry point (tick, loop, list, render, start, templates)
 
+**Location:** `~/.hermes-teams/startup/scripts/workflow_engine/` — shared infrastructure, NOT inside any single profile's directory. Generic tools that serve all profiles belong at the `startup/` level alongside `bin/`, `skills/`, and `kanban/`. The user caught this: *"why put it in product-owner and even in profiles/? or in startup/? can this workflow uses by other profile or other team?"*
+
 **No framework needed.** The kanban DB holds execution state (card status = node status), beads holds plan state, and the engine's own SQLite holds variable bindings (rebuildable cache). Don't reach for langgraph or other state machine libraries — the kanban dependency graph IS the state machine.
 
 ## Key design decisions
@@ -456,7 +458,9 @@ added. The suite is organized by tier:
 | `test_adversarial.py` | 10 | Real adversarial | Trigger chains, state corruption, template hot-reload, workflow storms |
 | `test_explicit_edges.py` | 5 | FakeWorld (mocked) | Explicit edge declarations: basic sequential, conditional routing, fan-out, backwards compat, edge parsing |
 
-**Total: 270 tests across 9 files.**
+**Total: 270 tests across 9 files.** All pass, 0 failures, 0 xfail.
+
+**Engine location:** `~/.hermes-teams/startup/scripts/workflow_engine/` (shared, NOT profile-specific).
 
 **User expects the test suite to GROW with each session.** When the user says
 "more tests" or "try to break it," dispatch subagents (max 3 per batch) to
@@ -485,7 +489,7 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 | Card creation modes | DONE | — | `template` (default, single card), `delegate` (meta-card assigned to profile, profile creates children), `chain` (parent card + N child cards with `--parent` links). `create_card` gained `parent` param. |
 | Dynamic coexistence | DOCUMENTED | — | No `kanban_chains` or `loop_engine` integration. Dynamic plugins work independently (the engine doesn't see their cards). The engine supports dynamic workflows via `blocked` status: profiles create children via `kanban_chains`/`loop_engine`, engine watches parent card only. Documented in `MIGRATION.md`. |
 | Card creation modes | DONE | — | `template` (default, single card), `delegate` (meta-card assigned to profile, profile creates children), `chain` (parent card + N child cards with `--parent` links). `create_card` gained `parent` param. |
-| Incremental migration | Phase 1 DONE | — | New engine cron job (`New Workflow Engine — tick`) runs alongside old cron every 1m. 5-phase migration plan in `MIGRATION.md` (QA trigger → bug routing → dispatch → escalation → full pipeline). **Phase 1 EXECUTED (2026-07-31):** old cron's `phase_qa_trigger` commented out in `workflow-engine.py`, new engine's `qa-loop.json` trigger now handles QA card creation exclusively. Old cron still handles: bead-sync, dispatch, scanner. Merged to main, pushed to origin. Rollback: uncomment lines in `workflow-engine.py`. |
+| Incremental migration | Phase 1 DONE | — | New engine cron job (`New Workflow Engine — tick`) runs alongside old cron every 1m. 5-phase migration plan in `MIGRATION.md` (QA trigger → bug routing → dispatch → escalation → full pipeline). **Phase 1 EXECUTED (2026-07-31):** old cron's `phase_qa_trigger` commented out in `workflow-engine.py`, new engine's `qa-loop.json` trigger now handles QA card creation exclusively. Old cron still handles: bead-sync, dispatch, scanner. Merged to main, pushed to origin. Engine relocated to `startup/scripts/workflow_engine/` (shared). Rollback: uncomment lines in `workflow-engine.py`. |
 
 When the user asks "is the engine solid?", answer with this table, not "265 tests all green." The test count is necessary but not sufficient. The user explicitly caught this: *"hmm, #2,3,5,6 meant test not all green isn't it? or it just green with only tests that ignore the weakpoints, right? and does this graph engine support fan-out/in yet? and conditional edges too?"*
 
@@ -697,8 +701,20 @@ The workflow for fixing all adversarial bugs:
 5. Clean up the test file structure (remove helper functions, flat runner list)
 6. Get to 0 failures
 
+## Prove everything, not just what's easy
+
+The user's methodology when told about unproven gaps: *"why not prove and test all of that?"* When you list unproven scenarios, the user expects you to ACTUALLY TEST them — not document them as "known limitations." This includes:
+
+- **Real pipeline livetests** with actual agents, not just mocked boards
+- **Crash/reclaim scenarios** — simulate agent crash, dispatcher reclaim, verify idempotency holds through the full cycle
+- **Conditional edge routing** — run real workflows with diamond topologies (PASS/FAIL branches)
+- **Cross-workflow trigger interactions** — verify that triggers + explicit edges don't double-fire
+
+When a livetest reveals a bug (like the double-trigger bug or the OR-semantics deadlock), fix it immediately, then re-run the livetest to prove the fix works. Don't stop at "found the bug" — prove the fix.
+
 ## Pitfalls
 
+- **Generic infrastructure does NOT belong inside a specific profile's directory.** If a tool, script, or engine serves all profiles (not just the one that happened to build it), it belongs at `~/.hermes-teams/startup/scripts/` (or a similar shared level), NOT `startup/profiles/<builder>/scripts/`. The user caught this: *"why put it in product-owner and even in profiles/? can other workflow use it?"* When you build something generic, place it generically from the start — moving it later requires updating all path references (templates dir, state DB path, cron job script path, test fixtures) and risks breakage if any reference is missed.
 - **Real boards default created cards to `ready` status, not `todo`.** The engine's `create_card` calls `hermes kanban create`, which sets `status='ready'` for assignable cards on real boards. When writing tests against real boards, assert `status in ("todo", "ready")` — don't hardcode `"todo"`. FakeWorld (monkey-patched) boards may differ since they bypass the real CLI status assignment.
 - **`_simulate_completion` must set `started_at` if it was NULL.** The real `task_runs` table has `started_at INTEGER NOT NULL`. If you simulate a completion on a card that never went through the dispatcher (no `started_at` set), the INSERT fails. Use `UPDATE tasks SET started_at=COALESCE(started_at, ?)` before inserting the task_run. Similarly, `task_runs.outcome='completed'` is the filter that `get_card_metadata` and `find_recent_completions` query on — any other value makes the card invisible to the adapter.
 - **Check completions first.** If you dispatch before checking completions, downstream nodes wait an extra tick. This is the #1 tick-loop bug.

@@ -35,6 +35,16 @@ Echo every durable claim in the charter against the indexed skill. The highest-v
 
 For every skill named in the specialty's "Skill index" section, confirm it is **not** in that profile's `skills.disabled`. A charter that indexes a disabled skill is a broken pointer: `skill_view` refuses disabled skills (`success: false`), so the agent can never load what the charter tells it to reach for. Cross-check each index name against the `disabled` list.
 
+### 3a. Phantom / mis-attributed skill references (externally named)
+
+The requestor or task brief will often *name skills by assumption* — "read the dev-dispatch, code-review skills." Those names may not exist on the target profile at all. Before assuming the skill set, verify every externally-named skill actually lives **on THIS profile** (`skills_list` + the profile's `skills/` tree), not just somewhere in the team. Three distinct failure modes, all worth flagging explicitly in the output:
+
+- **Phantom** — the named skill exists nowhere on the target profile (it was invented, renamed, or never installed). Don't silently substitute; state that it doesn't exist.
+- **Mis-attributed** — the named skill exists but on a *different* profile (e.g. `dev-dispatch` is a product-owner skill, not tech-lead). Cross-check with `skills_list` scoped to the target profile, and name the profile it actually belongs to if you can determine it.
+- **Deprecated-not-removed** — the named skill exists on the target profile but its own body (or a sibling reference doc) marks it deprecated for the profile's current workflow (e.g. tech-lead's `requesting-code-review`/`receiving-code-review` are explicitly superseded by the `verifier` profile in the kanban-native loop). A skill present-but-deprecated is a live pointer to dead guidance — flag it, don't treat it as a working asset.
+
+This check is distinct from the disabled-list check above: a skill can be absent entirely (phantom), belong elsewhere (mis-attributed), or be present yet deprecated — none of which the `skills.disabled` diff catches. Run it whenever the requestor names specific skills; it prevents producing a diagnosis that silently treats a phantom as real.
+
 ### 4. Enforcer-pin soundness (the dead-pin check) — load-bearing
 
 **A skill listed in BOTH `skills.disabled` AND `skill_enforcer.mandatory` (same config.yaml) is a silent dead pin — it enforces nothing.** This is the single most damaging config bug because it looks correct at a glance (the pin IS there) and produces no error (the load just fails softly).
