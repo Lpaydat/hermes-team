@@ -50,6 +50,24 @@ class Node:
 
 
 @dataclass
+class Edge:
+    """An explicit edge between two nodes with an optional condition.
+
+    Edges can be declared explicitly in the JSON template:
+      "edges": [
+        {"from": "check", "to": "ship", "condition": "${nodes.check.output.verdict} == 'PASS'"},
+        {"from": "check", "to": "fix", "condition": "${nodes.check.output.verdict} == 'FAIL'" }
+      ]
+
+    Or implicitly via Node.depends_on + Node.condition (backwards compatible).
+    Explicit edges take precedence when present.
+    """
+    from_node: str
+    to_node: str
+    condition: str | None = None  # if set, edge only active when this evaluates true
+
+
+@dataclass
 class Workflow:
     """A declarative workflow definition."""
     id: str
@@ -57,6 +75,7 @@ class Workflow:
     description: str = ""
     trigger: Trigger | None = None
     nodes: list[Node] = field(default_factory=list)
+    edges: list[Edge] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict) -> Workflow:
@@ -109,12 +128,25 @@ class Workflow:
                 output_mapping=n.get("output_mapping", {}),
             ))
 
+        # Parse explicit edges if present
+        edges = []
+        raw_edges = data.get("edges", [])
+        if isinstance(raw_edges, list):
+            for e in raw_edges:
+                if isinstance(e, dict) and "from" in e and "to" in e:
+                    edges.append(Edge(
+                        from_node=e["from"],
+                        to_node=e["to"],
+                        condition=e.get("condition"),
+                    ))
+
         return cls(
             id=data["id"],
             name=data["name"],
             description=data.get("description", ""),
             trigger=trigger,
             nodes=nodes,
+            edges=edges,
         )
 
     @classmethod
@@ -158,10 +190,17 @@ class Workflow:
             else:
                 lines.append(f"    {node.id}[{label}]")
         lines.append("")
-        for node in self.nodes:
-            for dep in node.depends_on:
-                edge_label = f"|{node.condition}|" if node.condition else ""
-                lines.append(f"    {dep} -->{edge_label} {node.id}")
+
+        # Render edges: explicit edges take precedence, else implicit depends_on
+        if self.edges:
+            for edge in self.edges:
+                edge_label = f"|{edge.condition}|" if edge.condition else ""
+                lines.append(f"    {edge.from_node} -->{edge_label} {edge.to_node}")
+        else:
+            for node in self.nodes:
+                for dep in node.depends_on:
+                    edge_label = f"|{node.condition}|" if node.condition else ""
+                    lines.append(f"    {dep} -->{edge_label} {node.id}")
         return "\n".join(lines)
 
 

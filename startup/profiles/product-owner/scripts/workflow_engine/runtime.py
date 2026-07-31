@@ -589,6 +589,7 @@ class Engine:
             foreach_cards = ns.output.get("_foreach_cards") if ns.output else None
             if foreach_cards is not None:
                 all_done = True
+                any_blocked = False
                 results = []
                 for fcid in foreach_cards:
                     fcard = get_card(inst.board, fcid)
@@ -601,6 +602,7 @@ class Engine:
                         results.append(fmeta.get("metadata", {}))
                     elif fcard.status == "blocked":
                         all_done = False
+                        any_blocked = True
                     else:
                         all_done = False
 
@@ -612,7 +614,7 @@ class Engine:
                     ns.status = NodeStatus.DONE
                     ns.output = aggregated
                     actions.append(f"DONE foreach node {node.id} ({len(foreach_cards)} cards) on {inst.board}")
-                elif any(get_card(inst.board, c) and get_card(inst.board, c).status == "blocked" for c in foreach_cards if get_card(inst.board, c)):
+                elif any_blocked:
                     actions.append(f"BLOCKED foreach node {node.id} — one or more cards blocked")
                 continue
 
@@ -690,32 +692,79 @@ class Engine:
 
         # PHASE 2: Check pending nodes for dispatch
         ctx = inst.context()
+
+        # If the workflow declares explicit edges, use them for dependency
+        # resolution + conditions. Otherwise fall back to implicit depends_on.
+        has_explicit_edges = bool(wf.edges)
+
         for node in wf.nodes:
             ns = inst.node_states.get(node.id)
             if not ns or ns.status != NodeStatus.PENDING:
                 continue
 
-            deps_done = all(
-                (dep_ns.status == NodeStatus.DONE)
-                for dep in node.depends_on
-                if (dep_ns := inst.node_states.get(dep)) is not None  # only check deps that exist in the instance
-            )
-            # If any dep is not in inst.node_states, it might be a valid template dep
-            # not yet tracked — treat as not-done
-            all_deps_tracked = all(dep in inst.node_states for dep in node.depends_on)
-            if not deps_done or not all_deps_tracked:
-                continue
+            if has_explicit_edges:
+                # Find all edges pointing TO this node
+                incoming = [e for e in wf.edges if e.to_node == node.id]
+                deps = [e.from_node for e in incoming]
+                deps_done = True
+                any_dep_skipped = False
+                for dep in deps:
+                    dep_ns = inst.node_states.get(dep)
+                    if dep_ns is None:
+                        deps_done = False
+                        break
+                    if dep_ns.status == NodeStatus.DONE:
+                        continue
+                    elif dep_ns.status in (NodeStatus.SKIPPED, NodeStatus.FAILED):
+                        any_dep_skipped = True
+                    else:
+                        deps_done = False
+                        break
 
-            if node.condition and not evaluate_condition(node.condition, ctx):
-                # Mark as SKIPPED so the all_done check can complete the workflow
-                self.state.update_node_state(
-                    inst.instance_id, node.id, NodeStatus.SKIPPED, None, {},
-                )
-                ns = inst.node_states.get(node.id)
-                if ns:
+                if not deps_done:
+                    continue
+
+                if any_dep_skipped:
+                    # A dependency was skipped or failed — skip this node too
+                    self.state.update_node_state(
+                        inst.instance_id, node.id, NodeStatus.SKIPPED, None, {},
+                    )
                     ns.status = NodeStatus.SKIPPED
-                actions.append(f"SKIPPED node {node.id} on {inst.board} (condition false)")
-                continue
+                    actions.append(f"SKIPPED node {node.id} on {inst.board} (dependency skipped/failed)")
+                    continue
+
+                # Check edge conditions (for multi-edge: any edge whose condition passes activates)
+                active_conditions = [e for e in incoming if e.condition]
+                if active_conditions:
+                    if not any(evaluate_condition(e.condition, ctx) for e in active_conditions if e.condition):
+                        self.state.update_node_state(
+                            inst.instance_id, node.id, NodeStatus.SKIPPED, None, {},
+                        )
+                        ns.status = NodeStatus.SKIPPED
+                        actions.append(f"SKIPPED node {node.id} on {inst.board} (no edge condition passed)")
+                        continue
+            else:
+                # Implicit: use node.depends_on + node.condition
+                deps = node.depends_on
+                deps_done = all(
+                    (dep_ns.status == NodeStatus.DONE)
+                    for dep in deps
+                    if (dep_ns := inst.node_states.get(dep)) is not None
+                )
+                all_deps_tracked = all(dep in inst.node_states for dep in deps)
+                if not deps_done or not all_deps_tracked:
+                    continue
+
+                if node.condition and not evaluate_condition(node.condition, ctx):
+                    # Mark as SKIPPED so the all_done check can complete the workflow
+                    self.state.update_node_state(
+                        inst.instance_id, node.id, NodeStatus.SKIPPED, None, {},
+                    )
+                    ns = inst.node_states.get(node.id)
+                    if ns:
+                        ns.status = NodeStatus.SKIPPED
+                    actions.append(f"SKIPPED node {node.id} on {inst.board} (condition false)")
+                    continue
 
             # INPUT SCHEMA VALIDATION: if the node declares an input schema,
             # verify all required inputs can be resolved from context.

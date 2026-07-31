@@ -83,10 +83,37 @@ if node.output and node.output.schema:
 ```
 
 The downstream-blocking is automatic: PHASE 2's `deps_done` check only passes
-when every dep is `NodeStatus.DONE`, and a `FAILED` dep is never DONE. The
-`all_done` instance-completion check likewise fails on a FAILED node, so the
-instance never completes with a broken node. No special FAILED handling needed
-in the dispatch/completion paths — the DONE-gating already covers it.
+when every dep is `NodeStatus.DONE`, and a `FAILED` dep is never DONE.
+
+### Terminal states and the SKIPPED state (critical for workflow completion)
+
+NodeStatus has **three terminal states**: `DONE`, `FAILED`, `SKIPPED`. The
+`all_done` instance-completion check must accept ALL THREE as terminal —
+checking only `DONE` causes two production deadlocks:
+
+1. **Conditional-skip deadlock:** a node whose `condition` evaluates false is
+   `continue`d in PHASE 2, staying `PENDING` forever. The `all_done` check
+   never passes because PENDING != DONE. Fix: mark condition-failed nodes as
+   `SKIPPED` (a terminal state) instead of leaving them PENDING.
+
+2. **FAILED-node deadlock:** a node that fails output validation gets `FAILED`,
+   but `all_done` checked `== DONE` only. The instance hangs forever. Fix:
+   `all_done` must check `ns.status in {DONE, FAILED, SKIPPED}`.
+
+```python
+terminal_states = {NodeStatus.DONE, NodeStatus.FAILED, NodeStatus.SKIPPED}
+all_done = all(
+    ns is not None and ns.status in terminal_states
+    for node in wf.nodes
+    for ns in [inst.node_states.get(node.id)]
+)
+```
+
+When you change `all_done` to accept terminal states, **update tests that
+expected the old deadlock behavior.** `test_dead_branch` and
+`test_adv_graph_all_conditions_impossible` both asserted the workflow would NOT
+complete with impossible conditions — now they must assert it DOES complete
+(with SKIPPED nodes), because that's the correct behavior.
 
 **When you change soft→hard validation, update tests that expected the old soft
 behavior.** The signature test is `test_output_schema_validation` (in
@@ -386,7 +413,7 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 | Feature | Status | Tested? | Notes |
 |---------|--------|---------|-------|
 | Sequential nodes | DONE | 15+ tests | Core path, solid |
-| Conditional nodes | DONE | 15+ tests | Simple operators: `==`, `!=`, `exists`, `is empty`. **Note: these are node-level conditions, NOT edge-level conditions** — see "Edges model" below. |
+| Conditional nodes | DONE | 15+ tests | Simple operators: `==`, `!=`, `exists`, `is empty`. Condition-false nodes marked SKIPPED (terminal state), not left PENDING. **Note: these are node-level conditions, NOT edge-level conditions** — see "Edges model" below. |
 | Edges model | **N/A (implied)** | via depends_on tests | No `edges` concept exists in the data model. Edges are implied via `Node.depends_on[]` + a single per-node `condition` string. `to_mermaid` renders `dep -->|condition| node`, which conflates a node's own condition with the edge that leads to it. **If a spec literally says "nodes and edges with conditional edges," this is a model mismatch** — the engine has nodes-with-conditions, not edges-with-conditions. A spec-axis review caught this (2026-07-31). |
 | Fan-out (parallel) | IMPLICIT | 3 tests | Via shared `depends_on` — no explicit fan-out node type |
 | Fan-in (wait-all) | IMPLICIT | 2 tests | Via multiple `depends_on` — no explicit fan-in node type |
@@ -396,7 +423,7 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 | Concurrency safety | DONE | 6 tests, all passing | File lock (fcntl) + thread lock + WAL mode + atomic UPSERT. Tests prove locks serialize ticks and prevent double-dispatch. |
 | State cleanup | DONE | 2 tests | `StateDB.cleanup(max_age_days=7)` runs every tick; removes old trigger_keys, completed instances + node_states, stale watermarks. |
 | Bad input handling | CLOSED (was 4 gaps) | 62 tests, all regular | All four `xfail(strict=True)` crash-gaps (wrong-type nodes, null template, binary file, double-encoded JSON) were resolved by broadening `TemplateStore.load`'s exception handler. Decorators removed; test bodies retained as positive assertions. |
-| Input validation | DONE | via dispatch tests | `node.input.schema.required[]` checked before dispatch; missing inputs → `NodeStatus.FAILED` with `INPUT VALIDATION FAILED` action. Implemented in PHASE 2 before the dispatch branch. |
+| Input validation | DONE | via dispatch tests | `node.input.schema.required[]` checked before dispatch; missing inputs → `NodeStatus.FAILED` with `INPUT VALIDATION FAILED` action. **Must validate against `input.sources` mapping** (which maps context keys to input variables), NOT arbitrary prefix matching — see pitfall below. Implemented in PHASE 2 before the dispatch branch. |
 | Beads integration | PARTIAL | — | `bead_ready` trigger source implemented: runs `bd ready --json`, matches by `type`/`label`, starts instances with `trigger.bead_id` in context. Dedup via `trigger_keys` table. No bidirectional bead-write-back yet. |
 | Card creation modes | DONE | — | `template` (default, single card), `delegate` (meta-card assigned to profile, profile creates children), `chain` (parent card + N child cards with `--parent` links). `create_card` gained `parent` param. |
 | Dynamic coexistence | STATIC ONLY | — | No `kanban_chains` or `loop_engine` integration. Engine only executes JSON templates. Dynamic plugins work independently (the engine doesn't see their cards). |
@@ -432,6 +459,18 @@ Before calling the engine "done" or "solid," run a two-axis code review on your 
 - ~~Input schema not enforced~~ DONE: `node.input.schema.required[]` validated at dispatch time, marks FAILED on missing
 - ~~No beads integration~~ DONE: `bead_ready` trigger source runs `bd ready --json`, matches by type/label, dedup via trigger_keys
 - ~~`to_mermaid` minimal~~ DONE: node shapes encode type, labels show profile+skill, trigger info as comment
+
+**Round-2 review caught 3 NEW bugs introduced by round-1 fixes — ALL RESOLVED:**
+- ~~Input validation key mismatch (false-positive FAILED)~~ FIXED: validates against `input.sources` mapping
+- ~~Conditional-skip deadlock (PENDING forever)~~ FIXED: SKIPPED terminal state
+- ~~FAILED-node deadlock (all_done checked == DONE only)~~ FIXED: accepts {DONE, FAILED, SKIPPED}
+- ~~bead_ready project_dir passed empty board~~ FIXED: `_first_active_project_dir()` helper
+- ~~Stale template cache in --loop mode~~ FIXED: mtime-based cache invalidation
+- ~~Misleading atomicity comment~~ FIXED: clarified separate-connection limitation
+- ~~Inconsistent `_ensure_schema`~~ FIXED: added to all write methods
+- ~~`import re` inline in 2 functions~~ FIXED: moved to module top
+- ~~Convoluted mermaid string building~~ FIXED: direct f-string
+- ~~Duplicated JSON metadata parsing~~ FIXED: `_parse_metadata()` helper
 
 ### Spec-axis review technique: the "dead field" grep
 
@@ -577,6 +616,10 @@ The workflow for fixing all adversarial bugs:
 - **Never `ORDER BY created_at` to fetch the latest card.** `created_at` is seconds-resolution epoch; multiple cards created in the same second (constant in fast tests) tie and the order is arbitrary. This produces flaky, non-deterministic test failures that pass on one run and fail on the next. Use `ORDER BY rowid DESC` — `rowid` is the auto-incrementing insertion order and is always monotonic. This bit a circular-trigger test where `get_card_id_by_assignee` kept returning the wrong (older) card.
 - **Patch `LOCK_FILE` in test fixtures or every tick silently SKIPs.** The engine uses `fcntl.flock(LOCK_FILE)` for cross-process locking. If a production engine process is running (or the lock file points at the real path), every test tick returns `["SKIP tick: another engine process holds the lock"]` instead of dispatching. Tests then assert on empty action lists and pass for the wrong reason. In your test fixture, patch `rt.LOCK_FILE = tmpdir / "test-engine.lock"` and restore in cleanup. See `references/fakeworld-testing-pattern.md` ("The fourth critical monkey-patch").
 - **`TemplateStore.load`'s exception handler was narrowed, then broadened (resolved).** Historically `store.load()` wrapped `Workflow.from_dict()` in `except (json.JSONDecodeError, KeyError)` ONLY, so malformed inputs raising *other* types (`TypeError`, `UnicodeDecodeError`, `AttributeError`) propagated uncaught and crashed the caller — and `store.all()`, which loops `load()`. As of 2026-07 the handler was broadened to catch the full set (`TypeError, UnicodeDecodeError, AttributeError, ValueError`, or a blanket `except Exception`), and the four crash-gap tests were converted from `xfail(strict=True)` to ordinary positive assertions. **The lesson is the conversion lifecycle, not the gap**: when you harden `store.load` (or `from_dict`), the xfail tests flip to XPASS=FAILURE and must have their decorators removed (bodies unchanged), AND sibling tests written against the old loose `from_dict` behavior may also start failing — run the whole bad-input file and triage every failure. `Workflow.from_file()` is still narrower than `load()` — it propagates *all* exceptions including `JSONDecodeError` by design (it's the raw parser; the store is the softening layer).
+- **Input validation key mismatch — the most insidious false-positive bug.** When validating `node.input.schema.required[]`, the context keys are full paths like `nodes.plan.output.spec_path`. A naive check `if req_var not in ctx and f"nodes.{req_var}" not in ctx` checks `"spec_path"` then `"nodes.spec_path"` — neither matches `nodes.plan.output.spec_path`. Every node with an input schema gets a false-positive FAILED. Fix: validate against `node.input.sources` mapping, which explicitly maps each required input to its context variable: `source_key = strip_template_var(node.input.sources[req_var]); if source_key not in ctx: missing.append(req_var)`. This was caught in round-2 review.
+- **Round-2 review catches bugs introduced by round-1 fixes.** A two-axis code review is not a one-shot check — the fixes themselves can introduce new bugs. Round 1 added input validation, SKIPPED state, and template cache invalidation. Round 2 caught: (a) input validation key mismatch (false-positive FAILED on every node with input schema), (b) conditional-skip deadlock (condition-failed nodes stayed PENDING, blocking completion), (c) FAILED-node deadlock (all_done checked `== DONE` not `in terminal_states`). Always run a second review after fixing the first review's findings. The pattern: fix → review → fix → review until clean.
+- **`_ensure_schema` must be on ALL StateDB methods, not just reads.** The schema-creation guard was initially added to read methods (`load_active_instances`, `get_watermark`) but not write methods (`create_instance`, `update_node_state`, `complete_instance`, `set_watermark`). If the state DB file is deleted mid-workflow and a write method runs first, it crashes because the table doesn't exist. Apply `_ensure_schema()` at the top of every public StateDB method, not just reads.
+- **TemplateStore cache must invalidate on file mtime.** Without mtime checking, the `--loop` mode (long-running engine process) never picks up template edits on disk — running instances AND new instances all use the originally-cached version. Fix: store `self._cache_mtime[workflow_id] = path.stat().st_mtime` on cache, and on cache hit compare `path.stat().st_mtime > cached_mtime` — if the file is newer, delete the cache entry and force reload.
 - **When you add a kwarg to `create_card`, update the FakeWorld `_fake_create_card` mock signature too.** The FakeWorld harness monkey-patches `rt.create_card = self._fake_create_card`. If the adapter gains a new parameter (e.g. `parent=None` for chain mode) and the mock's signature doesn't include it, every dispatch call crashes with `TypeError: _fake_create_card() got an unexpected keyword argument 'parent'` — and because the mock is set once in `__init__`, the error doesn't surface until the first tick. **Any change to `create_card`'s signature requires a matching change to `_fake_create_card` in `test_engine.py`** (and any other file that defines its own fake). The Pyright LSP catches the adapter-side call (`No parameter named "parent"`), but does NOT catch the mock-side mismatch because the mock is assigned at runtime via attribute injection. Search for `_fake_create_card` across all test files when you touch `create_card`.
 
 ## Linked files
@@ -597,3 +640,4 @@ The workflow for fixing all adversarial bugs:
 - `references/scenario-adversarial-tests.md` — scenario-based (vs weakness-based) adversarial testing: name 10 system-level integration scenarios (trigger chains, circular triggers, card hijacking, rapid starts, blocked nodes, state corruption, template hot-reload, concurrent board access, engine-kill recovery, workflow storms), each documenting observed behavior including unbounded-cycle growth and cache-never-invalidates findings
 - `references/dataflow-testing.md` — variable-resolution & data-flow edge cases (62 tests): the probe-before-pin methodology, the full str()-coercion table, recursive-expansion order-dependence, the empty-${} regex gap, the body-readback FakeWorld pattern, and output-mutation snapshot semantics
 - `references/dead-field-grep-technique.md` — code-review technique for catching "vapor config": fields that are parsed but never read by the runtime. Grep the execution layer, not the parse layer.
+- `references/round2-review-iterative-bug-introduction.md` — how round-1 code-review fixes introduced 3 new production bugs (input validation key mismatch, conditional-skip deadlock, FAILED-node deadlock). The pattern: fixes need their own review. Two rounds minimum.

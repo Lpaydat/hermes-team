@@ -104,15 +104,15 @@
       "schedule_display": "* * * * *",
       "repeat": {
         "times": null,
-        "completed": 30887
+        "completed": 30912
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T21:44:57.246903+07:00",
-      "next_run_at": "2026-07-31T15:19:00+07:00",
-      "last_run_at": "2026-07-31T15:17:38.499965+07:00",
+      "next_run_at": "2026-07-31T15:43:00+07:00",
+      "last_run_at": "2026-07-31T15:42:39.128455+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -121,7 +121,46 @@
       "enabled_toolsets": null,
       "workdir": null,
       "fire_claim": null
+    },
+    {
+      "id": "94e735a11be6",
+      "name": "New Workflow Engine \u2014 tick",
+      "prompt": "",
+      "skills": [],
+      "skill": null,
+      "model": null,
+      "provider": null,
+      "provider_snapshot": null,
+      "model_snapshot": null,
+      "base_url": null,
+      "script": "startup/profiles/product-owner/scripts/workflow_engine/main.py",
+      "no_agent": true,
+      "context_from": null,
+      "schedule": {
+        "kind": "cron",
+        "expr": "* * * * *",
+        "display": "* * * * *"
+      },
+      "schedule_display": "* * * * *",
+      "repeat": {
+        "times": null,
+        "completed": 0
+      },
+      "enabled": true,
+      "state": "scheduled",
+      "paused_at": null,
+      "paused_reason": null,
+      "created_at": "2026-07-31T15:42:15.115183+07:00",
+      "next_run_at": "2026-07-31T15:43:00+07:00",
+      "last_run_at": null,
+      "last_status": null,
+      "last_error": null,
+      "last_delivery_error": null,
+      "deliver": "local",
+      "origin": null,
+      "enabled_toolsets": null,
+      "workdir": null
     }
   ],
-  "updated_at": "2026-07-31T15:18:35.189467+07:00"
+  "updated_at": "2026-07-31T15:42:39.128783+07:00"
 }
