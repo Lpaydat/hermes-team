@@ -107,6 +107,35 @@ def complete_fake_card(board_db, card_id, metadata=None, summary=""):
     conn.close()
 ```
 
+## The fourth critical monkey-patch: LOCK_FILE
+
+**If you skip this, every tick silently SKIPs and tests pass for the wrong reason.**
+
+The engine's `tick()` acquires an `fcntl.flock(LOCK_EX | LOCK_NB)` on a global
+`LOCK_FILE` (`~/.hermes-teams/startup/kanban/workflow-engine.lock`). If a
+production engine process is running, OR the lock file still points at the real
+path, the flock call fails and `tick()` returns immediately with
+`["SKIP tick: another engine process holds the lock"]`.
+
+The symptom: tests that assert on dispatched actions get an empty list, but
+the assertion still passes because "no actions" can look like correct behavior
+(e.g., "second tick should not re-dispatch"). The test is green but proves
+nothing.
+
+In your test fixture, patch `LOCK_FILE` to a temp path:
+
+```python
+import workflow_engine.runtime as rt
+world._orig_lock_file = rt.LOCK_FILE
+rt.LOCK_FILE = world.tmpdir / "test-engine.lock"
+# ... in cleanup:
+rt.LOCK_FILE = world._orig_lock_file
+```
+
+This is separate from the `threading.Lock` inside Engine — that's an in-process
+reentrancy guard, not a cross-process lock. You need the `fcntl` lock patched
+for test isolation.
+
 ## Test lifecycle
 
 ```python

@@ -127,6 +127,43 @@ Key adversarial categories:
 
 **Adversarial-test methodology:** read all engine source first, list concrete code-level weaknesses, then write one test per weakness whose docstring states the exact line/statement it targets (`WEAKNESS: ...`). Tests encode current behavior (passing) or catch the bug (failing → regression guard after fix). See `references/adversarial-test-catalog.md` and `references/data-corruption-tests.md` for worked examples.
 
+## Test suite shape: four files, four tiers
+
+As of 2026-07-31, the engine has **250+ tests across 6 files**, with more being\nadded. The suite is organized by tier:
+
+| File | Tests | Tier | What it proves |
+|------|-------|------|----------------|
+| `test_engine.py` | 103 | FakeWorld (mocked) | Engine logic — tick ordering, variable resolution, state, all adversarial |
+| `test_composition.py` | 10 | FakeWorld (mocked) | Trigger-based composition: A→B chains, A→B→C nesting, A↔B recursion, parallel fan-out, failure isolation, data flow |
+| `test_dataflow.py` | 62 | FakeWorld (mocked) | Variable resolution edge cases |
+| `test_integration.py` | 16 | Hybrid (real boards, simulated completions) | Real SQLite schema, real CLI card creation, real metadata/trigger reads |
+| `test_unhappy.py` | 10 | Real unhappy paths | Nonexistent boards, locked DBs, error statuses, schema mismatch |
+| `test_adversarial.py` | 10 | Real adversarial | Trigger chains, state corruption, template hot-reload, workflow storms |
+
+Additional files being added: `test_bad_templates.py` (malformed JSON/null/binary).
+
+**User expects the test suite to GROW with each session.** When the user says
+"more tests" or "try to break it," dispatch subagents (max 3 per batch) to
+write new test files targeting specific categories. Each subagent should
+create its own file, not modify existing ones.
+
+## Incremental validation before full integration
+
+The user's methodology for testing new systems: **start small, prove the
+mechanics, then scale up.** The sequence that worked:
+
+1. **Fake-board unit tests first** (fast, deterministic, finds logic bugs)
+2. **Real integration with a fake workflow** (echo-test: 2 nodes, real board,
+   real dispatcher, real agents — proves the plumbing)
+3. **Adversarial tests** (break the engine, fix ALL bugs found)
+4. **More adversarial tests** (subagents write tests to break it again)
+5. **Composition/subworkflow tests** (chains, recursion, parallel children)
+6. **Bad input tests** (malformed templates, null values, binary files)
+
+Do NOT skip straight to real integration — prove the logic first with fakes.
+Do NOT stop at happy paths — the user explicitly wants adversarial tests that
+TRY to break the system.
+
 ## Hybrid integration testing (real boards, simulated completions)
 
 A third testing tier between FakeWorld (fully mocked) and real integration testing.
@@ -143,6 +180,34 @@ See `references/hybrid-integration-testing.md` for the complete pattern:
 
 Key gotcha: **real boards default created cards to `ready` status, not `todo`.**
 Tests should assert `status in ("todo", "ready")`.
+
+## Composition & subworkflow testing
+
+Trigger-based composition is how workflows chain today (no native `subworkflow`
+node type yet — see `docs/workflow-composition-design.md` for the planned\nmodel). One workflow's node completes → its card metadata matches another
+workflow's `card_completed` trigger → the child workflow starts. Test this
+with `test_composition.py` patterns.
+
+See `references/composition-tests.md` for the full methodology. Key patterns:
+
+- **Workflow template helpers** (`workflow_a()`, `workflow_b()`, `workflow_c()`)
+  generate parametric templates with configurable trigger conditions and node
+  assignees — so A's node output matches B's trigger without copy-paste.
+- **Instance-count assertions** via `get_instance_count(state_db, workflow_id)`
+  verify that composition actually created child instances (not just that
+  cards were dispatched).
+
+Two architectural findings these tests surface (both are **gaps the planned
+`subworkflow` node type would close**, not bugs to fix in the trigger system):
+
+1. **Recursion is unbounded.** `trigger_keys` dedup is per-card
+   (`trig:{wf_id}:{card_id}`), not per-workflow-pair. In an A↔B cycle, each
+   round produces a NEW card → new trigger key → the cycle grows indefinitely.
+   The design doc's `max_recursions` / `idempotency_key` guards aren't
+   implemented. Tests document this; don't assert it's bounded.
+2. **No failure back-propagation.** A blocked/stuck child workflow has no link
+   back to the parent — the parent completes when its OWN nodes finish,
+   regardless of child state. Tests verify this isolation explicitly.
 
 ## Real integration testing (beyond FakeWorld)
 
@@ -196,6 +261,8 @@ The workflow for fixing all adversarial bugs:
 - **Atomic UPSERT with COALESCE: the NOT NULL trap.** To merge a partial update (caller omits `card_id` or `output`) without a read-then-write, use `INSERT ... ON CONFLICT DO UPDATE SET card_id=COALESCE(?, node_states.card_id), output=CASE WHEN ?=1 THEN ? ELSE node_states.output END`. But the `VALUES` clause must supply a **non-NULL** placeholder for any NOT NULL column, or the INSERT half fails before the conflict is ever reached: `output TEXT NOT NULL DEFAULT '{}'` rejects an explicit NULL even though ON CONFLICT would have merged it. Fix: pass a non-NULL default into VALUES (`output_json if output_json is not None else "{}"`), then let the ON CONFLICT clause apply COALESCE/CASE so the existing value is preserved for omitted fields. The COALESCE merge on a *single* SQL statement is what makes concurrent field-level updates safe — two threads each setting a different field both survive.
 - **Stale-node filtering needs a snapshot, not the live template.** `load_active_instances` can't see the template store, so it can't filter node states against the current template directly. Solution: store a `node_ids` JSON array (the valid node IDs) on the instance *at creation time*, and filter node states loaded from the DB against that snapshot during load. This catches nodes removed from the template after the instance started. The in-memory `_check_instance` then does a second filter against the live template for defense in depth.
 - **`completed_at` is the zombie-detector column.** Store `completed_at` (epoch seconds) on the instance row when `complete_instance` runs. In `_check_instance`, check `inst.completed_at is not None` *first* — if an instance was previously completed and somehow reactivated (manual SQL `UPDATE ... status='active'`), skip it and re-mark complete. This prevents phantom work from a "finished" instance.
+- **Never `ORDER BY created_at` to fetch the latest card.** `created_at` is seconds-resolution epoch; multiple cards created in the same second (constant in fast tests) tie and the order is arbitrary. This produces flaky, non-deterministic test failures that pass on one run and fail on the next. Use `ORDER BY rowid DESC` — `rowid` is the auto-incrementing insertion order and is always monotonic. This bit a circular-trigger test where `get_card_id_by_assignee` kept returning the wrong (older) card.
+- **Patch `LOCK_FILE` in test fixtures or every tick silently SKIPs.** The engine uses `fcntl.flock(LOCK_FILE)` for cross-process locking. If a production engine process is running (or the lock file points at the real path), every test tick returns `["SKIP tick: another engine process holds the lock"]` instead of dispatching. Tests then assert on empty action lists and pass for the wrong reason. In your test fixture, patch `rt.LOCK_FILE = tmpdir / "test-engine.lock"` and restore in cleanup. See `references/fakeworld-testing-pattern.md` ("The fourth critical monkey-patch").
 
 ## Linked files
 
@@ -210,4 +277,4 @@ The workflow for fixing all adversarial bugs:
 - `references/state-lifecycle-tests.md` — 12 state-persistence-layer tests (zombie instances, dangling refs, card regression, orphaned instances, readonly DB, unbounded growth); 10 confirmed bugs
 - `references/concurrency-tests.md` — 6 concurrency tests (double dispatch, lost updates, duplicate trigger instances, overlapping ticks, DB-lock crashes, partial-write duplicates); 6 confirmed bugs; the `threading.Barrier` technique for making race windows deterministic
 - `references/trigger-system-tests.md` — 12 trigger-subsystem tests (trigger storms, empty-condition bomb, cross-board contamination, flat metadata lookup, NULL completed_at, self-trigger via engine cards); 6 confirmed bugs
-- `references/data-corruption-tests.md` — 20 data-corruption tests (null fields, unicode/huge/null-byte payloads, condition-parser edge cases, template injection) and the methodology of naming the weakness before writing the test
+- `references/scenario-adversarial-tests.md` — scenario-based (vs weakness-based) adversarial testing: name 10 system-level integration scenarios (trigger chains, circular triggers, card hijacking, rapid starts, blocked nodes, state corruption, template hot-reload, concurrent board access, engine-kill recovery, workflow storms), each documenting observed behavior including unbounded-cycle growth and cache-never-invalidates findings
