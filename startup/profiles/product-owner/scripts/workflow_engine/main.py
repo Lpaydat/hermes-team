@@ -150,10 +150,11 @@ def main():
 
     sub.add_parser("templates", help="List available templates").set_defaults(func=cmd_templates)
 
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     parser.set_defaults(func=lambda a: parser.print_help())
     args = parser.parse_args()
 
-    setup_logging(args.verbose if hasattr(args, "verbose") else False)
+    setup_logging(args.verbose)
     args.func(args)
 
 

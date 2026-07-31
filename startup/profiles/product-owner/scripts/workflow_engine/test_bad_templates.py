@@ -524,8 +524,8 @@ def test_1000_nodes_parses_and_mermaid_renders():
     # to_mermaid must not crash on 1000 nodes + 999 edges
     mermaid = wf.to_mermaid()
     assert mermaid.startswith("graph TD")
-    assert "n0[n0]" in mermaid
-    assert "n999[n999]" in mermaid
+    assert "n0[n0" in mermaid  # mermaid includes profile in label: n0[n0\nqa]
+    assert "n999[n999" in mermaid  # includes profile in label
     # Sanity: 1000 node lines + 999 edge lines + blanks/header
     assert parse_secs < 5.0, f"1000-node parse took {parse_secs:.2f}s (too slow)"
 

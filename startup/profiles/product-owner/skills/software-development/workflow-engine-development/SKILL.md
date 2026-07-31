@@ -137,7 +137,49 @@ output is `{"_foreach_cards": [...], "results": [meta1, meta2, ...]}` where each
 result is the card's completion metadata. If any card is `blocked`, the node
 reports BLOCKED; if any card is still in-flight, the node stays DISPATCHED.
 
-### Trigger dedup: card ID keys, not timestamps
+#### Subworkflow implementation (native node type)
+
+A node with `type: "subworkflow"` starts a child workflow instance instead of
+creating a kanban card. The parent node blocks until the child completes, then
+maps child outputs back to the parent.
+
+**Node fields:**
+- `type: "subworkflow"` (required)
+- `workflow_ref: "<template_id>"` (required — the child workflow to start)
+- `input_mapping: {key: "${var}"}` (params passed from parent context to child trigger context)
+- `output_mapping: {parent_key: "${nodes.X.output.Y}"}` (child outputs mapped back to parent node output)
+
+**Dispatch (PHASE 2):** routes to `_dispatch_subworkflow_node`, which:
+1. Validates `workflow_ref` exists and template loads
+2. Resolves `input_mapping` from parent context → child trigger context
+3. Calls `start_manual()` to create a child workflow instance
+4. Stores `_child_instance` in the node state output
+5. Marks node DISPATCHED (blocks)
+
+**Completion (PHASE 1):** detects `_child_instance` in node output, then calls
+`_check_subworkflow_completion` which:
+1. Queries the child instance status from state DB
+2. If `completed`: reads all child node outputs, maps via `output_mapping`
+3. If no `output_mapping`: flattens all child outputs (strips `nodes.X.output.` prefix)
+4. Applies hard output validation if parent node declares `output.schema`
+5. Marks parent node DONE with mapped outputs
+
+**Idempotency:** checks `_is_instance_active()` before starting — re-tick won't
+start a second child.
+
+**Key design decision:** the child instance runs on the SAME board as the parent
+and shares the SAME engine. The child's nodes dispatch normally (create cards,
+advance via ticks). The parent just polls `SELECT status FROM
+workflow_instances WHERE instance_id = ?` each tick until it sees `completed`.
+
+**Tick ordering matters for subworkflow completion.** When the child's last node
+completes and the child instance is marked `completed`, the parent's
+`_check_subworkflow_completion` fires on the NEXT tick (not the same tick — the
+instance completion check in PHASE 1 runs before the child's own completion
+check). This means a subworkflow cycle takes at minimum 3 ticks: dispatch child
+→ child completes → parent detects completion. Tests must account for this.
+
+## Trigger dedup: card ID keys, not timestamps
 
 Use a `trigger_keys` table that records `trig:<workflow_id>:<card_id>` for every card that triggered a workflow. Timestamp-based watermarks are unreliable — the same card can re-trigger if the lookback window includes it. The card ID key is permanent and unambiguous.
 
@@ -316,17 +358,18 @@ Key adversarial categories:
 - **Data corruption** — malformed field *content* rather than graph shape: null values where strings are expected, unicode/emoji/null-bytes, 10k-char payloads, condition-parser edge cases (double quotes, trailing garbage, malformed operators), template-injection via data values. See `references/data-corruption-tests.md` for the full catalog of 20 tests. **Core weakness: zero input validation in `from_dict`** — the JSON-null-vs-missing-key trap (`n.get("body_template", "")` returns `None` for an explicit `null`, not `""`), and `resolve_template`'s `str()` on non-string values embeds Python repr instead of JSON. The condition parser (`evaluate_condition`) silently fails on double quotes, ignores trailing garbage (`re.match` not `re.fullmatch`), and returns `False` with no diagnostic for unrecognized expressions.
 
 **Adversarial-test methodology:** read all engine source first, list concrete code-level weaknesses, then write one test per weakness whose docstring states the exact line/statement it targets (`WEAKNESS: ...`). Tests encode current behavior (passing) or catch the bug (failing → regression guard after fix). See `references/adversarial-test-catalog.md` and `references/data-corruption-tests.md` for worked examples.
-## Test suite shape: seven files, seven tiers
+## Test suite shape: eight files, eight tiers
 
-As of 2026-07-31, the engine has **258+ tests across 7 files**, with more being
+As of 2026-07-31, the engine has **265+ tests across 8 files**, with more being
 added. The suite is organized by tier:
 
 | File | Tests | Tier | What it proves |
 |------|-------|------|----------------|
-| `test_engine.py` | 103 | FakeWorld (mocked) | Engine logic — tick ordering, variable resolution, state, all adversarial |
+| `test_engine.py` | 104 | FakeWorld (mocked) | Engine logic — tick ordering, variable resolution, state, GC, all adversarial |
 | `test_composition.py` | 10 | FakeWorld (mocked) | Trigger-based composition: A→B chains, A→B→C nesting, A↔B recursion, parallel fan-out, failure isolation, data flow |
 | `test_dataflow.py` | 62 | FakeWorld (mocked) | Variable resolution edge cases (typed values, recursive expansion, empty/escaped vars, mutation between ticks; see `references/dataflow-testing.md`) |
-| `test_bad_templates.py` | 62 | Bad-input / robustness | Malformed JSON, wrong types, null/binary templates, 1000-node stress (4 former `xfail`-strict crash-gaps now resolved → regular passing tests) |
+| `test_bad_templates.py` | 36 | Bad-input / robustness | Malformed JSON, wrong types, null/binary templates, 1000-node stress (4 former `xfail`-strict crash-gaps now resolved → regular passing tests) |
+| `test_subworkflow.py` | 7 | FakeWorld (mocked) | Native subworkflow nodes: basic blocking, output mapping, input mapping, 3-level nesting, idempotency, error handling |
 | `test_integration.py` | 16 | Hybrid (real boards, simulated completions) | Real SQLite schema, real CLI card creation, real metadata/trigger reads |
 | `test_unhappy.py` | 10 | Real unhappy paths | Nonexistent boards, locked DBs, error statuses, schema mismatch |
 | `test_adversarial.py` | 10 | Real adversarial | Trigger chains, state corruption, template hot-reload, workflow storms |
@@ -343,19 +386,63 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 | Feature | Status | Tested? | Notes |
 |---------|--------|---------|-------|
 | Sequential nodes | DONE | 15+ tests | Core path, solid |
-| Conditional edges | DONE | 15+ tests | Simple operators: `==`, `!=`, `exists`, `is empty` |
+| Conditional nodes | DONE | 15+ tests | Simple operators: `==`, `!=`, `exists`, `is empty`. **Note: these are node-level conditions, NOT edge-level conditions** — see "Edges model" below. |
+| Edges model | **N/A (implied)** | via depends_on tests | No `edges` concept exists in the data model. Edges are implied via `Node.depends_on[]` + a single per-node `condition` string. `to_mermaid` renders `dep -->|condition| node`, which conflates a node's own condition with the edge that leads to it. **If a spec literally says "nodes and edges with conditional edges," this is a model mismatch** — the engine has nodes-with-conditions, not edges-with-conditions. A spec-axis review caught this (2026-07-31). |
 | Fan-out (parallel) | IMPLICIT | 3 tests | Via shared `depends_on` — no explicit fan-out node type |
 | Fan-in (wait-all) | IMPLICIT | 2 tests | Via multiple `depends_on` — no explicit fan-in node type |
 | Foreach iteration | DONE | dispatch + completion tested | `_dispatch_foreach_node` creates one card per list item; PHASE 1 checks all `_foreach_cards` for completion, aggregates results. See "Foreach implementation" below. |
-| Subworkflow node | NOT BUILT | — | Composition works via triggers only, no `type: "subworkflow"` |
+| Subworkflow node | DONE | 7 tests | `type: "subworkflow"` with `workflow_ref`, `input_mapping`, `output_mapping`. Parent blocks until child completes. Supports 3-level nesting, idempotent dispatch. See "Subworkflow implementation" below. |
 | Output validation | HARD | 2+ tests | `validate_output()` against `node.output.schema` on card completion; failure → `NodeStatus.FAILED`, downstream blocked. |
 | Concurrency safety | DONE | 6 tests, all passing | File lock (fcntl) + thread lock + WAL mode + atomic UPSERT. Tests prove locks serialize ticks and prevent double-dispatch. |
 | State cleanup | DONE | 2 tests | `StateDB.cleanup(max_age_days=7)` runs every tick; removes old trigger_keys, completed instances + node_states, stale watermarks. |
 | Bad input handling | CLOSED (was 4 gaps) | 62 tests, all regular | All four `xfail(strict=True)` crash-gaps (wrong-type nodes, null template, binary file, double-encoded JSON) were resolved by broadening `TemplateStore.load`'s exception handler. Decorators removed; test bodies retained as positive assertions. |
+| Input validation | NOT ENFORCED | parsed only | `NodeInput.schema` is parsed but never validated. Only output schemas are validated. Spec gap confirmed by code review. |
+| Beads integration | MISSING | — | No `bead_ready` trigger, no `bd` CLI calls. Only kanban side wired. Spec gap — intentional v1 scope. |
+| Dynamic coexistence | STATIC ONLY | — | No `kanban_chains` or `loop_engine` integration. Engine only executes JSON templates. Dynamic plugins work independently (the engine doesn't see their cards). |
+| Card creation modes | PARTIAL → IN PROGRESS | — | `template` mode DONE. `delegate` + `chain` modes now DISPATCH (code written 2026-07-31): `_dispatch_node` branches on `node.card_mode`, `_dispatch_delegate_node` creates a meta-card, `_dispatch_chain_node` creates parent + child cards via `create_card(parent=...)`. Integration tests for delegate/chain pending. **When adding a new `create_card` kwarg, update the FakeWorld `_fake_create_card` mock signature or the mock crashes with a `TypeError: unexpected keyword argument`.** |
+| Incremental migration | NOT STARTED | — | Old 696-line cron untouched and still active. No migration phases, no cron entry for new engine. Engine coexists in separate dir only. |
 
-When the user asks "is the engine solid?", answer with this table, not "258 tests all green." The test count is necessary but not sufficient. The user explicitly caught this: *"hmm, #2,3,5,6 meant test not all green isn't it? or it just green with only tests that ignore the weakpoints, right?"*
+When the user asks "is the engine solid?", answer with this table, not "265 tests all green." The test count is necessary but not sufficient. The user explicitly caught this: *"hmm, #2,3,5,6 meant test not all green isn't it? or it just green with only tests that ignore the weakpoints, right? and does this graph engine support fan-out/in yet? and conditional edges too?"*
 
 **Tests that pass by EXPECTING weak behavior are NOT acceptable.** An xfail mark, a soft-validation assertion, or a "proves it doesn't crash" test that doesn't assert CORRECT behavior — all of these produce a green checkmark on a red wall. Every test must assert what SHOULD happen, not what DOES happen when the engine is broken. When hardening the engine, update all tests that encoded old weak behavior to assert the new correct behavior.
+
+## Self-review before merge: two-axis code review
+
+Before calling the engine "done" or "solid," run a two-axis code review on your own code using the `mattpocock:code-review` skill. The user explicitly asks for this ("review the code you just wrote").
+
+**Process:**
+1. Pin the fixed point: `git diff main...HEAD` (compare against main)
+2. Spawn TWO parallel subagents:
+   - **Standards axis**: apply Fowler smell baseline (Duplicated Code, Feature Envy, Primitive Obsession, Dead Code, etc.) + general quality issues (dead branches, unused imports, resource leaks, threading bugs)
+   - **Spec axis**: check against the user's stated requirements — what's missing, partial, wrong, or scope creep
+3. Aggregate both reports side by side, don't merge them
+4. Fix hard issues immediately; document spec gaps as known v1 scope
+
+**Issues found in the 2026-07-31 review — HARD bugs FIXED, STANDARDS refactors DONE, SPEC gaps in progress:**
+- ~~Dead `title_not_prefix` branch~~ FIXED: combined into one `elif key == "title_not_prefix" or key.startswith("title_not_prefix")` branch
+- ~~`--verbose` flag never wired~~ FIXED: added `--verbose`/`-v` to the main parser
+- ~~3 unused `from typing import Any` imports~~ FIXED: removed from model.py, kanban_adapter.py, store.py
+- ~~`expr[2:-1]` ${stripping} duplicated across 3 methods~~ DONE: extracted `strip_template_var(expr)` in model.py; imported and used in `_dispatch_foreach_node`, `_dispatch_subworkflow_node`, `_check_subworkflow_completion`
+- ~~`_start_from_trigger` and `start_manual` near-identical~~ DONE: extracted `_create_instance(wf, board, project_dir, trigger_context, parent_instance_id=None)` — both callers now delegate to it
+- ~~Sentinel `NodeState(instance_id="", node_id="")` hack~~ DONE: replaced with walrus-operator None checks (`if (dep_ns := ...) is not None`) in deps_done; `for ns in [inst.node_states.get(node.id)]` in all_done (the list-of-one trick avoids the filter-drops-iterations problem)
+- ~~kanban_adapter duplicated connect+row_factory+try/finally across 4 functions~~ DONE: extracted `_connect(db)` context manager; `get_card`, `get_card_metadata`, `find_cards_by_idempotency_key`, `find_recent_completions` all use it
+- ~~Subworkflow completion re-implemented the jsonschema/ImportError fallback~~ DONE: extracted `validate_against_schema(instance, schema)` in kanban_adapter.py; both `validate_output` (board metadata) and `_check_subworkflow_completion` (in-memory mapped_output) use it
+- `card_mode` — `delegate` and `chain` modes now DISPATCH (code written). `_dispatch_node` branches on `node.card_mode`; `_dispatch_delegate_node` creates a meta-card with delegate instructions; `_dispatch_chain_node` creates parent + child cards with `--parent` links. **`create_card` gained a `parent` param; FakeWorld mock updated.** (SPEC GAP — code written, integration tests pending)
+- Input schema not enforced — `NodeInput.schema` parsed but never validated at dispatch time (SPEC GAP — next to implement)
+- Beads integration missing — no `bead_ready` trigger, no `bd` CLI calls (SPEC GAP — intentional v1 scope)
+
+### Spec-axis review technique: the "dead field" grep
+
+When reviewing a declarative engine against its requirements list, **grep the runtime, not the model.** A field that is *parsed* in `from_dict`/`model.py` but never *read* in the runtime/dispatch path is vapor config — it looks implemented from the model's perspective but has zero behavioral effect. This catches the most insidious spec gap: a requirement that "exists" (field defined, tests pass for parsing) but doesn't actually work.
+
+**The pattern:**
+1. List every field the requirements spec mentions.
+2. For each field, `grep <field> runtime.py` (the dispatch/execution layer, NOT `model.py`).
+3. If the grep returns 0 hits in the runtime path, that field is dead — mark it PARTIAL/MISSING regardless of whether it parses or has model-level tests.
+
+**Worked example (2026-07-31):** the spec said "card creation modes: template/delegate/chain." `Node.card_mode` was defined in `model.py:42`, parsed at `model.py:102`, and appeared in templates. But `grep card_mode runtime.py` returned **0 hits** — `_dispatch_node` always creates a single card. Two of three modes were vapor. Model-level tests would never catch this; only the runtime grep does.
+
+**Generalize this beyond card_mode:** any enum/flag/option field (trigger sources, validation modes, composition types) should be verified at the call site that's supposed to branch on it, not at the parse site that merely stores it. A field with a default value that the runtime never overrides is a no-op.
 
 ## Incremental migration: run alongside the old cron
 
@@ -405,11 +492,11 @@ Tests should assert `status in ("todo", "ready")`.
 
 ## Composition & subworkflow testing
 
-Trigger-based composition is how workflows chain today (no native `subworkflow`
-node type yet — see `docs/workflow-composition-design.md` for the planned
-model). One workflow's node completes → its card metadata matches another
-workflow's `card_completed` trigger → the child workflow starts. Test this
-with `test_composition.py` patterns.
+Trigger-based composition is how workflows chain via card completions. The engine
+now ALSO supports native `type: "subworkflow"` nodes (see "Subworkflow
+implementation" above) which provide function-call semantics with blocking +
+output mapping. Both patterns coexist: triggers for fire-and-forget composition,
+subworkflow nodes for blocking composition with output return.
 
 See `references/composition-tests.md` for the full methodology. Key patterns:
 
@@ -488,6 +575,7 @@ The workflow for fixing all adversarial bugs:
 - **Never `ORDER BY created_at` to fetch the latest card.** `created_at` is seconds-resolution epoch; multiple cards created in the same second (constant in fast tests) tie and the order is arbitrary. This produces flaky, non-deterministic test failures that pass on one run and fail on the next. Use `ORDER BY rowid DESC` — `rowid` is the auto-incrementing insertion order and is always monotonic. This bit a circular-trigger test where `get_card_id_by_assignee` kept returning the wrong (older) card.
 - **Patch `LOCK_FILE` in test fixtures or every tick silently SKIPs.** The engine uses `fcntl.flock(LOCK_FILE)` for cross-process locking. If a production engine process is running (or the lock file points at the real path), every test tick returns `["SKIP tick: another engine process holds the lock"]` instead of dispatching. Tests then assert on empty action lists and pass for the wrong reason. In your test fixture, patch `rt.LOCK_FILE = tmpdir / "test-engine.lock"` and restore in cleanup. See `references/fakeworld-testing-pattern.md` ("The fourth critical monkey-patch").
 - **`TemplateStore.load`'s exception handler was narrowed, then broadened (resolved).** Historically `store.load()` wrapped `Workflow.from_dict()` in `except (json.JSONDecodeError, KeyError)` ONLY, so malformed inputs raising *other* types (`TypeError`, `UnicodeDecodeError`, `AttributeError`) propagated uncaught and crashed the caller — and `store.all()`, which loops `load()`. As of 2026-07 the handler was broadened to catch the full set (`TypeError, UnicodeDecodeError, AttributeError, ValueError`, or a blanket `except Exception`), and the four crash-gap tests were converted from `xfail(strict=True)` to ordinary positive assertions. **The lesson is the conversion lifecycle, not the gap**: when you harden `store.load` (or `from_dict`), the xfail tests flip to XPASS=FAILURE and must have their decorators removed (bodies unchanged), AND sibling tests written against the old loose `from_dict` behavior may also start failing — run the whole bad-input file and triage every failure. `Workflow.from_file()` is still narrower than `load()` — it propagates *all* exceptions including `JSONDecodeError` by design (it's the raw parser; the store is the softening layer).
+- **When you add a kwarg to `create_card`, update the FakeWorld `_fake_create_card` mock signature too.** The FakeWorld harness monkey-patches `rt.create_card = self._fake_create_card`. If the adapter gains a new parameter (e.g. `parent=None` for chain mode) and the mock's signature doesn't include it, every dispatch call crashes with `TypeError: _fake_create_card() got an unexpected keyword argument 'parent'` — and because the mock is set once in `__init__`, the error doesn't surface until the first tick. **Any change to `create_card`'s signature requires a matching change to `_fake_create_card` in `test_engine.py`** (and any other file that defines its own fake). The Pyright LSP catches the adapter-side call (`No parameter named "parent"`), but does NOT catch the mock-side mismatch because the mock is assigned at runtime via attribute injection. Search for `_fake_create_card` across all test files when you touch `create_card`.
 
 ## Linked files
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 import json
 
 
@@ -133,16 +132,47 @@ class Workflow:
         return [n for n in self.nodes if not n.depends_on]
 
     def to_mermaid(self) -> str:
-        """Render the workflow as a mermaid graph."""
+        """Render the workflow as a mermaid graph.
+
+        Node shapes encode type:
+          [] = task, (()) = subworkflow, {{}} = foreach
+        Node labels show id + profile.
+        Trigger info appears as a comment above the graph.
+        """
         lines = ["graph TD"]
+
+        # Trigger info as comment
+        if self.trigger:
+            cond_str = ", ".join(f"{k}={v}" for k, v in self.trigger.condition.items())
+            lines.insert(0, f"%% trigger: {self.trigger.source} ({cond_str})")
+
         for node in self.nodes:
-            lines.append(f"    {node.id}[{node.id}]")
+            label = f"{node.id}\\n{node.profile}"
+            if node.skill:
+                label += f" [{node.skill}]"
+            if node.type == "subworkflow":
+                lines.append(f"    {node.id}(({{label}}))".replace("{label}", label))
+            elif node.foreach:
+                lines.append(f'    {node.id}{{{{{label}}}}}')
+            else:
+                lines.append(f"    {node.id}[{label}]")
         lines.append("")
         for node in self.nodes:
             for dep in node.depends_on:
-                label = f"|{node.condition}|" if node.condition else ""
-                lines.append(f"    {dep} -->{label} {node.id}")
+                edge_label = f"|{node.condition}|" if node.condition else ""
+                lines.append(f"    {dep} -->{edge_label} {node.id}")
         return "\n".join(lines)
+
+
+def strip_template_var(expr: str) -> str:
+    """Strip a ${...} template-variable wrapper, returning the inner key.
+
+    "${nodes.plan.output.spec_path}" → "nodes.plan.output.spec_path"
+    If the string isn't wrapped, returns it unchanged.
+    """
+    if expr.startswith("${") and expr.endswith("}"):
+        return expr[2:-1]
+    return expr
 
 
 def resolve_template(template: str, context: dict) -> str:

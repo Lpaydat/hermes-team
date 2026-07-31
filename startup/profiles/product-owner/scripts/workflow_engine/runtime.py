@@ -16,10 +16,11 @@ import json
 import time
 import sqlite3
 import logging
+import subprocess
 import threading
 import uuid
 
-from .model import Workflow, Node, resolve_template, evaluate_condition
+from .model import Workflow, Node, resolve_template, evaluate_condition, strip_template_var
 from .store import TemplateStore
 from .kanban_adapter import (
     create_card,
@@ -28,6 +29,7 @@ from .kanban_adapter import (
     find_cards_by_idempotency_key,
     find_recent_completions,
     validate_output,
+    validate_against_schema,
     board_db_path,
 )
 
@@ -689,9 +691,9 @@ class Engine:
                 continue
 
             deps_done = all(
-                inst.node_states.get(dep, NodeState(instance_id="", node_id="")).status == NodeStatus.DONE
+                (dep_ns.status == NodeStatus.DONE)
                 for dep in node.depends_on
-                if dep in inst.node_states  # only check deps that exist in the instance
+                if (dep_ns := inst.node_states.get(dep)) is not None  # only check deps that exist in the instance
             )
             # If any dep is not in inst.node_states, it might be a valid template dep
             # not yet tracked — treat as not-done
@@ -701,6 +703,35 @@ class Engine:
 
             if node.condition and not evaluate_condition(node.condition, ctx):
                 continue
+
+            # INPUT SCHEMA VALIDATION: if the node declares an input schema,
+            # verify all required variables are present in the resolved context
+            # before dispatching. Missing inputs → FAILED (not DISPATCHED).
+            if node.input and node.input.schema:
+                required = node.input.schema.get("required", [])
+                missing = []
+                for req_var in required:
+                    # Check if the required variable is in context
+                    # Variables may be referenced as ${nodes.X.output.key} or flat keys
+                    if req_var not in ctx and f"nodes.{req_var}" not in ctx:
+                        missing.append(req_var)
+                if missing:
+                    log.warning(
+                        "INPUT VALIDATION FAILED node %s on %s: missing required inputs %s",
+                        node.id, inst.board, missing,
+                    )
+                    self.state.update_node_state(
+                        inst.instance_id, node.id, NodeStatus.FAILED, None,
+                        {"_validation_error": f"missing required inputs: {missing}"},
+                    )
+                    ns = inst.node_states.get(node.id)
+                    if ns:
+                        ns.status = NodeStatus.FAILED
+                    actions.append(
+                        f"INPUT VALIDATION FAILED node {node.id} on {inst.board}: "
+                        f"missing required inputs: {missing}"
+                    )
+                    continue
 
             if node.foreach:
                 # Foreach node: resolve the list, create one card per item.
@@ -726,8 +757,9 @@ class Engine:
         # Check if all nodes done → complete instance
         if wf.nodes:
             all_done = all(
-                inst.node_states.get(node.id, NodeState(instance_id="", node_id="")).status == NodeStatus.DONE
+                ns is not None and ns.status == NodeStatus.DONE
                 for node in wf.nodes
+                for ns in [inst.node_states.get(node.id)]
             )
             if all_done:
                 # Verify all cards are actually done on the board (not just in state).
@@ -756,7 +788,16 @@ class Engine:
         return actions
 
     def _dispatch_node(self, inst: WorkflowInstance, node: Node, ctx: dict) -> tuple[bool, str]:
-        """Create a kanban card for a node. Idempotent via find_cards_by_idempotency_key."""
+        """Create a kanban card for a node. Idempotent via find_cards_by_idempotency_key.
+
+        Branches on node.card_mode:
+          - "template" (default): create a single card with the resolved body.
+          - "delegate": create a meta-card assigned to the node's profile. The
+            profile creates child cards itself (dev-dispatch pattern).
+          - "chain": create a parent card + N child cards with parent-child links.
+            The node body_template may contain a JSON list of child specs; each
+            child card links to the parent via --parent.
+        """
         body = resolve_template(node.body_template or "", ctx)
         idem_key = f"wf:{inst.instance_id}:{node.id}"
 
@@ -769,11 +810,62 @@ class Engine:
             return True, existing[0].id
 
         workspace = f"dir:{inst.project_dir}" if inst.project_dir else None
+
+        if node.card_mode == "delegate":
+            return self._dispatch_delegate_node(inst, node, body, idem_key, workspace)
+        elif node.card_mode == "chain":
+            return self._dispatch_chain_node(inst, node, body, idem_key, workspace)
+        else:
+            # Default: "template" mode — single card with resolved body
+            ok, output = create_card(
+                board=inst.board,
+                title=f"[{node.id}] {node.skill or 'task'}",
+                assignee=node.profile,
+                body=body,
+                idempotency_key=idem_key,
+                priority=10,
+                workspace=workspace,
+            )
+
+            if not ok:
+                return False, output
+
+            try:
+                data = json.loads(output)
+                card_id = data.get("id", "")
+            except (json.JSONDecodeError, TypeError):
+                card_id = ""
+
+            if card_id:
+                self.state.update_node_state(
+                    inst.instance_id, node.id, NodeStatus.DISPATCHED, card_id
+                )
+                return True, card_id
+
+            return False, "no card id in output"
+
+    def _dispatch_delegate_node(self, inst: WorkflowInstance, node: Node, body: str,
+                                idem_key: str, workspace: str | None) -> tuple[bool, str]:
+        """Delegate mode: create a meta-card assigned to the node's profile.
+
+        The profile is responsible for creating child cards itself. The
+        meta-card's body instructs the profile what to do.
+        """
+        delegate_body = (
+            body or ""
+        )
+        if not delegate_body.strip():
+            delegate_body = (
+                f"[DELEGATE] You are responsible for node '{node.id}'. "
+                f"Create child kanban cards as needed to complete this work. "
+                f"Skill: {node.skill or 'general'}."
+            )
+
         ok, output = create_card(
             board=inst.board,
-            title=f"[{node.id}] {node.skill or 'task'}",
+            title=f"[{node.id}] delegate: {node.skill or node.profile}",
             assignee=node.profile,
-            body=body,
+            body=delegate_body,
             idempotency_key=idem_key,
             priority=10,
             workspace=workspace,
@@ -796,6 +888,87 @@ class Engine:
 
         return False, "no card id in output"
 
+    def _dispatch_chain_node(self, inst: WorkflowInstance, node: Node, body: str,
+                             idem_key: str, workspace: str | None) -> tuple[bool, str]:
+        """Chain mode: create a parent card + N child cards with parent-child links.
+
+        The node's body_template may contain a JSON list of child specs, e.g.:
+          [{"id": "child1", "title": "...", "assignee": "..."}, ...]
+
+        If the body is not a JSON list, we create a single parent card.
+        Each child card links to the parent via --parent, forming a chain.
+        """
+        # Parse child specs from the body (if it's a JSON list)
+        child_specs: list[dict] = []
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, list):
+                child_specs = parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Create the parent card first
+        parent_ok, parent_output = create_card(
+            board=inst.board,
+            title=f"[{node.id}] chain (parent)",
+            assignee=node.profile,
+            body=body if not child_specs else f"[CHAIN] Parent card for {node.id}. {len(child_specs)} children.",
+            idempotency_key=idem_key,
+            priority=10,
+            workspace=workspace,
+        )
+
+        if not parent_ok:
+            return False, parent_output
+
+        try:
+            parent_data = json.loads(parent_output)
+            parent_card_id = parent_data.get("id", "")
+        except (json.JSONDecodeError, TypeError):
+            parent_card_id = ""
+
+        if not parent_card_id:
+            return False, "no parent card id in output"
+
+        # Create child cards linked to the parent
+        child_ids: list[str] = []
+        for idx, spec in enumerate(child_specs):
+            if not isinstance(spec, dict):
+                continue
+            child_idem = f"{idem_key}:chain:{idx}"
+            child_title = spec.get("title", f"[{node.id}] child {idx}")
+            child_assignee = spec.get("assignee", node.profile)
+            child_body = spec.get("body", "")
+
+            existing_child = find_cards_by_idempotency_key(inst.board, child_idem)
+            if existing_child:
+                child_ids.append(existing_child[0].id)
+                continue
+
+            cok, cout = create_card(
+                board=inst.board,
+                title=child_title,
+                assignee=child_assignee,
+                body=child_body,
+                idempotency_key=child_idem,
+                priority=10,
+                workspace=workspace,
+                parent=parent_card_id,
+            )
+            if cok:
+                try:
+                    cdata = json.loads(cout)
+                    cid = cdata.get("id", "")
+                    if cid:
+                        child_ids.append(cid)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        self.state.update_node_state(
+            inst.instance_id, node.id, NodeStatus.DISPATCHED, parent_card_id
+        )
+        return True, parent_card_id
+
     def _dispatch_foreach_node(self, inst: WorkflowInstance, node: Node, ctx: dict) -> tuple[bool, str]:
         """Dispatch a foreach node: resolve the list, create one card per item.
 
@@ -811,10 +984,7 @@ class Engine:
         # Resolve the foreach variable to a list
         foreach_var = node.foreach
         # Strip ${...} wrapper to get the context key
-        if foreach_var.startswith("${") and foreach_var.endswith("}"):
-            var_key = foreach_var[2:-1]
-        else:
-            var_key = foreach_var
+        var_key = strip_template_var(foreach_var)
         items = ctx.get(var_key)
 
         if items is None:
@@ -905,7 +1075,7 @@ class Engine:
         child_context = {}
         for key, expr in node.input_mapping.items():
             if isinstance(expr, str) and expr.startswith("${") and expr.endswith("}"):
-                var_key = expr[2:-1]
+                var_key = strip_template_var(expr)
                 child_context[key] = ctx.get(var_key, "")
             else:
                 child_context[key] = expr
@@ -990,7 +1160,7 @@ class Engine:
         mapped_output = {"_child_instance": child_instance_id}
         for parent_key, child_expr in node.output_mapping.items():
             if isinstance(child_expr, str) and child_expr.startswith("${") and child_expr.endswith("}"):
-                child_var = child_expr[2:-1]
+                child_var = strip_template_var(child_expr)
                 mapped_output[parent_key] = child_outputs.get(child_var, "")
             else:
                 mapped_output[parent_key] = child_expr
@@ -1005,22 +1175,9 @@ class Engine:
 
         # Apply hard output validation if the parent node declares an output schema
         if node.output and node.output.schema:
-            from .kanban_adapter import validate_output as validate_metadata
-            try:
-                import jsonschema
-                jsonschema.validate(instance=mapped_output, schema=node.output.schema)
-            except ImportError:
-                for req in node.output.schema.get("required", []):
-                    if req not in mapped_output:
-                        log.warning("VALIDATION FAILED subworkflow node %s: missing %s", node.id, req)
-                        self.state.update_node_state(
-                            inst.instance_id, node.id, NodeStatus.FAILED, None, mapped_output
-                        )
-                        ns.status = NodeStatus.FAILED
-                        ns.output = mapped_output
-                        return mapped_output
-            except Exception as e:
-                log.warning("VALIDATION FAILED subworkflow node %s: %s", node.id, e)
+            valid, err = validate_against_schema(mapped_output, node.output.schema)
+            if not valid:
+                log.warning("VALIDATION FAILED subworkflow node %s: %s", node.id, err)
                 self.state.update_node_state(
                     inst.instance_id, node.id, NodeStatus.FAILED, None, mapped_output
                 )
@@ -1094,6 +1251,77 @@ class Engine:
 
                             actions += self._start_from_trigger(wf, board, card)
 
+            elif wf.trigger.source == "bead_ready":
+                actions += self._check_bead_trigger(wf)
+
+        return actions
+
+    def _check_bead_trigger(self, wf: Workflow) -> list[str]:
+        """Check for ready beads matching this workflow's trigger condition.
+
+        Runs `bd ready --json` in the project directory and starts a workflow
+        instance for each matching bead. Bead ID flows into trigger context.
+        """
+        actions = []
+        project_dir = self._board_to_project_dir("") or "."
+
+        try:
+            result = subprocess.run(
+                ["bd", "ready", "--json"],
+                capture_output=True, text=True, timeout=10,
+                cwd=project_dir,
+            )
+            if result.returncode != 0:
+                return actions
+            beads = json.loads(result.stdout)
+        except (FileNotFoundError, json.JSONDecodeError, subprocess.TimeoutExpired):
+            return actions
+
+        if not isinstance(beads, list):
+            return actions
+
+        condition = wf.trigger.condition if wf.trigger else {}
+        bead_type = condition.get("type", "")
+        bead_label = condition.get("label", "")
+
+        for bead in beads:
+            bead_id = bead.get("id", "")
+            if not bead_id:
+                continue
+            if bead_type and bead.get("type") != bead_type:
+                continue
+            if bead_label and bead_label not in bead.get("labels", []):
+                continue
+
+            trig_key = f"trig:{wf.id}:bead:{bead_id}"
+            conn = _db_connect(self.state.db_path)
+            try:
+                existing = conn.execute(
+                    "SELECT 1 FROM trigger_keys WHERE key = ?", (trig_key,)
+                ).fetchone()
+                if existing:
+                    conn.close()
+                    continue
+                conn.execute(
+                    "INSERT OR IGNORE INTO trigger_keys (key, created_at) VALUES (?, ?)",
+                    (trig_key, int(time.time())),
+                )
+                conn.commit()
+            except sqlite3.OperationalError as e:
+                log.warning("bead trigger dedup failed: %s", e)
+                conn.close()
+                continue
+            conn.close()
+
+            trigger_ctx = {"bead_id": bead_id, "trigger_source": "bead_ready"}
+            instance_id = self._create_instance(
+                wf, board="", project_dir=project_dir,
+                trigger_context=trigger_ctx,
+            )
+            actions.append(
+                f"STARTED workflow {wf.id} from bead trigger: {bead_id} → {instance_id}"
+            )
+
         return actions
 
     def _matches_trigger(self, card, condition: dict) -> bool:
@@ -1117,11 +1345,8 @@ class Engine:
             elif key == "title_prefix":
                 if not (card.title or "").startswith(expected):
                     return False
-            elif key == "title_not_prefix":
-                if (card.title or "").startswith(expected):
-                    return False
-            elif key.startswith("title_not_prefix"):
-                # Handle title_not_prefix2 etc.
+            elif key == "title_not_prefix" or key.startswith("title_not_prefix"):
+                # Handle title_not_prefix, title_not_prefix2, etc.
                 if (card.title or "").startswith(expected):
                     return False
         return True
@@ -1139,13 +1364,38 @@ class Engine:
             meta = {}
         return meta
 
-    def _start_from_trigger(self, wf: Workflow, board: str, trigger_card) -> list[str]:
-        """Start a new workflow instance from a trigger card."""
-        meta = self._extract_metadata(trigger_card)
+    def _create_instance(self, wf: Workflow, board: str, project_dir: str,
+                         trigger_context: dict, parent_instance_id: str | None = None) -> WorkflowInstance:
+        """Build a WorkflowInstance, initialize node_states, persist it.
 
+        Shared by _start_from_trigger (card_completed/bead_ready triggers) and
+        start_manual (manual/subworkflow starts).
+        """
         unique = uuid.uuid4().hex[:8]
         instance_id = f"wf_{int(time.time())}_{wf.id}_{unique}"
         now = int(time.time())
+
+        inst = WorkflowInstance(
+            instance_id=instance_id,
+            workflow_id=wf.id,
+            board=board,
+            project_dir=project_dir,
+            trigger_context=trigger_context,
+            parent_instance_id=parent_instance_id,
+            created_at=now,
+        )
+
+        for node in wf.nodes:
+            inst.node_states[node.id] = NodeState(
+                instance_id=instance_id, node_id=node.id
+            )
+
+        self.state.create_instance(inst)
+        return inst
+
+    def _start_from_trigger(self, wf: Workflow, board: str, trigger_card) -> list[str]:
+        """Start a new workflow instance from a trigger card."""
+        meta = self._extract_metadata(trigger_card)
 
         trigger_context = {
             "card_id": trigger_card.id,
@@ -1156,22 +1406,8 @@ class Engine:
 
         project_dir = self._board_to_project_dir(board)
 
-        inst = WorkflowInstance(
-            instance_id=instance_id,
-            workflow_id=wf.id,
-            board=board,
-            project_dir=project_dir,
-            trigger_context=trigger_context,
-            created_at=now,
-        )
-
-        for node in wf.nodes:
-            inst.node_states[node.id] = NodeState(
-                instance_id=instance_id, node_id=node.id
-            )
-
-        self.state.create_instance(inst)
-        return [f"STARTED workflow {wf.id} ({instance_id}) on {board} — triggered by card {trigger_card.id}"]
+        inst = self._create_instance(wf, board, project_dir, trigger_context)
+        return [f"STARTED workflow {wf.id} ({inst.instance_id}) on {board} — triggered by card {trigger_card.id}"]
 
     def _boards_to_check(self) -> list[str]:
         """Get list of boards to check for triggers."""
@@ -1209,24 +1445,6 @@ class Engine:
         if not wf:
             raise ValueError(f"Workflow template not found: {workflow_id}")
 
-        unique = uuid.uuid4().hex[:8]
-        instance_id = f"wf_{int(time.time())}_{workflow_id}_{unique}"
-        now = int(time.time())
-
-        inst = WorkflowInstance(
-            instance_id=instance_id,
-            workflow_id=workflow_id,
-            board=board,
-            project_dir=project_dir,
-            trigger_context=context or {},
-            created_at=now,
-        )
-
-        for node in wf.nodes:
-            inst.node_states[node.id] = NodeState(
-                instance_id=instance_id, node_id=node.id
-            )
-
-        self.state.create_instance(inst)
-        log.info("Started workflow %s (%s)", workflow_id, instance_id)
-        return instance_id
+        inst = self._create_instance(wf, board, project_dir, context or {})
+        log.info("Started workflow %s (%s)", workflow_id, inst.instance_id)
+        return inst.instance_id

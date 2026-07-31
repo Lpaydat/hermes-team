@@ -6,7 +6,7 @@ The engine never talks to the board without going through this layer.
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+import contextlib
 import json
 import sqlite3
 import subprocess
@@ -33,6 +33,21 @@ class CardInfo:
 
 def board_db_path(board: str) -> Path:
     return KANBAN_HOME / board / "kanban.db"
+
+
+@contextlib.contextmanager
+def _connect(db: Path):
+    """Context manager for opening a board DB with Row factory.
+
+    Handles the connect → row_factory → close pattern shared by all board
+    read functions. Yields the connection, closes it on exit.
+    """
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def run_kanban(board: str, args: list[str]) -> tuple[bool, str]:
@@ -62,6 +77,7 @@ def create_card(
     idempotency_key: str | None = None,
     priority: int | None = None,
     workspace: str | None = None,
+    parent: str | None = None,
 ) -> tuple[bool, str]:
     """Create a kanban card. Returns (success, card_id_or_error)."""
     args = ["create", title, "--assignee", assignee]
@@ -73,6 +89,8 @@ def create_card(
         args += ["--priority", str(priority)]
     if workspace:
         args += ["--workspace", workspace]
+    if parent:
+        args += ["--parent", parent]
     args += ["--json"]
     return run_kanban(board, args)
 
@@ -83,9 +101,7 @@ def get_card(board: str, card_id: str) -> CardInfo | None:
     if not db.exists():
         return None
 
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
-    try:
+    with _connect(db) as conn:
         row = conn.execute(
             """SELECT id, title, assignee, status, idempotency_key, completed_at
                FROM tasks WHERE id = ?""",
@@ -101,8 +117,6 @@ def get_card(board: str, card_id: str) -> CardInfo | None:
             idempotency_key=row["idempotency_key"],
             completed_at=row["completed_at"],
         )
-    finally:
-        conn.close()
 
 
 def get_card_metadata(board: str, card_id: str) -> dict:
@@ -111,9 +125,7 @@ def get_card_metadata(board: str, card_id: str) -> dict:
     if not db.exists():
         return {}
 
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
-    try:
+    with _connect(db) as conn:
         row = conn.execute(
             """SELECT metadata, summary FROM task_runs
                WHERE task_id = ? AND outcome = 'completed'
@@ -128,8 +140,6 @@ def get_card_metadata(board: str, card_id: str) -> dict:
         except (json.JSONDecodeError, TypeError):
             pass
         return {"metadata": meta, "summary": row["summary"] or ""}
-    finally:
-        conn.close()
 
 
 def find_cards_by_idempotency_key(board: str, key: str) -> list[CardInfo]:
@@ -138,9 +148,7 @@ def find_cards_by_idempotency_key(board: str, key: str) -> list[CardInfo]:
     if not db.exists():
         return []
 
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
-    try:
+    with _connect(db) as conn:
         rows = conn.execute(
             """SELECT id, title, assignee, status, idempotency_key, completed_at
                FROM tasks WHERE idempotency_key = ?""",
@@ -157,8 +165,6 @@ def find_cards_by_idempotency_key(board: str, key: str) -> list[CardInfo]:
             )
             for r in rows
         ]
-    finally:
-        conn.close()
 
 
 def find_recent_completions(board: str, since_ts: int) -> list[CardInfo]:
@@ -167,9 +173,7 @@ def find_recent_completions(board: str, since_ts: int) -> list[CardInfo]:
     if not db.exists():
         return []
 
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
-    try:
+    with _connect(db) as conn:
         rows = conn.execute(
             """SELECT t.id, t.title, t.assignee, t.status, t.idempotency_key,
                       t.completed_at, r.metadata, r.summary
@@ -200,8 +204,29 @@ def find_recent_completions(board: str, since_ts: int) -> list[CardInfo]:
                 )
             )
         return cards
-    finally:
-        conn.close()
+
+
+def validate_against_schema(instance: dict, schema: dict) -> tuple[bool, str]:
+    """Validate a dict against a JSON Schema.
+
+    Uses jsonschema if available, otherwise falls back to a minimal
+    required-field check. Returns (valid, error_message).
+
+    Shared by validate_output (board card metadata) and subworkflow
+    completion (in-memory mapped_output).
+    """
+    try:
+        from jsonschema import validate
+        validate(instance=instance, schema=schema)
+        return True, ""
+    except ImportError:
+        # jsonschema not installed — do a minimal required-field check
+        for key in schema.get("required", []):
+            if key not in instance:
+                return False, f"Missing required field: {key}"
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 
 
 def validate_output(board: str, card_id: str, schema: dict) -> tuple[bool, str]:
@@ -211,17 +236,4 @@ def validate_output(board: str, card_id: str, schema: dict) -> tuple[bool, str]:
     """
     info = get_card_metadata(board, card_id)
     metadata = info.get("metadata", {})
-
-    try:
-        from jsonschema import validate, ValidationError
-
-        validate(instance=metadata, schema=schema)
-        return True, ""
-    except ImportError:
-        # jsonschema not installed — do a minimal required-field check
-        for key in schema.get("required", []):
-            if key not in metadata:
-                return False, f"Missing required field: {key}"
-        return True, ""
-    except Exception as e:
-        return False, str(e)
+    return validate_against_schema(metadata, schema)

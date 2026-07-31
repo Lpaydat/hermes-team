@@ -180,7 +180,7 @@ class FakeWorld:
         rt.create_card = self._fake_create_card
 
     def _fake_create_card(self, board, title, assignee, body="", idempotency_key=None,
-                          priority=None, workspace=None):
+                          priority=None, workspace=None, parent=None):
         """Write directly to the fake board DB instead of calling hermes CLI."""
         db = self.tmpdir / "boards" / board / "kanban.db"
         # Use a counter to avoid timestamp collisions when multiple cards created in same ms
