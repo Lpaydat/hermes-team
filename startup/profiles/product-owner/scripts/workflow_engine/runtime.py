@@ -564,6 +564,20 @@ class Engine:
             if not ns or ns.status != NodeStatus.DISPATCHED:
                 continue
 
+            # SUBWORKFLOW completion: check if child instance is done
+            child_instance_id = ns.output.get("_child_instance") if ns.output else None
+            if child_instance_id:
+                child_output = self._check_subworkflow_completion(inst, node, ns, child_instance_id)
+                if child_output is not None:
+                    actions.append(f"DONE subworkflow node {node.id} (child {child_instance_id}) on {inst.board}")
+                else:
+                    # Check if child is still active
+                    child_active = self._is_instance_active(child_instance_id)
+                    if not child_active:
+                        # Child completed but wasn't detected — check manually
+                        actions.append(f"WARNING subworkflow node {node.id}: child {child_instance_id} no longer active")
+                continue
+
             # FOREACH completion: check all child cards
             foreach_cards = ns.output.get("_foreach_cards") if ns.output else None
             if foreach_cards is not None:
@@ -642,8 +656,8 @@ class Engine:
             elif card.status == "blocked":
                 actions.append(f"BLOCKED node {node.id} (card {ns.card_id}) — waiting for dynamic children")
             elif card.status in ("todo", "ready", "running"):
-                # Card regressed from done back to todo — flag it
-                actions.append(f"WARNING node {node.id}: card {ns.card_id} status is '{card.status}' (not done/blocked)")
+                # Normal states for a dispatched card — no action needed
+                pass
 
         # PHASE 1b: Check DONE nodes for card regression (card flipped back to
         # todo/ready/running after the node was already marked done).
@@ -695,6 +709,13 @@ class Engine:
                     actions.append(f"DISPATCHED node {node.id} (foreach: {msg} cards) on {inst.board}")
                 else:
                     actions.append(f"FAILED to dispatch foreach node {node.id} on {inst.board}: {msg}")
+            elif node.type == "subworkflow":
+                # Subworkflow node: start child workflow, block until it completes.
+                ok, msg = self._dispatch_subworkflow_node(inst, node, ctx)
+                if ok:
+                    actions.append(f"DISPATCHED node {node.id} (subworkflow: {node.workflow_ref}) on {inst.board} → child {msg}")
+                else:
+                    actions.append(f"FAILED to dispatch subworkflow node {node.id} on {inst.board}: {msg}")
             else:
                 ok, msg = self._dispatch_node(inst, node, ctx)
                 if ok:
@@ -865,6 +886,169 @@ class Engine:
             ns.card_id = card_ids[0] if card_ids else None
             ns.output = output
         return True, str(len(card_ids))
+
+    def _dispatch_subworkflow_node(self, inst: WorkflowInstance, node: Node, ctx: dict) -> tuple[bool, str]:
+        """Dispatch a subworkflow node: start a child workflow instance.
+
+        The child runs independently (its own nodes dispatch on subsequent ticks).
+        The parent node blocks in DISPATCHED state with _child_instance in output.
+        On each tick, _check_subworkflow_completion checks if the child is done.
+        """
+        if not node.workflow_ref:
+            return False, "subworkflow node missing workflow_ref"
+
+        child_wf = self.store.load(node.workflow_ref)
+        if not child_wf:
+            return False, f"child workflow template not found: {node.workflow_ref}"
+
+        # Resolve input mappings from parent context
+        child_context = {}
+        for key, expr in node.input_mapping.items():
+            if isinstance(expr, str) and expr.startswith("${") and expr.endswith("}"):
+                var_key = expr[2:-1]
+                child_context[key] = ctx.get(var_key, "")
+            else:
+                child_context[key] = expr
+        # Always pass board + project_dir
+        child_context.setdefault("board", inst.board)
+        child_context.setdefault("parent_instance", inst.instance_id)
+        child_context.setdefault("parent_node", node.id)
+
+        # Check if child already started (idempotency)
+        existing_child = inst.node_states.get(node.id, NodeState("", "")).output.get("_child_instance")
+        if existing_child and self._is_instance_active(existing_child):
+            return True, existing_child
+
+        # Start the child workflow
+        child_id = self.start_manual(
+            workflow_id=node.workflow_ref,
+            board=inst.board,
+            project_dir=inst.project_dir,
+            context=child_context,
+        )
+
+        # Store child instance ID in node output
+        output = {"_child_instance": child_id}
+        self.state.update_node_state(
+            inst.instance_id, node.id, NodeStatus.DISPATCHED, None, output
+        )
+        ns = inst.node_states.get(node.id)
+        if ns:
+            ns.status = NodeStatus.DISPATCHED
+            ns.output = output
+
+        return True, child_id
+
+    def _check_subworkflow_completion(self, inst: WorkflowInstance, node: Node,
+                                       ns: NodeState, child_instance_id: str) -> dict | None:
+        """Check if a child workflow instance has completed.
+
+        Returns the child's aggregated output if complete, None if still running.
+        When complete, maps child outputs to parent via output_mapping.
+        """
+        conn = _db_connect(self.state.db_path)
+        try:
+            row = conn.execute(
+                "SELECT status FROM workflow_instances WHERE instance_id = ?",
+                (child_instance_id,),
+            ).fetchone()
+            if not row:
+                return None
+            if row["status"] != "completed":
+                return None
+        except sqlite3.OperationalError:
+            conn.close()
+            return None
+        conn.close()
+
+        # Child is complete — read its final node outputs
+        child_wf = self.store.load(node.workflow_ref)
+        if not child_wf:
+            return {}
+
+        # Collect outputs from all child nodes
+        conn2 = _db_connect(self.state.db_path)
+        try:
+            ns_rows = conn2.execute(
+                "SELECT node_id, output FROM node_states WHERE instance_id = ? AND status = 'done'",
+                (child_instance_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            conn2.close()
+            return {}
+        conn2.close()
+
+        # Build child context (all node outputs)
+        child_outputs = {}
+        for ns_row in ns_rows:
+            node_id = ns_row["node_id"]
+            output = json.loads(ns_row["output"]) if ns_row["output"] else {}
+            for k, v in output.items():
+                child_outputs[f"nodes.{node_id}.output.{k}"] = v
+
+        # Map child outputs to parent node output via output_mapping
+        mapped_output = {"_child_instance": child_instance_id}
+        for parent_key, child_expr in node.output_mapping.items():
+            if isinstance(child_expr, str) and child_expr.startswith("${") and child_expr.endswith("}"):
+                child_var = child_expr[2:-1]
+                mapped_output[parent_key] = child_outputs.get(child_var, "")
+            else:
+                mapped_output[parent_key] = child_expr
+
+        # If no output_mapping specified, flatten all child outputs
+        if not node.output_mapping:
+            for k, v in child_outputs.items():
+                # Strip the "nodes.X.output." prefix for flat access
+                if ".output." in k:
+                    flat_key = k.split(".output.", 1)[1]
+                    mapped_output[flat_key] = v
+
+        # Apply hard output validation if the parent node declares an output schema
+        if node.output and node.output.schema:
+            from .kanban_adapter import validate_output as validate_metadata
+            try:
+                import jsonschema
+                jsonschema.validate(instance=mapped_output, schema=node.output.schema)
+            except ImportError:
+                for req in node.output.schema.get("required", []):
+                    if req not in mapped_output:
+                        log.warning("VALIDATION FAILED subworkflow node %s: missing %s", node.id, req)
+                        self.state.update_node_state(
+                            inst.instance_id, node.id, NodeStatus.FAILED, None, mapped_output
+                        )
+                        ns.status = NodeStatus.FAILED
+                        ns.output = mapped_output
+                        return mapped_output
+            except Exception as e:
+                log.warning("VALIDATION FAILED subworkflow node %s: %s", node.id, e)
+                self.state.update_node_state(
+                    inst.instance_id, node.id, NodeStatus.FAILED, None, mapped_output
+                )
+                ns.status = NodeStatus.FAILED
+                ns.output = mapped_output
+                return mapped_output
+
+        # Mark parent node done
+        self.state.update_node_state(
+            inst.instance_id, node.id, NodeStatus.DONE, None, mapped_output
+        )
+        ns.status = NodeStatus.DONE
+        ns.output = mapped_output
+        return mapped_output
+
+    def _is_instance_active(self, instance_id: str) -> bool:
+        """Check if a workflow instance is still active (not completed)."""
+        conn = _db_connect(self.state.db_path)
+        try:
+            row = conn.execute(
+                "SELECT status FROM workflow_instances WHERE instance_id = ?",
+                (instance_id,),
+            ).fetchone()
+            conn.close()
+            return row is not None and row["status"] == "active"
+        except sqlite3.OperationalError:
+            conn.close()
+            return False
 
     def _check_triggers(self) -> list[str]:
         """Check all boards for new card completions that match workflow triggers."""

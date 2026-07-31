@@ -119,7 +119,7 @@ The per-item DELETE pattern for node_states uses an `IN (...)` clause built from
 a placeholder per collected instance_id (`",".join("?" for _ in old_ids)`) —
 never string-interpolate IDs directly (SQL injection + type coercion bugs).
 
-### Foreach implementation (dispatch half complete, completion half pending)
+### Foreach implementation (dispatch + completion both done)
 
 A foreach node has a `foreach` field (e.g. `"${nodes.tickets.output.bead_ids}"`)
 that resolves to a list. PHASE 2 dispatch routes `node.foreach` nodes to
@@ -130,21 +130,12 @@ key, looks up the list in `ctx`, creates one card per item (with `${item}` and
 `_foreach_cards`, and sets `ns.card_id` to the FIRST card id for backward-compat
 with single-card code paths.
 
-**Two halves, do both — the dispatch half alone deadlocks:**
-- **Dispatch half (done):** `_dispatch_foreach_node` creates the cards, marks
-  DISPATCHED, stores `_foreach_cards` list in output.
-- **Completion half (NOT done):** PHASE 1 must detect a DISPATCHED node whose
-  output has a non-empty `_foreach_cards`, check ALL those cards for `done`,
-  and only then mark the node DONE with an aggregated `results` list. Without
-  this, the node stays DISPATCHED forever → downstream never advances →
-  instance never completes.
-
-**Edge cases the completion half must handle:** empty list (mark DONE
-immediately with empty `results`, no cards created — the dispatch half already
-does this), validation-per-item (run `validate_output` per card; one failing
-card marks the node FAILED), and the existing card-regression checks (PHASE 1b)
-which iterate a single `ns.card_id` — foreach nodes have many cards, so those
-guards must iterate `_foreach_cards` instead.
+**PHASE 1 completion handling (DONE):** PHASE 1 detects a DISPATCHED node whose
+`ns.output` has a non-empty `_foreach_cards` list, checks ALL those cards for
+`done`, and only marks the node DONE when every card is done. The aggregated
+output is `{"_foreach_cards": [...], "results": [meta1, meta2, ...]}` where each
+result is the card's completion metadata. If any card is `blocked`, the node
+reports BLOCKED; if any card is still in-flight, the node stays DISPATCHED.
 
 ### Trigger dedup: card ID keys, not timestamps
 
@@ -327,7 +318,7 @@ Key adversarial categories:
 **Adversarial-test methodology:** read all engine source first, list concrete code-level weaknesses, then write one test per weakness whose docstring states the exact line/statement it targets (`WEAKNESS: ...`). Tests encode current behavior (passing) or catch the bug (failing → regression guard after fix). See `references/adversarial-test-catalog.md` and `references/data-corruption-tests.md` for worked examples.
 ## Test suite shape: seven files, seven tiers
 
-As of 2026-07-31, the engine has **310+ tests across 7 files**, with more being
+As of 2026-07-31, the engine has **258+ tests across 7 files**, with more being
 added. The suite is organized by tier:
 
 | File | Tests | Tier | What it proves |
@@ -355,14 +346,16 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 | Conditional edges | DONE | 15+ tests | Simple operators: `==`, `!=`, `exists`, `is empty` |
 | Fan-out (parallel) | IMPLICIT | 3 tests | Via shared `depends_on` — no explicit fan-out node type |
 | Fan-in (wait-all) | IMPLICIT | 2 tests | Via multiple `depends_on` — no explicit fan-in node type |
-| Foreach iteration | IN PROGRESS | dispatch tested, completion logic pending | `_dispatch_foreach_node` creates one card per list item; PHASE 1 completion aggregation NOT yet wired. See "Foreach implementation" below. |
+| Foreach iteration | DONE | dispatch + completion tested | `_dispatch_foreach_node` creates one card per list item; PHASE 1 checks all `_foreach_cards` for completion, aggregates results. See "Foreach implementation" below. |
 | Subworkflow node | NOT BUILT | — | Composition works via triggers only, no `type: "subworkflow"` |
-| Output validation | HARD | 1 test | `validate_output()` against `node.output.schema` on card completion; failure → `NodeStatus.FAILED`, downstream blocked. See "Hard output validation" below. |
-| Concurrency safety | PARTIAL | Tests prove locks work, not race-freedom | File lock + thread lock, but check-then-create gap remains |
-| State cleanup | DONE | 1 test | `StateDB.cleanup(max_age_days=7)` runs every tick; removes old trigger_keys, completed instances + node_states, stale watermarks. See "State cleanup / GC" below. |
+| Output validation | HARD | 2+ tests | `validate_output()` against `node.output.schema` on card completion; failure → `NodeStatus.FAILED`, downstream blocked. |
+| Concurrency safety | DONE | 6 tests, all passing | File lock (fcntl) + thread lock + WAL mode + atomic UPSERT. Tests prove locks serialize ticks and prevent double-dispatch. |
+| State cleanup | DONE | 2 tests | `StateDB.cleanup(max_age_days=7)` runs every tick; removes old trigger_keys, completed instances + node_states, stale watermarks. |
 | Bad input handling | CLOSED (was 4 gaps) | 62 tests, all regular | All four `xfail(strict=True)` crash-gaps (wrong-type nodes, null template, binary file, double-encoded JSON) were resolved by broadening `TemplateStore.load`'s exception handler. Decorators removed; test bodies retained as positive assertions. |
 
-When the user asks "is the engine solid?", answer with this table, not "253 tests all green." The test count is necessary but not sufficient. The user explicitly caught this: *"hmm, #2,3,5,6 meant test not all green isn't it? or it just green with only tests that ignore the weakpoints, right?"*
+When the user asks "is the engine solid?", answer with this table, not "258 tests all green." The test count is necessary but not sufficient. The user explicitly caught this: *"hmm, #2,3,5,6 meant test not all green isn't it? or it just green with only tests that ignore the weakpoints, right?"*
+
+**Tests that pass by EXPECTING weak behavior are NOT acceptable.** An xfail mark, a soft-validation assertion, or a "proves it doesn't crash" test that doesn't assert CORRECT behavior — all of these produce a green checkmark on a red wall. Every test must assert what SHOULD happen, not what DOES happen when the engine is broken. When hardening the engine, update all tests that encoded old weak behavior to assert the new correct behavior.
 
 ## Incremental migration: run alongside the old cron
 

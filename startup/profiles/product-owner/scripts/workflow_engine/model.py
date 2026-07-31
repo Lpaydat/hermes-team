@@ -28,7 +28,11 @@ class NodeOutput:
 
 @dataclass
 class Node:
-    """A single step in the workflow."""
+    """A single step in the workflow.
+
+    type: "task" (default) — creates a kanban card for a profile to execute.
+    type: "subworkflow" — starts a child workflow instance and blocks until it completes.
+    """
     id: str
     profile: str         # which agent profile runs this (e.g. "verifier")
     skill: str           # which skill to load (e.g. "adversarial-review")
@@ -39,6 +43,10 @@ class Node:
     depends_on: list[str] = field(default_factory=list)
     condition: str | None = None  # if set, node only runs when this evaluates true
     foreach: str | None = None     # if set, iterate over a list (e.g. "${nodes.tickets.output.beads}")
+    type: str = "task"             # "task" | "subworkflow"
+    workflow_ref: str = ""         # for type="subworkflow": child workflow template ID
+    input_mapping: dict = field(default_factory=dict)   # params to pass to child workflow
+    output_mapping: dict = field(default_factory=dict)  # child outputs to map back to parent
 
 
 @dataclass
@@ -95,6 +103,10 @@ class Workflow:
                 depends_on=deps,
                 condition=n.get("condition"),
                 foreach=n.get("foreach"),
+                type=n.get("type", "task"),
+                workflow_ref=n.get("workflow_ref", ""),
+                input_mapping=n.get("input_mapping", {}),
+                output_mapping=n.get("output_mapping", {}),
             ))
 
         return cls(
