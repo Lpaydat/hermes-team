@@ -208,6 +208,47 @@ instance completion check in PHASE 1 runs before the child's own completion
 check). This means a subworkflow cycle takes at minimum 3 ticks: dispatch child
 → child completes → parent detects completion. Tests must account for this.
 
+### Command node implementation (zero-token shell execution)
+
+A node with `type: "command"` runs a shell command synchronously within the
+engine tick. No kanban card, no AI agent — zero tokens. This replaces cron
+guard scripts (scan-guard.sh, pipeline-guard.sh, queue-builds.sh, bead-sync).
+
+**Node fields:**
+- `type: "command"` (required)
+- `command: "echo hello"` (required — shell command, supports `${}` variable substitution)
+- `profile` and `skill` are ignored (no agent runs)
+
+**Dispatch (PHASE 2):** routes to `_run_command_node`, which:
+1. Resolves `${}` variables in the command string from context
+2. Runs via `subprocess.run(cmd, shell=True, timeout=300)`
+3. Captures stdout, stderr, exit_code
+4. Parses stdout as JSON if possible, merges keys into output dict
+5. Exit 0 → DONE, non-zero → FAILED
+6. Marks node state immediately (no waiting for next tick)
+
+**CRITICAL: rebuild context after command completion.** Command nodes complete
+synchronously within PHASE 2. Downstream nodes in the SAME tick need to see
+the command's output. Without rebuilding `ctx = inst.context()` after the
+command runs, downstream nodes see stale context (missing the command output)
+and template resolution fails silently (empty card bodies, unresolved variables).
+
+```python
+elif node.type == "command":
+    ok, msg = self._run_command_node(inst, node, ctx)
+    if ok:
+        actions.append(f"DONE node {node.id} (command) on {inst.board}: {msg[:80]}")
+        ctx = inst.context()  # CRITICAL: rebuild so downstream sees output
+```
+
+**Output shape:** `{"exit_code": N, "stdout": "...", "stderr": "...", ...merged_json_keys}`
+
+**Testing gotcha:** `echo '{"key": "value"}'` in `subprocess.run(shell=True)` may
+lose quotes — the shell interprets them. Use `printf '%s' '{"key":"value"}'` or
+write to a temp file and `cat` it. The FakeWorld `_fake_create_card` must also
+store the `body` column — a long-standing bug (body was always empty) that masked
+variable resolution failures in tests.
+
 ### Explicit edges (Edge dataclass)
 
 The engine supports BOTH implicit edges (via `Node.depends_on[]` + `Node.condition`) and explicit edges (via a top-level `"edges"` array in the JSON template). Explicit edges take precedence when present.
@@ -457,8 +498,9 @@ added. The suite is organized by tier:
 | `test_unhappy.py` | 10 | Real unhappy paths | Nonexistent boards, locked DBs, error statuses, schema mismatch |
 | `test_adversarial.py` | 10 | Real adversarial | Trigger chains, state corruption, template hot-reload, workflow storms |
 | `test_explicit_edges.py` | 5 | FakeWorld (mocked) | Explicit edge declarations: basic sequential, conditional routing, fan-out, backwards compat, edge parsing |
+| `test_command.py` | 6 | FakeWorld (mocked) | Command node: basic execution, JSON output parsing, failure handling, command→task data flow, variable substitution, stderr capture |
 
-**Total: 270 tests across 9 files.** All pass, 0 failures, 0 xfail.
+**Total: 276 tests across 10 files.** All pass, 0 failures, 0 xfail.
 
 **Engine location:** `~/.hermes-teams/startup/scripts/workflow_engine/` (shared, NOT profile-specific).
 
@@ -480,6 +522,7 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 | Fan-in (wait-all) | IMPLICIT | 2 tests | Via multiple `depends_on` — no explicit fan-in node type |
 | Foreach iteration | DONE | dispatch + completion tested | `_dispatch_foreach_node` creates one card per list item; PHASE 1 checks all `_foreach_cards` for completion, aggregates results. See "Foreach implementation" below. |
 | Subworkflow node | DONE | 7 tests | `type: "subworkflow"` with `workflow_ref`, `input_mapping`, `output_mapping`. Parent blocks until child completes. Supports 3-level nesting, idempotent dispatch. See "Subworkflow implementation" below. |
+| Command node | DONE | 6 tests (`test_command.py`) | `type: "command"` runs shell scripts synchronously, zero tokens. No kanban card, no agent. stdout parsed as JSON if possible. Exit 0 = DONE, non-zero = FAILED. Context rebuilt after completion for downstream nodes. See "Command node implementation" below. |
 | Output validation | HARD | 2+ tests | `validate_output()` against `node.output.schema` on card completion; failure → `NodeStatus.FAILED`, downstream blocked. |
 | Concurrency safety | DONE | 6 tests, all passing | File lock (fcntl) + thread lock + WAL mode + atomic UPSERT. Tests prove locks serialize ticks and prevent double-dispatch. |
 | State cleanup | DONE | 2 tests | `StateDB.cleanup(max_age_days=7)` runs every tick; removes old trigger_keys, completed instances + node_states, stale watermarks. |
@@ -822,6 +865,7 @@ different domain. The user corrected this directly.
 - **Foreach blocked-check must not call `get_card` 3× per card.** The foreach PHASE 1 completion check originally used `any(get_card(...) and get_card(...).status == "blocked" for c in foreach_cards if get_card(...))` — this calls `get_card` up to 3 times per card in the list (once in the `if` filter, once in the `and` check, once in the condition body). For N cards, that's 3N board queries per tick. Fix: track an `any_blocked` boolean during the main completion loop (where each card is already fetched once), then use `elif any_blocked:` for the blocked-report action. Single pass, N queries total.
 - **Integration test isolation: shared state DB cross-contamination.** The `test_real_trigger_fires_workflow` test asserts on active instance count from `fixture.engine.state.load_active_instances()`. Even though the fixture isolates its OWN state DB, the engine's trigger check scans ALL boards — leftover completed cards from a real pipeline livetest on the livetest board match the trigger condition (`assignee=qa, metadata.verdict=PASS`) and fire extra instances in the test's isolated DB. Symptom: "Expected 1 active instance, got 3." Fix: filter assertions to the SPECIFIC test card (`trigger_context.get("card_id") == trigger_card_id`) rather than asserting on total count. The real pipeline livetest and integration tests share the same board namespace — clean up active instances between runs, or scope assertions to specific trigger cards.
 - **Don't ask permission to fix your own bugs.** When you identify issues in your own work (broken cron wrappers, double-fire bugs, stale state), fix them immediately. The user explicitly rejects being asked "want me to fix this?" for obvious next steps — *\"stop asking for what things you should done long ago already.\"* If you can fix it, fix it. If you genuinely need a human decision (production deployment, irreversible change), THEN ask — but frame it as a decision with tradeoffs, not a yes/no permission request.
+- **FakeWorld `_fake_create_card` must store the `body` column.** A long-standing bug (the INSERT only stored id/title/assignee/status/idempotency_key/created_at — NOT body) meant every card body was empty in FakeWorld tests. This masked variable resolution failures: tests asserted on card existence and status (which worked), but never checked that `${nodes.X.output.Y}` actually resolved in the card body. When a command→task test failed with empty body, the root cause was the FakeWorld mock, not the engine's variable resolution. Always include `body` in the fake INSERT, and when adding new columns to the tasks table, update the mock schema too.
 
 ## Linked files
 
@@ -844,6 +888,7 @@ different domain. The user corrected this directly.
 - `references/round2-review-iterative-bug-introduction.md` — how round-1 code-review fixes introduced 3 new production bugs (input validation key mismatch, conditional-skip deadlock, FAILED-node deadlock). The pattern: fixes need their own review. Two rounds minimum.
 - `references/real-pipeline-pattern.md` — the mini-pipeline.json template + tick-by-tick trace from the real pipeline livetest (build→review→qa with explicit conditional edges). Includes cleanup recipe and what it proves/doesn't prove.
 - `references/or-semantics-edge-routing.md` — how OR semantics for multi-incoming edges solves conditional diamond deadlocks. Includes the AND-vs-OR comparison, the code pattern, and how the bug was discovered via livetest.
-See `references/pipeline-migration-map.md` for the full 8-profile team pipeline diagnosis (all handoffs, escalation chain, cron phases, migration priorities), the complete builder 6-stage workflow with ASCII diagram, and the "prescribe, don't describe" migration planning lesson.
+- `references/pipeline-migration-map.md` for the full 8-profile team pipeline diagnosis (all handoffs, escalation chain, cron phases, migration priorities), the complete builder 6-stage workflow with ASCII diagram, and the "prescribe, don't describe" migration planning lesson.
+- `references/builder-pipeline-analysis.md` — the complete builder workflow: 6 stages (discovery → intake → queue → grill → build → review) with ASCII diagram, cron jobs, and where each stage maps to engine features (foreach for queue, command for scripts, chain for grill+build cards).
 - `references/cron-to-engine-migration-planning.md` — methodology for planning a multi-profile cron→engine migration: the skill-vs-template classification test, coexistence safety via matching idempotency keys, common engine enhancements needed, template patterns for bead_ready/card_completed migrations, and a risk matrix. Distilled from a full 8-profile MIGRATION-PLAN.md.
 - `MIGRATION.md` (in the engine package dir) — 5-phase migration plan for replacing the old cron: QA trigger → bug routing → dispatch → escalation → full pipeline. Documents dynamic workflow support via blocked status.
