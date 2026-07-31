@@ -80,10 +80,89 @@ product-owner → HUMAN_REQUIRED (no higher profile)
 - **QA**: `kanban_chains` for medium/large sessions (fan-out + synthesizer).
 - Engine watches only parent card status. Internal trees are invisible.
 
-## Key Design Constraints
+## Builder Workflow (Complete Pipeline)
 
-1. One PO dispatch card at a time — needs guard
-2. Bug routing bypasses PO — goes directly to debugger
-3. Wayfinder routing by label — different labels → different profiles
-4. Sequential dispatch — beads process one at a time
-5. Merge serialization — verifier holds merge slot
+The builder is a self-contained venture pipeline that mirrors the production
+pipeline for prototype work. Understanding it is essential for writing engine
+templates that cover the full team.
+
+```
+STAGE 1: DISCOVERY (cron-driven)
+  Demand Signal Scan (every 3h) → signals/daily-scan.md
+  RequestHunt Deep Scan (M/W/F 5am) → signals
+
+STAGE 2: IDEA INTAKE (cron 4x/day, agent-driven)
+  pipeline-guard.sh → skip if <3 days
+  Phase 1: INGEST signals
+  Phase 2: SCORE /25 (Pain, Freq, WTP, Comp, WhyNow)
+  Phase 3: DOSSIER — full 13-section writeup
+  Phase 3.5: VERIFY — delegate fact-check subagent
+  Phase 4: UPDATE portfolio.md + idea-bank.md
+
+STAGE 3: QUEUE BUILDS (cron every 6h, zero-token script)
+  queue-builds.sh:
+    1. Read idea-bank.md, sort by score
+    2. Top 10 (Door D always first)
+    3. For each: create TWO kanban cards
+       Card A: "Grill: <name>" → builder (self-grill with PO via RPC)
+       Card B: "Build: <name>" → builder, parent=Card A (chain mode)
+
+STAGE 4: GRILL (kanban card, builder session)
+  Grill: <name> card
+    1. Read dossier from ~/vault/ventures/ideas/<slug>.md
+    2. Draft venture brief (3 pillars: Problem, Core Idea, Core Features)
+    3. Launch PO via grill-rpc (env -u HERMES_KANBAN_* — critical isolation)
+    4. PO identifies design categories → builder creates branches dynamically
+    5. Grill each branch: 20+ Q&A, 3-5 locked decisions per branch
+    6. Validate: bash validate-grill-output.sh
+  OUTPUT: ~/projects/<slug>/context/ (per-branch decision files)
+  COMPLETES → child Build card auto-promotes via parent-child dependency
+
+STAGE 5: BUILD (kanban card, builder session)
+  Build: <name> card
+    1. Read grill decisions from ~/projects/<slug>/context/
+    2. POC GATE: test riskiest assumption (technical risk → POC first)
+    3. Pick prototype type (HTML demo / API+dashboard)
+    4. Write verify script at /tmp/verify-<slug>.py
+    5. loop_engine (2 phases: build prototype, write README — each with verify gate)
+    6. Write review handoff (portfolio.md "Awaiting Review" + kanban comment)
+  OUTPUT: ~/projects/<slug>/prototype/ + ~/projects/<slug>/README.md
+
+STAGE 6: USER REVIEW (interactive — human reviews prototype)
+  User reviews → 5 feedback paths (triaged by prototype-iteration skill):
+    EXECUTION → "Fix X" → rebuild directly (no grill)
+    DESIGN → "Wrong audience" → re-grill specific change → rebuild
+    NEW IDEA → "Different product" → Door D intake → full pipeline
+    PROMOTE → "Ship it" → project-promotion → dispatch to PO (NOT tech-lead)
+    SHELVE → "Not now" → mark in portfolio.md
+```
+
+**Engine migration candidates from builder:**
+- `queue-builds.sh` → `foreach` node iterating over scored ideas, creating grill+build card pairs via `card_mode: "chain"`
+- The grill→build parent-child dependency → explicit edge with no condition (sequential)
+- `project-promotion` dispatch → trigger (user "Ship it") or edge to PO
+
+**Key constraint:** the builder's grill session launches PO as a subagent via
+file-based RPC (`env -u HERMES_KANBAN_*`). This is NOT the same as the engine
+dispatching a card to PO — it's a synchronous RPC within a single builder card.
+The engine should NOT try to model this as two nodes; it stays inside one
+builder card (the engine sees `blocked` while the grill runs).
+
+## Migration Planning Lesson: Prescribe, Don't Describe
+
+When the user asks you to diagnose the pipeline for migration, **the goal is to
+write the replacement templates, not describe what exists.** The user's
+frustration when 11 subagents produced descriptive output:
+
+> *what a waste. what you inform subagents to research? why all of them got only so fucking shit result?*
+
+**The wrong question:** "Read all profile files and describe what each profile does."
+This produced 3,735 lines of analysis concluding "4 profiles need zero migration
+because they just receive cards." That's describing the problem, not solving it.
+
+**The right question:** "Write the full dev-pipeline.json that replaces the old
+cron end-to-end. Output working templates, not analysis."
+
+The "receives cards" conclusion is backwards — **the engine exists to CREATE the
+cards those profiles receive.** Every "receives cards" profile IS a migration
+target. The user caught this instantly.

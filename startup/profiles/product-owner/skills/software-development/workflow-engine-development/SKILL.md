@@ -746,8 +746,51 @@ The user's methodology when told about unproven gaps: *"why not prove and test a
 
 When a livetest reveals a bug (like the double-trigger bug or the OR-semantics deadlock), fix it immediately, then re-run the livetest to prove the fix works. Don't stop at "found the bug" — prove the fix.
 
+## Migration planning: prescribe, don't describe
+
+When the user asks you to diagnose the pipeline for migration, **the goal is to
+write the replacement templates, not describe what exists.** The user's exact
+frustration when 11 subagents produced descriptive output:
+
+> *shit. do this.*
+
+> *what a waste. what you inform subagents to research? why all of them got only so fucking shit result?*
+
+**The wrong question (what I asked):** "Read all profile files and describe
+what each profile does, its triggers, its handoffs, and write JSON node
+definitions." This produced 3,735 lines of descriptive analysis that concluded
+"4 profiles need zero migration because they just receive cards."
+
+**The right question (what I should have asked):** "Write the full
+dev-pipeline.json template that replaces the old cron end-to-end. For each cron
+phase, write the actual JSON. For each inter-profile handoff, decide if it's an
+engine edge, a trigger, or stays manual. Output working templates, not
+analysis."
+
+The difference: **prescriptive vs descriptive.** Diagnosis without prescription
+is waste. When the user says "diagnose and give me a migration plan," they want
+working templates and a concrete wiring sequence, not a 982-line document that
+concludes "most things should stay as they are."
+
+### The "receives cards" conceptual trap
+
+Saying "these profiles don't need migration because they just receive cards" is
+backwards. **The engine exists to CREATE the cards those profiles receive.**
+Of course they receive cards — the question is whether THIS ENGINE should be
+what sends those cards instead of 696 lines of imperative cron Python. Every
+"profile receives cards" IS a migration target. The user caught this instantly:
+
+> *wire. if we don't need workflow engine or graph engine then why we create this? and the `receives cards` is what I asked you to do isn't it? this engine should be able to create kanban cards for next task that specific agent need to do. what you said is that everything this messy is correct*
+
+### Naming: it's a "workflow engine"
+
+Call it a **workflow engine**, not a "graph engine." It executes workflows —
+sequences of tasks with conditions and routing. Graph algorithms are a
+different domain. The user corrected this directly.
+
 ## Pitfalls
 
+- **When the user asks about engine issues, don't list unrelated broken systems.** The user asked "tough test and all pass? no issues at all atm?" and I responded with 7 issues including broken scout, disabled researcher skills, and dormant beads-watchdog — none of which are engine issues. The user's correction: *\"filter to only those related to the workflow.\"* Stay on topic. When asked about the engine, report engine issues only.
 - **Generic infrastructure does NOT belong inside a specific profile's directory.** If a tool, script, or engine serves all profiles (not just the one that happened to build it), it belongs at `~/.hermes-teams/startup/scripts/` (or a similar shared level), NOT `startup/profiles/<builder>/scripts/`. The user caught this: *"why put it in product-owner and even in profiles/? can other workflow use it?"* When you build something generic, place it generically from the start — moving it later requires updating all path references (templates dir, state DB path, cron job script path, test fixtures) and risks breakage if any reference is missed.
 - **Real boards default created cards to `ready` status, not `todo`.** The engine's `create_card` calls `hermes kanban create`, which sets `status='ready'` for assignable cards on real boards. When writing tests against real boards, assert `status in ("todo", "ready")` — don't hardcode `"todo"`. FakeWorld (monkey-patched) boards may differ since they bypass the real CLI status assignment.
 - **`_simulate_completion` must set `started_at` if it was NULL.** The real `task_runs` table has `started_at INTEGER NOT NULL`. If you simulate a completion on a card that never went through the dispatcher (no `started_at` set), the INSERT fails. Use `UPDATE tasks SET started_at=COALESCE(started_at, ?)` before inserting the task_run. Similarly, `task_runs.outcome='completed'` is the filter that `get_card_metadata` and `find_recent_completions` query on — any other value makes the card invisible to the adapter.
@@ -801,5 +844,6 @@ When a livetest reveals a bug (like the double-trigger bug or the OR-semantics d
 - `references/round2-review-iterative-bug-introduction.md` — how round-1 code-review fixes introduced 3 new production bugs (input validation key mismatch, conditional-skip deadlock, FAILED-node deadlock). The pattern: fixes need their own review. Two rounds minimum.
 - `references/real-pipeline-pattern.md` — the mini-pipeline.json template + tick-by-tick trace from the real pipeline livetest (build→review→qa with explicit conditional edges). Includes cleanup recipe and what it proves/doesn't prove.
 - `references/or-semantics-edge-routing.md` — how OR semantics for multi-incoming edges solves conditional diamond deadlocks. Includes the AND-vs-OR comparison, the code pattern, and how the bug was discovered via livetest.
-- `references/pipeline-migration-map.md` — full 8-profile team pipeline diagnosis (all handoffs, escalation chain, cron phases, migration priorities) for replacing the old cron with declarative workflow templates.
+See `references/pipeline-migration-map.md` for the full 8-profile team pipeline diagnosis (all handoffs, escalation chain, cron phases, migration priorities), the complete builder 6-stage workflow with ASCII diagram, and the "prescribe, don't describe" migration planning lesson.
+- `references/cron-to-engine-migration-planning.md` — methodology for planning a multi-profile cron→engine migration: the skill-vs-template classification test, coexistence safety via matching idempotency keys, common engine enhancements needed, template patterns for bead_ready/card_completed migrations, and a risk matrix. Distilled from a full 8-profile MIGRATION-PLAN.md.
 - `MIGRATION.md` (in the engine package dir) — 5-phase migration plan for replacing the old cron: QA trigger → bug routing → dispatch → escalation → full pipeline. Documents dynamic workflow support via blocked status.

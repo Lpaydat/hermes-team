@@ -22,15 +22,15 @@
       "schedule_display": "30 */3 * * *",
       "repeat": {
         "times": null,
-        "completed": 216
+        "completed": 217
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-03T13:08:22.790689+07:00",
-      "next_run_at": "2026-08-01T00:30:00+07:00",
-      "last_run_at": "2026-07-31T21:30:49.319655+07:00",
+      "next_run_at": "2026-08-01T03:30:00+07:00",
+      "last_run_at": "2026-08-01T00:43:09.944243+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -154,17 +154,17 @@
       "schedule_display": "0 */6 * * *",
       "repeat": {
         "times": null,
-        "completed": 33
+        "completed": 34
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-23T17:39:46.560337+07:00",
-      "next_run_at": "2026-08-01T00:00:00+07:00",
-      "last_run_at": "2026-07-31T18:00:46.875879+07:00",
-      "last_status": "error",
-      "last_error": "Script exited with code 141",
+      "next_run_at": "2026-08-01T06:00:00+07:00",
+      "last_run_at": "2026-08-01T00:00:51.419301+07:00",
+      "last_status": "ok",
+      "last_error": null,
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
@@ -175,5 +175,5 @@
       "fire_claim": null
     }
   ],
-  "updated_at": "2026-07-31T21:30:49.320066+07:00"
+  "updated_at": "2026-08-01T00:43:09.944692+07:00"
 }
