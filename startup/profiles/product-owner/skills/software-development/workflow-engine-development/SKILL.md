@@ -558,6 +558,28 @@ The engine is designed to replace the 645-line cron one phase at a time. The app
 
 **Do not do a big-bang replacement.** Each phase migration is independently testable and reversible.
 
+### Cron job wiring: script path resolution (critical)
+
+The Hermes cron daemon resolves `script` paths **relative to the owning profile's `scripts/` directory**. Since the engine lives at `startup/scripts/workflow_engine/` (shared, not profile-specific), a direct `script:` reference fails with "Script not found." You need a **wrapper script** inside the PO profile's scripts dir:
+
+```python
+#!/usr/bin/env python3
+"""Wrapper — runs the shared engine tick from its real location."""
+from pathlib import Path
+engine_main = Path.home() / ".hermes-teams/startup/scripts/workflow_engine/main.py"
+exec(open(engine_main).read())
+```
+
+Place it at `startup/profiles/product-owner/scripts/wf-engine-tick.py` and set `script: "wf-engine-tick.py"` in the cron job. The cronjob tool's `action="update"` with `script=` updates the definition. **Do not use subdirectory paths** (`workflow_engine/main.py`) — the cron rejects path traversal. **Do not use absolute paths** — rejected as "must be relative."
+
+Verify the cron is actually succeeding by querying the executions DB:
+```python
+import sqlite3
+conn = sqlite3.connect(str(Path.home() / ".hermes-teams/startup/profiles/product-owner/cron/executions.db"))
+rows = conn.execute("SELECT status, error FROM executions WHERE job_id='94e735a11be6' ORDER BY rowid DESC LIMIT 1").fetchone()
+```
+A `status=completed` with no error means the wrapper is working. A `status=failed` with `Script not found:` means the path resolution is wrong.
+
 ## Incremental validation before full integration
 
 The user's methodology for testing new systems: **start small, prove the
@@ -766,4 +788,5 @@ When a livetest reveals a bug (like the double-trigger bug or the OR-semantics d
 - `references/round2-review-iterative-bug-introduction.md` — how round-1 code-review fixes introduced 3 new production bugs (input validation key mismatch, conditional-skip deadlock, FAILED-node deadlock). The pattern: fixes need their own review. Two rounds minimum.
 - `references/real-pipeline-pattern.md` — the mini-pipeline.json template + tick-by-tick trace from the real pipeline livetest (build→review→qa with explicit conditional edges). Includes cleanup recipe and what it proves/doesn't prove.
 - `references/or-semantics-edge-routing.md` — how OR semantics for multi-incoming edges solves conditional diamond deadlocks. Includes the AND-vs-OR comparison, the code pattern, and how the bug was discovered via livetest.
+- `references/pipeline-migration-map.md` — full 8-profile team pipeline diagnosis (all handoffs, escalation chain, cron phases, migration priorities) for replacing the old cron with declarative workflow templates.
 - `MIGRATION.md` (in the engine package dir) — 5-phase migration plan for replacing the old cron: QA trigger → bug routing → dispatch → escalation → full pipeline. Documents dynamic workflow support via blocked status.
