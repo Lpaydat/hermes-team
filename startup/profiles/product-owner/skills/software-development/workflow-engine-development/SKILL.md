@@ -542,7 +542,7 @@ added. The suite is organized by tier:
 | `test_schedule_wait.py` | 7 | FakeWorld (mocked) | Schedule node (cron fire/block/step), wait node (immediate/blocks/empty), scheduled trigger |
 | `test_schedule_wait_adversarial.py` | 26 | FakeWorld (mocked) | Adversarial schedule/wait: dedup, invalid cron, comma/range/step syntax, chaining, multi-wait convergence, diamond with schedule, combined schedule+command+wait+task |
 
-**Total: 299 tests across 12 files.** All pass, 0 failures, 0 xfail.
+**Total: 299 tests across 12 formal suites** (plus `test_command_adversarial.py`, a 10-scenario diagnostic script that prints results but isn't a pass/fail suite). All pass, 0 failures, 0 xfail.
 
 **Engine location:** `~/.hermes-teams/startup/scripts/workflow_engine/` (shared, NOT profile-specific).
 
@@ -940,4 +940,5 @@ different domain. The user corrected this directly.
 - `references/pipeline-migration-map.md` for the full 8-profile team pipeline diagnosis (all handoffs, escalation chain, cron phases, migration priorities), the complete builder 6-stage workflow with ASCII diagram, and the "prescribe, don't describe" migration planning lesson.
 - `references/builder-pipeline-analysis.md` — the complete builder workflow: 6 stages (discovery → intake → queue → grill → build → review) with ASCII diagram, cron jobs, and where each stage maps to engine features (foreach for queue, command for scripts, chain for grill+build cards).
 - `references/cron-to-engine-migration-planning.md` — methodology for planning a multi-profile cron→engine migration: the skill-vs-template classification test, coexistence safety via matching idempotency keys, common engine enhancements needed, template patterns for bead_ready/card_completed migrations, and a risk matrix. Distilled from a full 8-profile MIGRATION-PLAN.md.
+- `references/template-patterns.md` — reusable JSON template patterns distilled from the builder pipeline migration: scheduled+command guard, zero-token pure command cron replacement, title_prefix trigger matching, command chain for setup→dispatch, wait node as promotion gate. Includes the 5 builder template inventory and available `${trigger.*}` variables.
 - `MIGRATION.md` (in the engine package dir) — 5-phase migration plan for replacing the old cron: QA trigger → bug routing → dispatch → escalation → full pipeline. Documents dynamic workflow support via blocked status.
