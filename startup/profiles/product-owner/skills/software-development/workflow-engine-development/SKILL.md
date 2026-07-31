@@ -298,14 +298,18 @@ The engine supports BOTH implicit edges (via `Node.depends_on[]` + `Node.conditi
 }
 ```
 
-**Runtime behavior (PHASE 2) — OR semantics (critical):**
+**Runtime behavior (PHASE 2) — AND/OR edge semantics (critical, hard-won):**
 - When `wf.edges` is non-empty, the runtime resolves dependencies by finding all edges pointing TO each node
-- **OR semantics for multi-incoming edges:** a node activates if ANY incoming edge has its source DONE + condition passing. This is critical for conditional diamonds — a `ship` node with edges from both `review→ship (PASS)` and `re-review→ship (PASS)` must dispatch when EITHER source is done+condition-passes, not wait for BOTH. AND semantics (all sources must be DONE) deadlocks conditional routing because one branch is always SKIPPED.
+- **Edges WITHOUT a `condition` field use AND semantics** (dependency convergence): ALL source nodes must be DONE before the target activates. This is correct for fan-in: `go` with edges from `w1` and `w2` must wait for BOTH.
+- **Edges WITH a `condition` field use OR semantics** (conditional diamond routing): ANY source DONE + condition passing activates the node. This is critical for conditional diamonds — a `ship` node with conditional edges from both `review→ship (PASS)` and `re-review→ship (PASS)` must dispatch when EITHER source is done+condition-passes.
+- **The activation rule:** `has_active_edge = unconditional_ok AND (conditional_ok OR not conditional)` — all unconditional deps done AND at least one conditional edge passes (or no conditional edges exist).
 - Edges from SKIPPED/FAILED sources are ignored (not blocking) — they're dead branches
 - If ALL sources reach terminal state but none activated, the node is SKIPPED
 - `to_mermaid` renders explicit edges when present, implicit depends_on edges when not
 
-**Proven via livetest (2026-07-31):** the `dev-review-loop.json` template has a conditional diamond: review→PASS:ship, review→FAIL:fix→re-review→PASS:ship. When review=PASS, `fix` and `re-review` get SKIPPED, and `ship` dispatches via the `review→ship` edge despite `re-review` being skipped. Without OR semantics, `ship` would deadlock because `re-review→ship` source is SKIPPED.
+**The bug that taught this (2026-07-31, found via adversarial test):** the initial implementation used pure OR for ALL edges — a node dispatched if ANY incoming edge source was DONE. This worked for conditional diamonds but BROKE dependency convergence: a `go` node with unconditional edges from `w1` (done) and `w2` (still pending) would dispatch prematurely because w1's edge satisfied OR. The fix: separate unconditional edges (AND) from conditional edges (OR) and require both groups to pass.
+
+**Proven via livetest (2026-07-31):** the `dev-review-loop.json` template has a conditional diamond: review→PASS:ship, review→FAIL:fix→re-review→PASS:ship. When review=PASS, `fix` and `re-review` get SKIPPED, and `ship` dispatches via the `review→ship` conditional edge despite `re-review` being skipped. AND verified: `test_multiple_waits_one_blocks` proves unconditional convergence requires ALL deps done.
 
 **Backwards compatibility:** templates without an `"edges"` key use the original implicit `depends_on` + `condition` path. No changes needed to existing templates.
 
@@ -519,7 +523,7 @@ Key adversarial categories:
 **Adversarial-test methodology:** read all engine source first, list concrete code-level weaknesses, then write one test per weakness whose docstring states the exact line/statement it targets (`WEAKNESS: ...`). Tests encode current behavior (passing) or catch the bug (failing → regression guard after fix). See `references/adversarial-test-catalog.md` and `references/data-corruption-tests.md` for worked examples.
 ## Test suite shape: eight files, eight tiers
 
-As of 2026-07-31, the engine has **270+ tests across 9 files**, with more being
+As of 2026-07-31, the engine has **299 tests across 12 files**, with more being
 added. The suite is organized by tier:
 
 | File | Tests | Tier | What it proves |
@@ -534,9 +538,11 @@ added. The suite is organized by tier:
 | `test_adversarial.py` | 10 | Real adversarial | Trigger chains, state corruption, template hot-reload, workflow storms |
 | `test_explicit_edges.py` | 5 | FakeWorld (mocked) | Explicit edge declarations: basic sequential, conditional routing, fan-out, backwards compat, edge parsing |
 | `test_command.py` | 6 | FakeWorld (mocked) | Command node: basic execution, JSON output parsing, failure handling, command→task data flow, variable substitution, stderr capture |
+| `test_command_adversarial.py` | 10 | FakeWorld (mocked) | Adversarial command: shell injection (blocked via shlex.quote), 100KB output, binary output, empty command, chained commands, foreach command, empty profile, file side effects, undefined variables |
 | `test_schedule_wait.py` | 7 | FakeWorld (mocked) | Schedule node (cron fire/block/step), wait node (immediate/blocks/empty), scheduled trigger |
+| `test_schedule_wait_adversarial.py` | 26 | FakeWorld (mocked) | Adversarial schedule/wait: dedup, invalid cron, comma/range/step syntax, chaining, multi-wait convergence, diamond with schedule, combined schedule+command+wait+task |
 
-**Total: 283 tests across 11 files.** All pass, 0 failures, 0 xfail.
+**Total: 299 tests across 12 files.** All pass, 0 failures, 0 xfail.
 
 **Engine location:** `~/.hermes-teams/startup/scripts/workflow_engine/` (shared, NOT profile-specific).
 
@@ -549,7 +555,7 @@ create its own file, not modify existing ones.
 
 The engine has features at different maturity levels. **Do not claim "solid" or "done" without checking this table.** A green test suite that includes xfail tests, soft validation, and unbounded-growth tests is a green checkmark on a red wall — the count masks weakpoints.
 
-The engine now has **5 node types** (`task`, `command`, `subworkflow`, `schedule`, `wait`) and **4 trigger sources** (`card_completed`, `bead_ready`, `scheduled`, `manual`). When asked about capabilities, reference this table.
+The engine now has **5 node types** (`task`, `command`, `subworkflow`, `schedule`, `wait`) and **4 trigger sources** (`card_completed`, `bead_ready`, `scheduled`, `manual`). When asked about capabilities, reference this table. The AND/OR edge semantics (unconditional edges = AND convergence, conditional edges = OR routing) was the hardest-won lesson this session.
 
 | Feature | Status | Tested? | Notes |
 |---------|--------|---------|-------|
@@ -561,9 +567,10 @@ The engine now has **5 node types** (`task`, `command`, `subworkflow`, `schedule
 | Foreach iteration | DONE | dispatch + completion tested | `_dispatch_foreach_node` creates one card per list item; PHASE 1 checks all `_foreach_cards` for completion, aggregates results. See "Foreach implementation" below. |
 | Subworkflow node | DONE | 7 tests | `type: "subworkflow"` with `workflow_ref`, `input_mapping`, `output_mapping`. Parent blocks until child completes. Supports 3-level nesting, idempotent dispatch. See "Subworkflow implementation" below. |
 | Command node | DONE | 6 tests (`test_command.py`) | `type: "command"` runs shell scripts synchronously, zero tokens. No kanban card, no agent. stdout parsed as JSON if possible. Exit 0 = DONE, non-zero = FAILED. Context rebuilt after completion for downstream nodes. See "Command node implementation" below. |
-| Schedule node | DONE | 7 tests (`test_schedule_wait.py`) | `type: "schedule"` blocks until a cron expression fires. Full cron syntax (*, specific values, ranges, step values `*/n`). Fires once per matching minute, then marks DONE. Empty schedule fires immediately. See "Schedule and wait node implementation" below. |
-| Wait node | DONE | (same suite) | `type: "wait"` polls a condition string each tick until it evaluates true. Uses same condition format as `node.condition`. Stays PENDING until condition passes, then marks DONE. Empty condition fires immediately. See "Schedule and wait node implementation" below. |
+| Schedule node | DONE | 7+26 tests | `type: "schedule"` blocks until a cron expression fires. Full cron syntax (*, specific values, ranges, step values `*/n`). Fires once per matching minute, then marks DONE. Empty schedule fires immediately. |
+| Wait node | DONE | (same suite) | `type: "wait"` polls a condition string each tick until it evaluates true. Uses same condition format as `node.condition`. Stays PENDING until condition passes, then marks DONE. Empty condition fires immediately. |
 | Scheduled trigger | DONE | (same suite) | `source: "scheduled"` starts a workflow on a cron schedule. Condition field: `{"schedule": "0 9 * * 1"}`. Dedup via trigger_keys prevents re-firing within same minute. |
+| AND/OR edge semantics | DONE | 26 adversarial tests | Unconditional edges (no condition field) = AND (all sources must be DONE — convergence). Conditional edges (has condition) = OR (any condition passes — diamond routing). Activation: `unconditional_ok AND (conditional_ok OR not conditional)`. |
 | Output validation | HARD | 2+ tests | `validate_output()` against `node.output.schema` on card completion; failure → `NodeStatus.FAILED`, downstream blocked. |
 | Concurrency safety | DONE | 6 tests, all passing | File lock (fcntl) + thread lock + WAL mode + atomic UPSERT. Tests prove locks serialize ticks and prevent double-dispatch. |
 | State cleanup | DONE | 2 tests | `StateDB.cleanup(max_age_days=7)` runs every tick; removes old trigger_keys, completed instances + node_states, stale watermarks. |
@@ -928,7 +935,8 @@ different domain. The user corrected this directly.
 - `references/dead-field-grep-technique.md` — code-review technique for catching "vapor config": fields that are parsed but never read by the runtime. Grep the execution layer, not the parse layer.
 - `references/round2-review-iterative-bug-introduction.md` — how round-1 code-review fixes introduced 3 new production bugs (input validation key mismatch, conditional-skip deadlock, FAILED-node deadlock). The pattern: fixes need their own review. Two rounds minimum.
 - `references/real-pipeline-pattern.md` — the mini-pipeline.json template + tick-by-tick trace from the real pipeline livetest (build→review→qa with explicit conditional edges). Includes cleanup recipe and what it proves/doesn't prove.
-- `references/or-semantics-edge-routing.md` — how OR semantics for multi-incoming edges solves conditional diamond deadlocks. Includes the AND-vs-OR comparison, the code pattern, and how the bug was discovered via livetest.
+- `references/and-or-edge-semantics.md` — how AND (unconditional/convergence) + OR (conditional/diamond) edge semantics work together. The bug that pure-OR caused premature dispatch, the fix separating edge types, and proof points from livetest + adversarial tests.
+- `references/or-semantics-edge-routing.md` — (legacy) how OR semantics for multi-incoming edges solves conditional diamond deadlocks. Superseded by `and-or-edge-semantics.md` which adds the AND case for convergence.
 - `references/pipeline-migration-map.md` for the full 8-profile team pipeline diagnosis (all handoffs, escalation chain, cron phases, migration priorities), the complete builder 6-stage workflow with ASCII diagram, and the "prescribe, don't describe" migration planning lesson.
 - `references/builder-pipeline-analysis.md` — the complete builder workflow: 6 stages (discovery → intake → queue → grill → build → review) with ASCII diagram, cron jobs, and where each stage maps to engine features (foreach for queue, command for scripts, chain for grill+build cards).
 - `references/cron-to-engine-migration-planning.md` — methodology for planning a multi-profile cron→engine migration: the skill-vs-template classification test, coexistence safety via matching idempotency keys, common engine enhancements needed, template patterns for bead_ready/card_completed migrations, and a risk matrix. Distilled from a full 8-profile MIGRATION-PLAN.md.
