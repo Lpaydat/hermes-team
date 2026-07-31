@@ -256,11 +256,11 @@ This preserves:
 - Cross-workflow composition (qa-loop → re-verify → qa-loop recursion)
 - Trigger chains (A output triggers B)
 - Parallel children (one card triggers B and C)
+While preventing both self-trigger loops AND cross-workflow double-fire from explicit-edge workflows.
 
-While preventing:
-- Infinite self-trigger loops (qa-loop's own card re-triggering qa-loop)
+**Refinement (2026-07-31, found via livetest):** the same-workflow filter alone was insufficient. A dev-review-loop workflow's verifier card (different workflow_id from qa-loop) still triggered qa-loop, creating two QA cards for one feature. The fix: if the card's parent workflow has explicit edges, it handles routing internally — block ALL trigger-based workflows from firing on that card. Only workflows WITHOUT explicit edges allow cross-workflow triggering (backward compat for trigger-based composition). The implementation extracts the parent workflow_id from the idempotency_key's instance_id segment, loads the parent template, and checks `parent_wf.edges`.
 
-**When you change this filter, update tests that expected the old behavior.** The `test_adv_trigger_on_engine_card` and `test_adv_trigger_self_trigger_engine_card` tests both needed assertion updates — the self-trigger test now correctly asserts `len(new_starts) == 0` instead of `>= 1`.
+**When you change this filter, update tests that expected the old behavior.** The `test_adv_trigger_on_engine_card` and `test_adv_trigger_self_trigger_engine_card` tests both needed assertion updates.
 
 ## Trigger dedup: card ID keys, not timestamps
 
@@ -489,7 +489,7 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 | Card creation modes | DONE | — | `template` (default, single card), `delegate` (meta-card assigned to profile, profile creates children), `chain` (parent card + N child cards with `--parent` links). `create_card` gained `parent` param. |
 | Dynamic coexistence | DOCUMENTED | — | No `kanban_chains` or `loop_engine` integration. Dynamic plugins work independently (the engine doesn't see their cards). The engine supports dynamic workflows via `blocked` status: profiles create children via `kanban_chains`/`loop_engine`, engine watches parent card only. Documented in `MIGRATION.md`. |
 | Card creation modes | DONE | — | `template` (default, single card), `delegate` (meta-card assigned to profile, profile creates children), `chain` (parent card + N child cards with `--parent` links). `create_card` gained `parent` param. |
-| Incremental migration | Phase 1 DONE | — | New engine cron job (`New Workflow Engine — tick`) runs alongside old cron every 1m. 5-phase migration plan in `MIGRATION.md` (QA trigger → bug routing → dispatch → escalation → full pipeline). **Phase 1 EXECUTED (2026-07-31):** old cron's `phase_qa_trigger` commented out in `workflow-engine.py`, new engine's `qa-loop.json` trigger now handles QA card creation exclusively. Old cron still handles: bead-sync, dispatch, scanner. Merged to main, pushed to origin. Engine relocated to `startup/scripts/workflow_engine/` (shared). Rollback: uncomment lines in `workflow-engine.py`. |
+| Incremental migration | Phase 1 DONE + LIVE | — | New engine cron job runs alongside old cron every 1m. Old cron's `phase_qa_trigger` commented out, new engine's `qa-loop.json` handles QA trigger. **Cron wrapper fixed (2026-07-31):** wrapper now injects "tick" into sys.argv — previously printed help and exited 0 silently. **Cross-workflow double-fire fixed (2026-07-31):** engine-created cards from workflows with explicit edges no longer trigger separate trigger-based workflows. Engine relocated to `startup/scripts/workflow_engine/` (shared). |
 
 When the user asks "is the engine solid?", answer with this table, not "265 tests all green." The test count is necessary but not sufficient. The user explicitly caught this: *"hmm, #2,3,5,6 meant test not all green isn't it? or it just green with only tests that ignore the weakpoints, right? and does this graph engine support fan-out/in yet? and conditional edges too?"*
 
@@ -571,6 +571,18 @@ exec(open(engine_main).read())
 ```
 
 Place it at `startup/profiles/product-owner/scripts/wf-engine-tick.py` and set `script: "wf-engine-tick.py"` in the cron job. The cronjob tool's `action="update"` with `script=` updates the definition. **Do not use subdirectory paths** (`workflow_engine/main.py`) — the cron rejects path traversal. **Do not use absolute paths** — rejected as "must be relative."
+
+**CRITICAL: the wrapper must inject "tick" into sys.argv.** The shared `main.py` uses argparse with subcommands (`tick`, `list`, `render`, etc.). When the cron runs the wrapper with no arguments, `sys.argv` is `['wf-engine-tick.py']` — argparse sees no subcommand, defaults to `print_help()`, and exits 0. The cron reports `status=completed` but the engine **never ticked**. This is a silent failure — everything looks green but no work happens.
+
+Fix: the wrapper must set `sys.argv` explicitly:
+
+```python
+sys.argv = [str(engine_main)] + sys.argv[1:]
+if len(sys.argv) == 1:
+    sys.argv.append("tick")  # default to tick if no subcommand
+```
+
+**Verify the cron is actually ticking**, not just completing — query the executions DB AND check for engine actions in the output. A `status=completed` with no engine actions in the cron output dir means the wrapper printed help instead of ticking.
 
 Verify the cron is actually succeeding by querying the executions DB:
 ```python
@@ -766,6 +778,7 @@ When a livetest reveals a bug (like the double-trigger bug or the OR-semantics d
 - **When you add a kwarg to `create_card`, update the FakeWorld `_fake_create_card` mock signature too.** The FakeWorld harness monkey-patches `rt.create_card = self._fake_create_card`. If the adapter gains a new parameter (e.g. `parent=None` for chain mode) and the mock's signature doesn't include it, every dispatch call crashes with `TypeError: _fake_create_card() got an unexpected keyword argument 'parent'` — and because the mock is set once in `__init__`, the error doesn't surface until the first tick. **Any change to `create_card`'s signature requires a matching change to `_fake_create_card` in `test_engine.py`** (and any other file that defines its own fake). The Pyright LSP catches the adapter-side call (`No parameter named "parent"`), but does NOT catch the mock-side mismatch because the mock is assigned at runtime via attribute injection. Search for `_fake_create_card` across all test files when you touch `create_card`.
 - **Foreach blocked-check must not call `get_card` 3× per card.** The foreach PHASE 1 completion check originally used `any(get_card(...) and get_card(...).status == "blocked" for c in foreach_cards if get_card(...))` — this calls `get_card` up to 3 times per card in the list (once in the `if` filter, once in the `and` check, once in the condition body). For N cards, that's 3N board queries per tick. Fix: track an `any_blocked` boolean during the main completion loop (where each card is already fetched once), then use `elif any_blocked:` for the blocked-report action. Single pass, N queries total.
 - **Integration test isolation: shared state DB cross-contamination.** The `test_real_trigger_fires_workflow` test asserts on active instance count from `fixture.engine.state.load_active_instances()`. Even though the fixture isolates its OWN state DB, the engine's trigger check scans ALL boards — leftover completed cards from a real pipeline livetest on the livetest board match the trigger condition (`assignee=qa, metadata.verdict=PASS`) and fire extra instances in the test's isolated DB. Symptom: "Expected 1 active instance, got 3." Fix: filter assertions to the SPECIFIC test card (`trigger_context.get("card_id") == trigger_card_id`) rather than asserting on total count. The real pipeline livetest and integration tests share the same board namespace — clean up active instances between runs, or scope assertions to specific trigger cards.
+- **Don't ask permission to fix your own bugs.** When you identify issues in your own work (broken cron wrappers, double-fire bugs, stale state), fix them immediately. The user explicitly rejects being asked "want me to fix this?" for obvious next steps — *\"stop asking for what things you should done long ago already.\"* If you can fix it, fix it. If you genuinely need a human decision (production deployment, irreversible change), THEN ask — but frame it as a decision with tradeoffs, not a yes/no permission request.
 
 ## Linked files
 
