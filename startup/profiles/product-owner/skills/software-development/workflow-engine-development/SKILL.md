@@ -220,15 +220,45 @@ The engine supports BOTH implicit edges (via `Node.depends_on[]` + `Node.conditi
 }
 ```
 
-**Runtime behavior (PHASE 2):**
+**Runtime behavior (PHASE 2) — OR semantics (critical):**
 - When `wf.edges` is non-empty, the runtime resolves dependencies by finding all edges pointing TO each node
-- Skip propagation: if a dependency is SKIPPED or FAILED, the downstream node is also marked SKIPPED
-- Conditional routing: for nodes with multiple incoming edges, ANY edge whose condition passes activates the node. If no edge condition passes, the node is SKIPPED
+- **OR semantics for multi-incoming edges:** a node activates if ANY incoming edge has its source DONE + condition passing. This is critical for conditional diamonds — a `ship` node with edges from both `review→ship (PASS)` and `re-review→ship (PASS)` must dispatch when EITHER source is done+condition-passes, not wait for BOTH. AND semantics (all sources must be DONE) deadlocks conditional routing because one branch is always SKIPPED.
+- Edges from SKIPPED/FAILED sources are ignored (not blocking) — they're dead branches
+- If ALL sources reach terminal state but none activated, the node is SKIPPED
 - `to_mermaid` renders explicit edges when present, implicit depends_on edges when not
+
+**Proven via livetest (2026-07-31):** the `dev-review-loop.json` template has a conditional diamond: review→PASS:ship, review→FAIL:fix→re-review→PASS:ship. When review=PASS, `fix` and `re-review` get SKIPPED, and `ship` dispatches via the `review→ship` edge despite `re-review` being skipped. Without OR semantics, `ship` would deadlock because `re-review→ship` source is SKIPPED.
 
 **Backwards compatibility:** templates without an `"edges"` key use the original implicit `depends_on` + `condition` path. No changes needed to existing templates.
 
 See `test_explicit_edges.py` (5 tests) for basic sequential, conditional routing, fan-out, backwards compat, and edge parsing verification.
+
+## Self-trigger prevention: same-workflow filter (not blanket wf: block)
+
+Engine-created cards have idempotency keys starting with `wf:`. Two design choices were tried:
+
+1. **BLANKET wf: filter (WRONG):** skip ALL engine-created cards from triggering ANY workflow. This prevents self-trigger loops (qa-loop's own QA card re-triggering qa-loop) BUT also breaks ALL cross-workflow composition (workflow-a's card can't trigger workflow-b). Composition tests fail.
+
+2. **SAME-WORKFLOW filter (CORRECT):** only skip a card if its idempotency_key contains the TRIGGER workflow's own ID. The idempotency_key format is `wf:<instance_id>:<node_id>` where instance_id is `wf_<timestamp>_<workflow_id>_<hash>`. So the check is: does `_{wf.id}_` appear in the instance_id part?
+
+```python
+if card.idempotency_key:
+    idem_parts = card.idempotency_key.split(":")
+    if len(idem_parts) >= 2:
+        instance_part = idem_parts[1]
+        if f"_{wf.id}_" in instance_part:
+            continue  # Same workflow — skip to prevent self-trigger loop
+```
+
+This preserves:
+- Cross-workflow composition (qa-loop → re-verify → qa-loop recursion)
+- Trigger chains (A output triggers B)
+- Parallel children (one card triggers B and C)
+
+While preventing:
+- Infinite self-trigger loops (qa-loop's own card re-triggering qa-loop)
+
+**When you change this filter, update tests that expected the old behavior.** The `test_adv_trigger_on_engine_card` and `test_adv_trigger_self_trigger_engine_card` tests both needed assertion updates — the self-trigger test now correctly asserts `len(new_starts) == 0` instead of `>= 1`.
 
 ## Trigger dedup: card ID keys, not timestamps
 
@@ -593,7 +623,39 @@ After the FakeWorld suite passes, prove the engine against real kanban + real di
 
 1. **Create a minimal 2-node workflow** (e.g., `echo-test.json` — developer writes a file, verifier reads it). The workflow should be simple enough to complete in ~2 minutes but exercise: card creation, dependency resolution, completion detection, metadata reading, instance completion.
 
-### Real pipeline livetest with explicit edges (proven 2026-07-31)
+### Real pipeline livetest with iteration loops (proven 2026-07-31)
+
+The `dev-review-loop.json` template has a conditional diamond that tests both branches:
+- `build` (developer) → `review` (verifier) → conditional split
+- PASS path: `review → ship` (QA tests final result)
+- FAIL path: `review → fix` (developer fixes) → `re-review` (verifier re-reviews) → `re-review → ship`
+
+**Full autonomous cycle proven:**
+1. Engine dispatched `build` → developer wrote `calculate.py` + tests
+2. Engine detected build done → dispatched `review` via explicit edge
+3. Verifier reviewed → PASS verdict in completion metadata
+4. Engine evaluated edges: `review→ship` (PASS condition) activated, `review→fix` (FAIL condition) did not
+5. `fix` SKIPPED, `re-review` SKIPPED (dependency chain dead)
+6. `ship` DISPATCHED — OR semantics correctly dispatched despite `re-review` being skipped
+7. QA tested → completed → **WORKFLOW COMPLETE**
+
+**Key finding:** the OR-semantics fix for explicit edges was discovered during this livetest. The initial AND-semantics implementation caused ALL downstream nodes to be SKIPPED because a node with two incoming edges (one from a skipped branch) required ALL sources to be DONE. The fix: activate on ANY edge whose source is DONE + condition passes.
+
+### Crash/reclaim scenario (proven 2026-07-31)
+
+Simulated the full agent crash → dispatcher reclaim → recovery cycle:
+1. Engine dispatched a card (status=ready)
+2. Agent claimed it (status=running)
+3. Agent "crashed" — card stays in running, lock expires
+4. Dispatcher reclaimed (card back to ready)
+5. Reclaimed agent completed (status=done)
+
+**Engine correctly handled ALL transitions:**
+- Did NOT re-dispatch while card was running (idempotency key prevents double-dispatch)
+- Did NOT re-dispatch after reclaim (idempotency key still matches)
+- Detected completion after reclaim and advanced to next node
+
+The idempotency key (`wf:<instance>:<node>`) is the sole guard against double-dispatch through the entire reclaim cycle. No file lock or thread lock is needed for this — the kanban DB's own idempotency_key column prevents duplicate cards.
 
 After the 2-node echo-test, run a real 3-node pipeline with explicit conditional edges. The `mini-pipeline.json` template proved the full cycle:
 
@@ -683,4 +745,5 @@ The workflow for fixing all adversarial bugs:
 - `references/dead-field-grep-technique.md` — code-review technique for catching "vapor config": fields that are parsed but never read by the runtime. Grep the execution layer, not the parse layer.
 - `references/round2-review-iterative-bug-introduction.md` — how round-1 code-review fixes introduced 3 new production bugs (input validation key mismatch, conditional-skip deadlock, FAILED-node deadlock). The pattern: fixes need their own review. Two rounds minimum.
 - `references/real-pipeline-pattern.md` — the mini-pipeline.json template + tick-by-tick trace from the real pipeline livetest (build→review→qa with explicit conditional edges). Includes cleanup recipe and what it proves/doesn't prove.
+- `references/or-semantics-edge-routing.md` — how OR semantics for multi-incoming edges solves conditional diamond deadlocks. Includes the AND-vs-OR comparison, the code pattern, and how the bug was discovered via livetest.
 - `MIGRATION.md` (in the engine package dir) — 5-phase migration plan for replacing the old cron: QA trigger → bug routing → dispatch → escalation → full pipeline. Documents dynamic workflow support via blocked status.
