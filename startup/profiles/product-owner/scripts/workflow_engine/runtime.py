@@ -767,14 +767,20 @@ class Engine:
 
     def _board_to_project_dir(self, board: str) -> str:
         """Try to map a board name to a project directory."""
-        projects_file = Path.home() / ".hermes-teams/startup/kanban/active-projects.json"
+        projects_file = Path.home() / ".hermes-teams/startup/active-projects.json"
         if projects_file.exists():
             try:
-                projects = json.loads(projects_file.read_text())
-                if board in projects:
-                    return projects[board]
+                data = json.loads(projects_file.read_text())
+                # Handle both formats: {board: path} and {active_projects: [{board, path}]}
+                if "active_projects" in data:
+                    for proj in data["active_projects"]:
+                        if proj.get("board") == board:
+                            return proj.get("path", "")
+                elif board in data:
+                    return data[board]
             except (json.JSONDecodeError, TypeError):
                 pass
+        # Fallback: ~/projects/<board>
         fallback = Path.home() / "projects" / board
         if fallback.exists():
             return str(fallback)
