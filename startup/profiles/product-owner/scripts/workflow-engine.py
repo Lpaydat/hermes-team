@@ -678,10 +678,13 @@ def main():
         except Exception as e:
             all_actions.append(f"scanner ERROR [{name}]: {e}")
 
-        try:
-            all_actions.extend(phase_qa_trigger(board, path))
-        except Exception as e:
-            all_actions.append(f"qa-trigger ERROR [{name}]: {e}")
+        # QA trigger disabled — now handled by new workflow engine
+        # (templates/qa-loop.json + card_completed trigger).
+        # To rollback: uncomment the two lines below.
+        # try:
+        #     all_actions.extend(phase_qa_trigger(board, path))
+        # except Exception as e:
+        #     all_actions.append(f"qa-trigger ERROR [{name}]: {e}")
 
     if all_actions:
         log(f"{len(all_actions)} action(s):")
