@@ -114,7 +114,53 @@ class StateDB:
                 board TEXT PRIMARY KEY,
                 last_ts INTEGER NOT NULL DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS trigger_keys (
+                key TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL
+            );
         """)
+        conn.commit()
+        conn.close()
+
+    def _ensure_schema(self):
+        """Ensure tables exist (handles state DB deletion + recreation)."""
+        db_path = Path(self.db_path)
+        if not db_path.exists():
+            self._init_schema()
+            return
+        # Check if tables exist
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            conn.execute("SELECT 1 FROM workflow_instances LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.close()
+            self._init_schema()
+            return
+        conn.close()
+
+    def _trigger_key_exists(self, key: str) -> bool:
+        """Check if a trigger key has been recorded (dedup)."""
+        self._ensure_schema()
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM trigger_keys WHERE key = ?", (key,)
+            ).fetchone()
+            return row is not None
+        except sqlite3.OperationalError:
+            return False
+        finally:
+            conn.close()
+
+    def _record_trigger_key(self, key: str):
+        """Record a trigger key to prevent re-triggering."""
+        self._ensure_schema()
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute(
+            "INSERT OR IGNORE INTO trigger_keys (key, created_at) VALUES (?, ?)",
+            (key, int(time.time())),
+        )
         conn.commit()
         conn.close()
 
@@ -146,6 +192,7 @@ class StateDB:
         conn.close()
 
     def load_active_instances(self) -> list[WorkflowInstance]:
+        self._ensure_schema()
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -210,6 +257,7 @@ class StateDB:
         conn.close()
 
     def get_watermark(self, board: str) -> int:
+        self._ensure_schema()
         conn = sqlite3.connect(str(self.db_path))
         row = conn.execute(
             "SELECT last_ts FROM trigger_watermark WHERE board = ?", (board,)
@@ -376,22 +424,26 @@ class Engine:
 
             # For card_completed triggers, check recent completions
             if wf.trigger.source == "card_completed":
-                # We need a board to check — get from trigger condition
                 boards = self._boards_to_check()
                 for board in boards:
-                    last_ts = self.state.get_watermark(f"{board}:{wf.id}")
+                    # Use a 1-hour lookback window for trigger detection
+                    # Dedup is handled by the instance idempotency key (card_id based)
                     now = int(time.time())
-                    # Look back 5 minutes (or since last check)
-                    since = max(last_ts, now - 300)
+                    since = now - 3600
 
                     completions = find_recent_completions(board, since)
                     for card in completions:
                         if self._matches_trigger(card, wf.trigger.condition):
+                            # Check if this card already triggered this workflow
+                            # (dedup via idempotency key in the instance)
+                            trig_key = f"trig:{wf.id}:{card.id}"
+                            existing = self.state._trigger_key_exists(trig_key)
+                            if existing:
+                                continue
+
                             # Start a workflow instance for this trigger
                             actions += self._start_from_trigger(wf, board, card)
-                            self.state.set_watermark(f"{board}:{wf.id}", card.completed_at or now)
-                    # Update watermark to now even if no matches
-                    self.state.set_watermark(f"{board}:{wf.id}", now)
+                            self.state._record_trigger_key(trig_key)
 
         return actions
 

@@ -2,7 +2,7 @@
 
 > Branch: `feat/workflow-engine` (off main `58403248`)
 > Location: `~/.hermes-teams/startup/profiles/product-owner/scripts/workflow_engine/`
-> Status: built, 51/51 checks passed, first template (`qa-loop.json`) proven via manual start + card creation
+> Status: built, 51/51 checks + 30/30 integration tests passing, first template (`qa-loop.json`) proven via manual start + card creation
 
 ## Module breakdown
 
@@ -38,12 +38,17 @@ All board access goes through this layer:
 
 ## Tick loop (runtime.py)
 
+**Critical: completions are checked BEFORE pending dispatches (two-phase tick).**
+This was a bug — see `references/workflow-engine-testing-pattern.md` §"tick-ordering fix".
+
 ```
 tick():
   1. Load active instances from StateDB
   2. For each instance:
-     a. Check pending nodes: deps met + condition passes → dispatch (create kanban card)
-     b. Check dispatched nodes: card done → read output metadata, mark node done
+     a. PHASE 1 — Check dispatched nodes for completion FIRST:
+        card done → read output metadata → update state DB + in-memory NodeState
+     b. PHASE 2 — Check pending nodes for dispatch:
+        deps met (may have just completed in phase 1) + condition passes → create card
      c. All nodes done → complete instance
   3. Check triggers: scan recent completions across all boards for trigger matches
      → matched? Start new workflow instance

@@ -2,7 +2,7 @@
 
 The technique for testing the workflow engine (or any board-dependent component)
 without real dispatchers, real gateways, or real beads. Proven on the v1 engine:
-14 integration tests covering the full tick lifecycle, all passing.
+30 integration tests (15 happy paths + 15 edge cases/unhappy paths), all passing.
 
 ## Why fake tests, not e2e livetests
 
@@ -101,7 +101,9 @@ When `start_manual()` is called twice in the same second, both instances get
 the same `instance_id`. Fix: append a UUID suffix:
 `f"wf_{int(time.time())}_{workflow_id}_{uuid.uuid4().hex[:8]}"`.
 
-## Test categories (proven set)
+## Test categories (proven set — 30 tests)
+
+### Happy paths (15)
 
 | Category | What it tests | Example test |
 |----------|--------------|--------------|
@@ -120,6 +122,26 @@ the same `instance_id`. Fix: append a UUID suffix:
 | Restart | New engine resumes mid-workflow | `test_restart_recovery` |
 | Multi-instance | Two instances on same board don't collide | `test_multiple_instances` |
 | Diamond | A→(B,C)→D, D waits for both | `test_branching_workflow` |
+
+### Edge cases & unhappy paths (15)
+
+| Category | What it tests | Example test |
+|----------|--------------|--------------|
+| Circular deps | Two nodes depending on each other don't hang | `test_circular_dependency` |
+| Missing template | Starting unknown workflow raises ValueError | `test_nonexistent_template` |
+| Empty workflow | Zero nodes doesn't crash or falsely complete | `test_empty_workflow` |
+| Trigger dedup | Same card doesn't trigger twice (watermark) | `test_trigger_dedup` |
+| Multi-completion | Two parallel nodes done in one tick → fan-in dispatches | `test_multiple_completions_one_tick` |
+| Malformed metadata | Invalid JSON in metadata doesn't crash engine | `test_malformed_metadata` |
+| No metadata | Card completed with null metadata still advances | `test_no_metadata` |
+| Schema validation | Invalid output doesn't block (soft validation) | `test_output_schema_validation` |
+| Dead branch | Condition never passes → workflow stays active | `test_dead_branch` |
+| Long chain | 5 sequential nodes complete end-to-end | `test_long_chain` |
+| Unknown status | Card in weird status ignored, not done/blocked | `test_unknown_card_status` |
+| Title prefix filter | Trigger respects `title_prefix` to skip probes | `test_trigger_with_title_prefix` |
+| Missing upstream output | Template var resolves to empty, doesn't block | `test_missing_upstream_output` |
+| Multiple triggers | Two different triggers fire on different cards | `test_multiple_triggers_same_board` |
+| Board not found | Operations on nonexistent board return None/[] | `test_board_not_found` |
 
 ## The tick-ordering fix (critical bug)
 
