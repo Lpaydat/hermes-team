@@ -21,6 +21,17 @@ Build declarative workflow engines that orchestrate multi-agent pipelines throug
 - Designing JSON workflow templates with nodes, edges, and conditions
 - Testing engine code that integrates with Hermes kanban or beads
 - Debugging tick-loop ordering, trigger dedup, or state persistence issues
+- Planning a migration from existing cron/scripts to engine templates
+
+## Behavioral rule: discuss vs execute (user-enforced)
+
+**Strategic ambiguity → DISCUSS FIRST.** When facing a design decision with multiple valid approaches (merge systems? reference? replace? which junction first?), lay out options with tradeoffs and let the user choose direction BEFORE writing any code. The user corrected this directly: *"when the task is not clear, you should stop jump to code and discuss or plan first."*
+
+**Tactical clarity → just DO.** When the fix is obvious (broken path, failing test, stale state), execute immediately without asking permission. The user: *"stop asking for what things you should done long ago already."*
+
+These are compatible: the discriminator is clarity, not risk. Unclear direction → discuss. Clear next step → execute.
+
+**Migration discipline: ONE junction at a time.** Don't try to replace everything at once. Pick one handoff point, prove it works, then move to the next. The user: *"let change only one junction."*
 
 ## Core architecture
 
@@ -34,7 +45,7 @@ A workflow engine is a thin scheduler (~300-500 lines) with these components:
 
 **Location:** `~/.hermes-teams/startup/scripts/workflow_engine/` — shared infrastructure, NOT inside any single profile's directory. Generic tools that serve all profiles belong at the `startup/` level alongside `bin/`, `skills/`, and `kanban/`. The user caught this: *"why put it in product-owner and even in profiles/? or in startup/? can this workflow uses by other profile or other team?"*
 
-**Triggers:** `card_completed`, `bead_ready`, `scheduled` (cron), `manual`.
+**Triggers:** `card_completed`, `bead_ready`, `manual`. Scheduling stays in Hermes cron — the engine owns orchestration, not time-based scheduling. See "Hermes cron owns scheduling" below.
 
 ## Key design decisions
 
@@ -166,6 +177,44 @@ output is `{"_foreach_cards": [...], "results": [meta1, meta2, ...]}` where each
 result is the card's completion metadata. If any card is `blocked`, the node
 reports BLOCKED; if any card is still in-flight, the node stays DISPATCHED.
 
+#### Foreach limitations (critical for template design)
+
+1. **Card titles are hardcoded.** `_dispatch_foreach_node` (`runtime.py:1343`)
+   sets `title=f"[{node.id}#{idx}] {node.skill or 'task'}"`. There is no
+   `title_template` field. If a downstream workflow uses a `card_completed`
+   trigger with `title_prefix` matching (e.g., `"Grill:"`), foreach-created
+   cards titled `[queue#0] self-grill` will NEVER trigger it. **Workaround:**
+   use `card_mode: "chain"` with a command node that outputs JSON child specs —
+   chain mode supports custom titles via the `"title"` field in each spec.
+
+2. **No dot-path variable resolution.** `resolve_template()` does flat
+   `str.replace` on context keys. If a foreach item is a dict like
+   `{"slug": "x", "name": "y"}`, then `${item}` renders as the full Python
+   repr (`{'slug': 'x', ...}`), and `${item.slug}` does not resolve at all.
+   **Workaround:** output flat string lists (slugs only), or pre-format the
+   body inside the command node and pass complete strings as foreach items.
+
+#### Design pattern: trigger replaces parent-child dependency
+
+When migrating scripts that create parent-child kanban card pairs (like
+queue-builds.sh's grill->build `--parent` link), **replace the parent-child link
+with a `card_completed` trigger** instead of trying to model it within one
+workflow:
+
+- **Old (script):** `hermes kanban create "Grill: X"` then `hermes kanban create
+  "Build: X" --parent <grill_id>`. Build auto-promotes when grill completes.
+- **New (engine):** Template A creates grill cards. Grill card completes.
+  `card_completed` trigger fires Template B. Template B's build node dispatches.
+
+This is architecturally cleaner: the engine manages each card's lifecycle
+(schema validation, output metadata, advancement) rather than relying on the
+kanban dispatcher's parent-child promotion. It also avoids the silent-stall
+risk where a blocked/failed parent strands the child forever.
+
+The trigger context carries card metadata forward: if the grill card's
+completion metadata includes `slug`, it flows to the build template as
+`${trigger.slug}`.
+
 #### Subworkflow implementation (native node type)
 
 A node with `type: "subworkflow"` starts a child workflow instance instead of
@@ -253,38 +302,31 @@ write to a temp file and `cat` it. The FakeWorld `_fake_create_card` must also
 store the `body` column — a long-standing bug (body was always empty) that masked
 variable resolution failures in tests.
 
-### Schedule and wait node implementation (time-based control flow)
+### Hermes cron owns scheduling (critical design decision)
 
-Two node types for time-based control:
+The engine does NOT do scheduling. It has no cron parser, no `scheduled` trigger source, and no `schedule` node type. These were built and then **removed** after the user pointed out the redundancy — Hermes already has a cron system, so building a second one inside the engine is unnecessary complexity.
 
-**Schedule node (`type: "schedule"`):**
-- Blocks until a cron expression matches the current time
-- Full cron syntax: `* * * * *` (every min), `0 9 * * 1` (Mon 9am), `*/5 * * * *` (every 5 min), `0-30 * * * *` (mins 0-30)
-- Fires once per matching minute (dedup via `_last_fired` timestamp in node output)
-- Empty schedule string fires immediately (no blocking)
-- Once fired, marks DONE permanently (doesn't re-fire)
-- Field: `schedule: "0 3 * * *"`
+The correct separation:
+- **Hermes cron** owns WHEN things run (cron expressions, job lifecycle, delivery to chat platforms)
+- **Engine** owns WHAT runs in sequence (node graph, conditions, edges, card creation)
 
-**Wait node (`type: "wait"`):**
-- Polls a condition string each tick until it evaluates true
+For a workflow that needs to run on a schedule, create a Hermes cron job that calls `main.py start <workflow-id>`. The template uses `trigger.source: "manual"`. No schedule info in the template — it lives in the cron config.
+
+The engine retains the `wait` node (condition polling — that's workflow logic, not scheduling). And `command` nodes (shell execution within a workflow — that's data/action logic, not scheduling).
+
+**What was removed (2026-07-31):** `schedule` node type, `scheduled` trigger source, `schedule` field from Node dataclass, inline cron parser, all schedule tests (33 tests). Builder templates changed from `scheduled` to `manual` trigger.
+
+### Wait node implementation (condition polling)
+
+A node with `type: "wait"` polls a condition string each tick until it evaluates true. This is workflow logic (wait for a state to be reached), NOT scheduling (wait for a time to arrive).
+
 - Uses same condition format as `node.condition`: `${nodes.x.output.ready} == 'true'`
 - Stays PENDING until condition passes, then marks DONE
 - Empty condition string fires immediately
 - Field: `wait_condition: "${nodes.src.output.verdict} == 'PASS'"`
+- Mermaid shape: `[/ label /]` (parallelogram)
 
-**Scheduled trigger (`source: "scheduled"`):**
-- Starts a new workflow instance when a cron expression fires
-- Condition: `{"schedule": "0 9 * * 1"}`
-- Dedup via trigger_keys (`sched:{wf_id}:{minute_start}`) prevents re-firing within the same minute
-- Uses trigger_watermark table to track last fire time
-
-**Cron parser** (shared between schedule node and scheduled trigger): a simple inline `cron_match(value, expr)` function supporting `*`, comma-separated values, ranges (`-`), and step values (`*/n`, `lo-hi/step`). Uses `time.gmtime()` components. Minute-level precision is sufficient since the engine ticks every 60s.
-
-**Key implementation detail for schedule nodes:** the node output stores `_fired: true` and `_last_fired: <minute_start_epoch>` to prevent re-firing. On the first matching tick, `minute_start > last_fired` passes and the node fires. Subsequent ticks in the same minute see `minute_start <= last_fired` and skip. On the NEXT matching minute, `minute_start` is a new value and the node... wait, no — once `_fired` is set, the node returns `True` immediately (already fired). This is correct: schedule nodes fire ONCE and advance. They don't re-fire each cron cycle (use the scheduled TRIGGER for recurring starts, not the schedule NODE).
-
-**Mermaid shapes:** schedule nodes use `{label}` (decision/stadium shape), wait nodes use `[/label\]` (parallelogram).
-
-### Explicit edges (Edge dataclass)
+### Command node implementation (zero-token shell execution)
 
 The engine supports BOTH implicit edges (via `Node.depends_on[]` + `Node.condition`) and explicit edges (via a top-level `"edges"` array in the JSON template). Explicit edges take precedence when present.
 
@@ -523,7 +565,7 @@ Key adversarial categories:
 **Adversarial-test methodology:** read all engine source first, list concrete code-level weaknesses, then write one test per weakness whose docstring states the exact line/statement it targets (`WEAKNESS: ...`). Tests encode current behavior (passing) or catch the bug (failing → regression guard after fix). See `references/adversarial-test-catalog.md` and `references/data-corruption-tests.md` for worked examples.
 ## Test suite shape: eight files, eight tiers
 
-As of 2026-07-31, the engine has **299 tests across 12 files**, with more being
+As of 2026-08-01, the engine has **279 tests across 12 files**, with more being
 added. The suite is organized by tier:
 
 | File | Tests | Tier | What it proves |
@@ -539,10 +581,10 @@ added. The suite is organized by tier:
 | `test_explicit_edges.py` | 5 | FakeWorld (mocked) | Explicit edge declarations: basic sequential, conditional routing, fan-out, backwards compat, edge parsing |
 | `test_command.py` | 6 | FakeWorld (mocked) | Command node: basic execution, JSON output parsing, failure handling, command→task data flow, variable substitution, stderr capture |
 | `test_command_adversarial.py` | 10 | FakeWorld (mocked) | Adversarial command: shell injection (blocked via shlex.quote), 100KB output, binary output, empty command, chained commands, foreach command, empty profile, file side effects, undefined variables |
-| `test_schedule_wait.py` | 7 | FakeWorld (mocked) | Schedule node (cron fire/block/step), wait node (immediate/blocks/empty), scheduled trigger |
-| `test_schedule_wait_adversarial.py` | 26 | FakeWorld (mocked) | Adversarial schedule/wait: dedup, invalid cron, comma/range/step syntax, chaining, multi-wait convergence, diamond with schedule, combined schedule+command+wait+task |
+| `test_wait.py` | 3 | FakeWorld (mocked) | Wait node: immediate resolve, blocks when condition not met, empty condition fires immediately |
+| `test_wait_adversarial.py` | 10 | FakeWorld (mocked) | Adversarial wait: blocks workflow completion, command output interaction, chained waits, multi-wait convergence (AND semantics), one-blocks, undefined variables, numeric conditions |
 
-**Total: 299 tests across 12 formal suites** (plus `test_command_adversarial.py`, a 10-scenario diagnostic script that prints results but isn't a pass/fail suite). All pass, 0 failures, 0 xfail.
+**Total: 279 tests across 12 suites** (schedule/scheduled-trigger removed — Hermes cron owns scheduling). All pass, 0 failures, 0 xfail.
 
 **Engine location:** `~/.hermes-teams/startup/scripts/workflow_engine/` (shared, NOT profile-specific).
 
@@ -555,7 +597,7 @@ create its own file, not modify existing ones.
 
 The engine has features at different maturity levels. **Do not claim "solid" or "done" without checking this table.** A green test suite that includes xfail tests, soft validation, and unbounded-growth tests is a green checkmark on a red wall — the count masks weakpoints.
 
-The engine now has **5 node types** (`task`, `command`, `subworkflow`, `schedule`, `wait`) and **4 trigger sources** (`card_completed`, `bead_ready`, `scheduled`, `manual`). When asked about capabilities, reference this table. The AND/OR edge semantics (unconditional edges = AND convergence, conditional edges = OR routing) was the hardest-won lesson this session.
+The engine now has **4 node types** (`task`, `command`, `subworkflow`, `wait`) and **3 trigger sources** (`card_completed`, `bead_ready`, `manual`). Scheduling stays in Hermes cron — the engine owns orchestration, not time-based scheduling. The AND/OR edge semantics (unconditional edges = AND convergence, conditional edges = OR routing) was the hardest-won lesson this session.
 
 | Feature | Status | Tested? | Notes |
 |---------|--------|---------|-------|
@@ -564,12 +606,12 @@ The engine now has **5 node types** (`task`, `command`, `subworkflow`, `schedule
 | Edges model | DONE | 5 tests (`test_explicit_edges.py`) | Explicit `Edge` dataclass (`from_node`, `to_node`, `condition`). Declared via `"edges": [{"from": "a", "to": "b", "condition": "..."}]` in JSON templates. Runtime uses explicit edges when present, falls back to implicit `depends_on` + `condition` when not (backwards compatible). Conditional routing: multi-edge where any condition-passing edge activates. Skip propagation: if a dep is SKIPPED/FAILED, downstream skips too. `to_mermaid` renders explicit edges when present. |
 | Fan-out (parallel) | IMPLICIT | 3 tests | Via shared `depends_on` — no explicit fan-out node type |
 | Fan-in (wait-all) | IMPLICIT | 2 tests | Via multiple `depends_on` — no explicit fan-in node type |
-| Foreach iteration | DONE | dispatch + completion tested | `_dispatch_foreach_node` creates one card per list item; PHASE 1 checks all `_foreach_cards` for completion, aggregates results. See "Foreach implementation" below. |
+| Foreach iteration | DONE | dispatch + completion tested | `_dispatch_foreach_node` creates one card per list item; PHASE 1 checks all `_foreach_cards` for completion, aggregates results. **Two known limitations:** (1) card titles are hardcoded `[{node_id}#{idx}]` — no `title_template` support, so downstream `card_completed` triggers using `title_prefix` will NOT match foreach-created cards. (2) `resolve_template()` does flat key→value replacement only — `${item.slug}` does NOT work when item is a dict (renders `str(dict)`). Workaround: use flat string lists, or use `card_mode: "chain"` with a command node that outputs JSON child specs. See "Foreach implementation" below. |
 | Subworkflow node | DONE | 7 tests | `type: "subworkflow"` with `workflow_ref`, `input_mapping`, `output_mapping`. Parent blocks until child completes. Supports 3-level nesting, idempotent dispatch. See "Subworkflow implementation" below. |
 | Command node | DONE | 6 tests (`test_command.py`) | `type: "command"` runs shell scripts synchronously, zero tokens. No kanban card, no agent. stdout parsed as JSON if possible. Exit 0 = DONE, non-zero = FAILED. Context rebuilt after completion for downstream nodes. See "Command node implementation" below. |
-| Schedule node | DONE | 7+26 tests | `type: "schedule"` blocks until a cron expression fires. Full cron syntax (*, specific values, ranges, step values `*/n`). Fires once per matching minute, then marks DONE. Empty schedule fires immediately. |
-| Wait node | DONE | (same suite) | `type: "wait"` polls a condition string each tick until it evaluates true. Uses same condition format as `node.condition`. Stays PENDING until condition passes, then marks DONE. Empty condition fires immediately. |
-| Scheduled trigger | DONE | (same suite) | `source: "scheduled"` starts a workflow on a cron schedule. Condition field: `{"schedule": "0 9 * * 1"}`. Dedup via trigger_keys prevents re-firing within same minute. |
+| Schedule node | REMOVED | — | Replaced by Hermes cron. Schedule info lives in cron config, not engine templates. |
+| Wait node | DONE | 3+10 tests | `type: "wait"` polls a condition each tick until true. Stays PENDING, then marks DONE. See "Wait node implementation" above. |
+| Scheduled trigger | REMOVED | — | Replaced by Hermes cron calling `main.py start`. |
 | AND/OR edge semantics | DONE | 26 adversarial tests | Unconditional edges (no condition field) = AND (all sources must be DONE — convergence). Conditional edges (has condition) = OR (any condition passes — diamond routing). Activation: `unconditional_ok AND (conditional_ok OR not conditional)`. |
 | Output validation | HARD | 2+ tests | `validate_output()` against `node.output.schema` on card completion; failure → `NodeStatus.FAILED`, downstream blocked. |
 | Concurrency safety | DONE | 6 tests, all passing | File lock (fcntl) + thread lock + WAL mode + atomic UPSERT. Tests prove locks serialize ticks and prevent double-dispatch. |
@@ -912,11 +954,18 @@ different domain. The user corrected this directly.
 - **When you add a kwarg to `create_card`, update the FakeWorld `_fake_create_card` mock signature too.** The FakeWorld harness monkey-patches `rt.create_card = self._fake_create_card`. If the adapter gains a new parameter (e.g. `parent=None` for chain mode) and the mock's signature doesn't include it, every dispatch call crashes with `TypeError: _fake_create_card() got an unexpected keyword argument 'parent'` — and because the mock is set once in `__init__`, the error doesn't surface until the first tick. **Any change to `create_card`'s signature requires a matching change to `_fake_create_card` in `test_engine.py`** (and any other file that defines its own fake). The Pyright LSP catches the adapter-side call (`No parameter named "parent"`), but does NOT catch the mock-side mismatch because the mock is assigned at runtime via attribute injection. Search for `_fake_create_card` across all test files when you touch `create_card`.
 - **Foreach blocked-check must not call `get_card` 3× per card.** The foreach PHASE 1 completion check originally used `any(get_card(...) and get_card(...).status == "blocked" for c in foreach_cards if get_card(...))` — this calls `get_card` up to 3 times per card in the list (once in the `if` filter, once in the `and` check, once in the condition body). For N cards, that's 3N board queries per tick. Fix: track an `any_blocked` boolean during the main completion loop (where each card is already fetched once), then use `elif any_blocked:` for the blocked-report action. Single pass, N queries total.
 - **Integration test isolation: shared state DB cross-contamination.** The `test_real_trigger_fires_workflow` test asserts on active instance count from `fixture.engine.state.load_active_instances()`. Even though the fixture isolates its OWN state DB, the engine's trigger check scans ALL boards — leftover completed cards from a real pipeline livetest on the livetest board match the trigger condition (`assignee=qa, metadata.verdict=PASS`) and fire extra instances in the test's isolated DB. Symptom: "Expected 1 active instance, got 3." Fix: filter assertions to the SPECIFIC test card (`trigger_context.get("card_id") == trigger_card_id`) rather than asserting on total count. The real pipeline livetest and integration tests share the same board namespace — clean up active instances between runs, or scope assertions to specific trigger cards.
-- **Don't ask permission to fix your own bugs.** When you identify issues in your own work (broken cron wrappers, double-fire bugs, stale state), fix them immediately. The user explicitly rejects being asked "want me to fix this?" for obvious next steps — *\"stop asking for what things you should done long ago already.\"* If you can fix it, fix it. If you genuinely need a human decision (production deployment, irreversible change), THEN ask — but frame it as a decision with tradeoffs, not a yes/no permission request.
+- **Don't ask permission to fix your own bugs.** When you identify issues in your own work (broken cron wrappers, double-fire bugs, stale state), fix them immediately. The user explicitly rejects being asked "want me to fix this?" for obvious next steps — *"stop asking for what things you should done long ago already."* If you can fix it, fix it. If you genuinely need a human decision (production deployment, irreversible change), THEN ask — but frame it as a decision with tradeoffs, not a yes/no permission request.
+- **When the task is unclear, DISCUSS before coding.** The user corrected this when I jumped straight to code for the cron/schedule integration question: *"can we make the cron card ref to hermes cron instead then? and when the task is not clear. you should stop jump to code and discuss or plan first."* When facing a design decision with multiple valid approaches (merge systems? reference? replace?), lay out options with tradeoffs and let the user choose direction BEFORE writing any code. Jumping to code on an unclear task wastes a full implementation cycle if the direction was wrong.
+- **Don't reinvent existing systems.** The engine had a full cron parser built (`_check_schedule_node`, `_check_scheduled_trigger`) that duplicated Hermes cron. The user caught this: *"keep it hermes then. we will drop schedule and cron in workflow engine."* Before building a new subsystem, check if an existing system already handles that concern. Two systems doing the same thing = unnecessary complexity. The user's system-boundaries thinking catches this consistently.
 - **FakeWorld `_fake_create_card` must store the `body` column.** A long-standing bug (the INSERT only stored id/title/assignee/status/idempotency_key/created_at — NOT body) meant every card body was empty in FakeWorld tests. This masked variable resolution failures: tests asserted on card existence and status (which worked), but never checked that `${nodes.X.output.Y}` actually resolved in the card body. When a command→task test failed with empty body, the root cause was the FakeWorld mock, not the engine's variable resolution. Always include `body` in the fake INSERT, and when adding new columns to the tasks table, update the mock schema too.
+- **`kanban_adapter.create_card` accepts single `parent` (str), not multiple parents.** The adapter's `create_card(parent: str | None)` passes one `--parent` flag to the CLI. The underlying `create_task(parents=Iterable[str])` and the CLI `--parent` flag (`action="append"`) both support multiple parents, but the adapter takes a single string. For the `chain` card mode (parent + sequential children, each with exactly one parent) this is fine. For true fan-in graphs where a child must wait on multiple parents simultaneously, the adapter can't express it in one `create_card` call — you'd need a follow-up `hermes kanban link <parent_b> <child>` after creation. The adapter signature would need to widen to `parents: list[str] | None` to support this natively. Don't assume `create_card` can express multi-parent dependencies in one call — it can't.
+- **Parent failure does not propagate to children — silent stall risk.** The kanban dispatcher's `recompute_ready` gate requires `all(parent.status in ('done', 'archived'))`. If a parent card is permanently blocked (manual sticky block, circuit-breaker `gave_up`) or deleted-without-completion, the child sits in `todo` **forever** — no event, no notification, no timeout. This matters for workflow templates that use dispatcher-managed parent-child dependencies: if the parent card's agent blocks indefinitely, downstream children are silently stranded. The engine-managed approach (explicit edges, engine waits for completion then creates next card) avoids this because the engine sees the blocked status and can escalate. See `references/hermes-dispatcher-mechanics.md` ("What happens when a parent blocks or fails") for the full failure-propagation table and recovery paths.
+- **Templates and reference docs can reference trigger sources that don't exist in the runtime.** The `scheduled` trigger source appears in `template-patterns.md` and multiple template JSON files, but `_check_triggers()` in `runtime.py` only handles `card_completed` and `bead_ready`. A template with `"trigger": {"source": "scheduled"}` is silently ignored — no error, no workflow start. Always verify a trigger source is implemented by grepping `runtime.py` for `trigger.source ==`, not by checking the model or docs. The model (`from_dict`) accepts any string for `source` without validation. When designing templates, confirm the trigger source exists in the runtime before building on it.
+- **Foreach card titles are hardcoded — cannot match downstream title_prefix triggers.** `_dispatch_foreach_node` at `runtime.py:1343` sets the title to `f"[{node.id}#{idx}] {node.skill or 'task'}"`. If a downstream workflow triggers on `title_prefix: "Grill:"`, foreach cards titled `[queue#0] self-grill` will never fire it. Use `card_mode: "chain"` with a command node outputting JSON child specs (which support custom `"title"` fields) when you need specific card titles from a multi-item dispatch.
 
 ## Linked files
 
+- `references/hermes-dispatcher-mechanics.md` — how the engine's cards become agent work: the 4-step dispatch tick (reclaim → promote → claim/spawn → failure handling), card lifecycle, parent-child dependency management, and what this means for template design. **Read this before designing templates that create cards for agents to execute.**
 - `references/fakeworld-testing-pattern.md` — complete testing methodology with code
 - `references/composition-tests.md` — trigger-based composition testing: A→B chains, A→B→C nesting, A↔B recursion, parallel fan-out, failure isolation, data flow, per-card dedup behavior
 - `references/hybrid-integration-testing.md` — real boards + simulated completions (the third testing tier: real CLI card creation, direct-SQLite completion simulation, RealBoardFixture pattern, gating real-agent tests behind --real)
@@ -939,6 +988,7 @@ different domain. The user corrected this directly.
 - `references/or-semantics-edge-routing.md` — (legacy) how OR semantics for multi-incoming edges solves conditional diamond deadlocks. Superseded by `and-or-edge-semantics.md` which adds the AND case for convergence.
 - `references/pipeline-migration-map.md` for the full 8-profile team pipeline diagnosis (all handoffs, escalation chain, cron phases, migration priorities), the complete builder 6-stage workflow with ASCII diagram, and the "prescribe, don't describe" migration planning lesson.
 - `references/builder-pipeline-analysis.md` — the complete builder workflow: 6 stages (discovery → intake → queue → grill → build → review) with ASCII diagram, cron jobs, and where each stage maps to engine features (foreach for queue, command for scripts, chain for grill+build cards).
+- `references/builder-queue-builds-migration.md` — deep-dive on replacing queue-builds.sh with engine templates: what the script does line-by-line, dispatcher parent-child mechanics, grill→build handoff contract, design options A vs B, known script bugs.
 - `references/cron-to-engine-migration-planning.md` — methodology for planning a multi-profile cron→engine migration: the skill-vs-template classification test, coexistence safety via matching idempotency keys, common engine enhancements needed, template patterns for bead_ready/card_completed migrations, and a risk matrix. Distilled from a full 8-profile MIGRATION-PLAN.md.
 - `references/template-patterns.md` — reusable JSON template patterns distilled from the builder pipeline migration: scheduled+command guard, zero-token pure command cron replacement, title_prefix trigger matching, command chain for setup→dispatch, wait node as promotion gate. Includes the 5 builder template inventory and available `${trigger.*}` variables.
 - `MIGRATION.md` (in the engine package dir) — 5-phase migration plan for replacing the old cron: QA trigger → bug routing → dispatch → escalation → full pipeline. Documents dynamic workflow support via blocked status.

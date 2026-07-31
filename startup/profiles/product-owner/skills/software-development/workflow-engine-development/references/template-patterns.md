@@ -3,13 +3,14 @@
 Reusable JSON template patterns distilled from the builder pipeline migration.
 Each pattern is a concrete shape that appears across multiple real templates.
 
-## Pattern: scheduled trigger + command guard + conditional task
+## Pattern: cron-wrapped manual trigger + command guard + conditional task
 
-For replacing cron jobs that have a guard script + an agent prompt.
+For replacing cron jobs that have a guard script + an agent prompt. Hermes cron
+owns scheduling; the engine template uses a manual trigger and is started by a
+cron job that calls `main.py start <workflow-id>`.
 
 ```json
 {
-  "trigger": {"source": "scheduled", "condition": {"schedule": "30 */3 * * *"}},
   "nodes": [
     {"id": "guard", "type": "command",
      "command": "bash ~/.hermes-teams/.../guard.sh"},
@@ -21,21 +22,21 @@ For replacing cron jobs that have a guard script + an agent prompt.
 }
 ```
 
-The guard command runs zero-token. Its stdout is captured and available as
+No `trigger` field → manual trigger (started via CLI). A Hermes cron job wraps
+`main.py start builder-signal-scan` on the desired schedule. The guard command
+runs zero-token. Its stdout is captured and available as
 `${nodes.guard.output.stdout}`. The conditional task only fires when the guard
-output contains the right signal. This replaces the cron's "guard prints
-STATUS:DUE, agent reads it and decides" pattern with a structural condition.
+output contains the right signal.
 
 **Templates using this:** `builder-signal-scan.json`, `builder-idea-intake.json`.
 
 ## Pattern: zero-token pure command cron replacement
 
 For cron scripts that don't need an agent at all (sorting, file manipulation,
-kanban card creation).
+kanban card creation). No trigger field — manual start wrapped by Hermes cron.
 
 ```json
 {
-  "trigger": {"source": "scheduled", "condition": {"schedule": "0 */6 * * *"}},
   "nodes": [
     {"id": "queue", "type": "command",
      "command": "bash ~/.hermes-teams/.../queue-builds.sh --board ${trigger.board}"}
@@ -43,11 +44,42 @@ kanban card creation).
 }
 ```
 
-No agent, no tokens. The scheduled trigger fires, the command runs, the
-workflow completes. If the script creates kanban cards, those cards are picked
-up by the dispatcher independently.
+No agent, no tokens. The Hermes cron job calls `main.py start builder-queue-builds`
+on schedule. The command runs, the workflow completes. If the script creates
+kanban cards, those cards are picked up by the dispatcher independently.
 
 **Templates using this:** `builder-queue-builds.json`.
+
+## Pattern: command parse → chain dispatch (card creation from data)
+
+For pipelines that read a data source, transform it, and create structured
+kanban card pairs. A command node outputs JSON, a chain-mode task node creates
+parent + child cards from that JSON.
+
+```json
+{
+  "nodes": [
+    {"id": "parse_data", "type": "command", "profile": "builder",
+     "command": "python3 ~/.../parse-script.py --board ${trigger.board}"},
+    {"id": "dispatch", "card_mode": "chain", "profile": "builder", "skill": "...",
+     "body_template": "${nodes.parse_data.output.stdout}",
+     "depends_on": ["parse_data"]}
+  ],
+  "edges": [{"from": "parse_data", "to": "dispatch"}]
+}
+```
+
+The command node parses a file (idea-bank, config, CSV), sorts/filters, and
+outputs a JSON list of child card specs: `[{"title": "...", "assignee": "...",
+"body": "..."}, ...]`. The chain node parses this JSON from stdout, creates a
+parent card, then creates each child linked via `--parent`. This replaces bash
+scripts that call `hermes kanban create` in loops.
+
+**Key insight:** the chain node's `body_template` references
+`${nodes.parse_data.output.stdout}` — the command node's raw stdout is stored
+in the output dict and available to downstream nodes.
+
+**Templates using this:** `builder-queue-builds.json` (proposed Path C design).
 
 ## Pattern: card_completed trigger with title_prefix matching
 
@@ -123,9 +155,9 @@ Located at `~/.hermes-teams/startup/scripts/workflow_engine/templates/`:
 
 | Template | Trigger | Nodes | Replaces |
 |----------|---------|-------|----------|
-| `builder-signal-scan.json` | scheduled (every 3h) | guard→scan | scan-guard.sh cron |
-| `builder-idea-intake.json` | scheduled (4x/day) | guard→intake | pipeline-guard.sh cron |
-| `builder-queue-builds.json` | scheduled (every 6h) | queue (command) | queue-builds.sh cron |
+| `builder-signal-scan.json` | manual (cron-wrapped, every 3h) | guard→scan | scan-guard.sh cron |
+| `builder-idea-intake.json` | manual (cron-wrapped, 4x/day) | guard→intake | pipeline-guard.sh cron |
+| `builder-queue-builds.json` | manual (cron-wrapped, every 6h) | queue (command) or parse→chain | queue-builds.sh cron |
 | `builder-grill-build.json` | card_completed (Grill:) | grill→build→wait→handoff | queue-builds.sh card creation |
 | `builder-promote.json` | card_completed (verdict=promote) | setup→git→board→dispatch PO | project-promotion skill |
 
@@ -133,9 +165,12 @@ Located at `~/.hermes-teams/startup/scripts/workflow_engine/templates/`:
 
 When a trigger fires, these variables are available via `${trigger.*}`:
 
-- `card_completed`: `trigger.card_id`, `trigger.card_title`, `trigger.board`
-- `scheduled`: `trigger.scheduled_at` (epoch)
+- `card_completed`: `trigger.card_id`, `trigger.card_title`, `trigger.board`, and all card completion metadata (flattened into trigger context)
 - `bead_ready`: `trigger.bead_id`, `trigger.bead_type`, `trigger.bead_label`
 - `manual`: whatever the caller passes via `--var key=value`
+
+**Note:** `scheduled` trigger source was removed — Hermes cron owns scheduling.
+For scheduled workflows, omit the `trigger` field (manual) and let a Hermes
+cron job call `main.py start <workflow-id>`.
 
 These are substituted in `body_template` and `command` strings at dispatch time.
