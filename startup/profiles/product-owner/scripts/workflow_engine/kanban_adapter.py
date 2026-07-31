@@ -177,7 +177,7 @@ def find_recent_completions(board: str, since_ts: int) -> list[CardInfo]:
                JOIN task_runs r ON r.task_id = t.id AND r.outcome = 'completed'
                WHERE t.status = 'done' AND t.completed_at > ?
                ORDER BY t.completed_at DESC
-               LIMIT 20""",
+               LIMIT 200""",
             (since_ts,),
         ).fetchall()
         cards = []
