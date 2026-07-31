@@ -705,43 +705,45 @@ class Engine:
             if has_explicit_edges:
                 # Find all edges pointing TO this node
                 incoming = [e for e in wf.edges if e.to_node == node.id]
-                deps = [e.from_node for e in incoming]
-                deps_done = True
-                any_dep_skipped = False
-                for dep in deps:
-                    dep_ns = inst.node_states.get(dep)
-                    if dep_ns is None:
-                        deps_done = False
-                        break
-                    if dep_ns.status == NodeStatus.DONE:
-                        continue
-                    elif dep_ns.status in (NodeStatus.SKIPPED, NodeStatus.FAILED):
-                        any_dep_skipped = True
-                    else:
-                        deps_done = False
-                        break
+                if not incoming:
+                    # No incoming edges — entry node, always dispatchable
+                    pass
+                else:
+                    # OR semantics: a node activates if ANY incoming edge has
+                    # its source DONE and condition passes. Edges from
+                    # SKIPPED/FAILED sources are ignored (not blocking).
+                    # If ALL sources are SKIPPED/FAILED with no condition
+                    # passing, the node is SKIPPED.
+                    has_active_edge = False
+                    all_sources_terminal = True
+                    for edge in incoming:
+                        dep_ns = inst.node_states.get(edge.from_node)
+                        if dep_ns is None:
+                            all_sources_terminal = False
+                            continue
+                        if dep_ns.status == NodeStatus.DONE:
+                            # Source is done — check edge condition
+                            if not edge.condition or evaluate_condition(edge.condition, ctx):
+                                has_active_edge = True
+                                break
+                        elif dep_ns.status in (NodeStatus.SKIPPED, NodeStatus.FAILED):
+                            continue  # Skip this edge — source didn't run
+                        else:
+                            # Source still pending/dispatched — not terminal yet
+                            all_sources_terminal = False
 
-                if not deps_done:
-                    continue
-
-                if any_dep_skipped:
-                    # A dependency was skipped or failed — skip this node too
-                    self.state.update_node_state(
-                        inst.instance_id, node.id, NodeStatus.SKIPPED, None, {},
-                    )
-                    ns.status = NodeStatus.SKIPPED
-                    actions.append(f"SKIPPED node {node.id} on {inst.board} (dependency skipped/failed)")
-                    continue
-
-                # Check edge conditions (for multi-edge: any edge whose condition passes activates)
-                active_conditions = [e for e in incoming if e.condition]
-                if active_conditions:
-                    if not any(evaluate_condition(e.condition, ctx) for e in active_conditions if e.condition):
+                    if has_active_edge:
+                        pass  # Fall through to dispatch
+                    elif all_sources_terminal:
+                        # All sources reached terminal state but none activated
                         self.state.update_node_state(
                             inst.instance_id, node.id, NodeStatus.SKIPPED, None, {},
                         )
                         ns.status = NodeStatus.SKIPPED
                         actions.append(f"SKIPPED node {node.id} on {inst.board} (no edge condition passed)")
+                        continue
+                    else:
+                        # Some sources still pending — wait
                         continue
             else:
                 # Implicit: use node.depends_on + node.condition
