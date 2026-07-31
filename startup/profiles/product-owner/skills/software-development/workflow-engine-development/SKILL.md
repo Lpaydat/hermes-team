@@ -243,7 +243,11 @@ elif node.type == "command":
 
 **Output shape:** `{"exit_code": N, "stdout": "...", "stderr": "...", ...merged_json_keys}`
 
-**Testing gotcha:** `echo '{"key": "value"}'` in `subprocess.run(shell=True)` may
+**CRITICAL: shell injection prevention.** Variable values come from card metadata (agent-produced, untrusted). Without quoting, a value like `file.txt; rm -rf /tmp/x` injects a second command. Fix: build a safe_ctx where every value is `shlex.quote(str(v))`, then resolve the template against safe_ctx. Verified via adversarial test: injection attempt was printed as literal text, not executed.
+
+**Foreach command support.** A command node with BOTH `type: "command"` AND `foreach: "..."` runs the command once per list item (no kanban cards). Each iteration gets `${item}` and `${item_index}`. Output is `{"_foreach_commands": true, "results": [...]}`. If ANY iteration fails, the node is FAILED. PHASE 2 must check `node.foreach and node.type == "command"` BEFORE the generic `node.foreach` branch (which creates cards).
+
+**Testing gotcha:** `echo` with JSON in `subprocess.run(shell=True)` loses quotes — use `printf` instead. The FakeWorld `_fake_create_card` must also store the `body` column — a long-standing bug (body was always empty) that masked variable resolution failures in tests.
 lose quotes — the shell interprets them. Use `printf '%s' '{"key":"value"}'` or
 write to a temp file and `cat` it. The FakeWorld `_fake_create_card` must also
 store the `body` column — a long-standing bug (body was always empty) that masked
