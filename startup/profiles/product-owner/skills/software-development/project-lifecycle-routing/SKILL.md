@@ -64,6 +64,14 @@ the *external* benchmark — how GitHub, Jira, Linear, GitLab, and military
 OODA each handle plan-vs-execute, and what their failure modes teach us —
 see `references/dual-system-industry-comparison.md`.
 
+## The exploration gap (known limitation)
+
+The planning flow documented here goes straight from spec to single-approach architecture. Nobody explores **"of the fundamentally different approaches, which is the right one?"** between the grill (which validates the problem) and the architect (which optimizes the implementation). The architect's `design-council` already weighs alternatives — but *within one approach space*, not *across* approaches. It cannot question the spec it was handed.
+
+This is a recognized structural gap, not a design choice. R&D belongs between spec and architect — PO-owned, like the grill, fanning out to existing builder/researcher/scout profiles. Triggered by novelty/risk/approach-uncertainty (NOT every feature — skip for low-stakes CRUD). It produces an exploration dossier (landscape map + approach tree + spike results + recommendation) that feeds the architect's design card, the same way grill decisions feed `project-kickoff-spec`.
+
+Full analysis (the gap, where R&D sits, profile-vs-skill verdict, what it produces, YC/venture-builder parallel, proposed `exploration-gate` skill spec): see [`references/pipeline-exploration-gap.md`](references/pipeline-exploration-gap.md). For the Karpathy autoresearch pattern (autonomous keep-or-discard experiment loop) and its implications for parallel spike prototyping: see [`references/autoresearch-pattern.md`](references/autoresearch-pattern.md).
+
 ## Full pipeline reference
 
 ```
@@ -87,17 +95,15 @@ The engine runs every minute on cron. All 5 phases run per-project:
 2. **dispatch** — `bd ready` → PO dispatch card (bugs → debugger directly via `dispatch_bug_to_debugger`)
 3. **human-escal** — human-flagged beads → operator HQ card
 4. **scanner** — blocked tasks → escalate via ESCALATION_CHAIN (dev/verifier/debugger/qa → tech-lead, tech-lead → PO)
-5. **qa-trigger** — scans for recently-completed verifier/debugger cards whose summary mentions "merged" → creates QA re-test card automatically. Dedup via `qa-after-<card-id>`. Filters out probes, sub-reviews, and internal loop phases.
+5. **qa-trigger** — master advanced with code files + a verifier/debugger card completed recently → creates QA re-test card. Hybrid git-diff detection: `git rev-parse HEAD` changed + `git diff --name-only` shows code extensions (.py/.js/etc) + a completed verifier/debugger card in the last hour. Dedup via `qa-merge-<sha>`. State tracked in `qa-trigger-state.json` per board.
 
-**QA trigger design lesson:** The trigger went through 4 iterations:
-- v1 (git merge detection): false positives on PO spec/doc commits
-- v2 (card assignee + parent-child): missed loop_engine's complex parent chains
-- v3 (`"merged"` keyword): false positives ("re-open against merged master")
-- v4 (regex patterns: `"merged to master"`, `"merged to main"`, `". merged "`, `"^merged "`): zero false positives, validated against 18 historical cards
-
-The lesson: **detect the outcome in natural language summaries, not structural relationships.** The verifier writes "merged to master" when it merges — that's the ground truth. Parent-child links and assignee checks are indirect and unreliable when loop_engine creates complex card hierarchies.
+**QA trigger design lesson:** The trigger went through 7 iterations — the fundamental lesson is that **natural-language detection (regex on summaries) is fragile** because agents don't write predictable text (verifiers write "PASS" not "merged"). The final working approach uses **structural signals**: git diff detects code files (language-independent), the verifier card completion confirms it was a code merge not a manual push. Never depend on what an agent wrote in its summary for pipeline triggers.
 
 See [`references/workflow-engine-phases.md`](references/workflow-engine-phases.md) for the full phase reference.
+
+### Workflow graph model (the declarative successor)
+
+The 696-line imperative cron has a designed successor: a **declarative graph model** (node types, edge types, conditions, JSON Schema) that compiles down to the proven kanban primitives (`kanban_create`, `kanban_chains`, `loop_engine`). The graph does NOT replace the board — it replaces the cron logic that decides which cards to create and when. Seven node types (`task`, `fan-out`, `fan-in`, `branch`, `loop`, `gate`, `emit`), four edge types (`sequential`, `conditional`, `parallel-split`, `parallel-join`), JSONLogic-inspired conditions. See [`references/workflow-graph-model.md`](references/workflow-graph-model.md) for the primitive mapping table, key design answers (foreach, loop termination, fan-out↔kanban_chains mapping), and schema invariants.
 
 ### QA timing tradeoff: per-merge vs post-all-merge
 

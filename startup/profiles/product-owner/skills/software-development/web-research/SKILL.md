@@ -13,7 +13,7 @@ Reach it instead of answering from your own priors whenever the answer is **load
 
 1. **Name the primary sources before you fetch.** List which sources would be authoritative for this question (official docs for a tool's behaviour; the vendor's own blog for their architecture; a foundational book/paper for an established practice; the RFC/spec for a protocol). If you can't name a candidate primary source, say so and fall back to the best available secondary sources, labelling them as such.
 
-2. **Gather in parallel, serialize on dependency.** Open independent sources concurrently. Only serialize when one source's URL/path depends on another's result (e.g. a chapter link found inside a book's TOC). For web sources, use the browser tools — their mechanics are in [`references/web-research-tactics.md`](references/web-research-tactics.md) and they materially speed up a pass (truncated snapshots, navigating dense doc pages, paywalled/moved sources).
+2. **Gather in parallel, serialize on dependency.** Open independent sources concurrently. Only serialize when one source's URL/path depends on another's result (e.g. a chapter link found inside a book's TOC). For web sources, use the browser tools — their mechanics are in [`references/web-research-tactics.md`](references/web-research-tactics.md) and they materially speed up a pass (truncated snapshots, navigating dense doc pages, paywalled/moved sources). When you have many candidate URLs to screen (restructured docs, mirror triage), batch-probe them with [`scripts/probe-urls.sh`](scripts/probe-urls.sh) (tactics §9) before committing to full fetches.
 
 3. **Quote the decisive facts, cite the source.** For each claim that drives the conclusion, capture a short verbatim quote + the source URL inline in the findings file. Quotes are what make the analysis defensible. Reserve full-paragraph quotes for the 2-4 most decisive claims; paraphrase + cite the rest.
 
@@ -28,6 +28,8 @@ When the ideal primary source is unavailable, drop one rung — **don't** silent
 1. **First-party primary** — official docs, spec/RFC, the org's own engineering blog, the book/paper itself.
 2. **Official open mirror** — same authors/org hosting the same content openly (e.g. a paywalled ACM paper mirrored on `research.google/pubs`; a book's free CC-licensed HTML edition on the publisher's imprint site). Verify it's first-party before citing as primary.
 3. **Authoritative secondary** — a respected practitioner/community source that itself cites primaries (e.g. trunkbaseddevelopment.com). Label it as secondary in the findings.
+
+**Copyrighted books with no free full text** break the ladder's assumption that rung 1 is fetchable. For paywalled books (Ousterhout, Hunt & Thomas, Bryar & Carr) there is no official open mirror and no free edition. Cite the book for authority (title/author/chapter/year), paraphrase from established knowledge when confident (never present a paraphrase as a verbatim quote), corroborate with an open source (author's course page, conference talk, publisher page, Wikipedia), and note the access gap in the findings. See [`references/web-research-tactics.md`](references/web-research-tactics.md) §11.
 
 ## Completion criterion
 

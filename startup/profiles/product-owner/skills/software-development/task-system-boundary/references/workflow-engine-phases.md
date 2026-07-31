@@ -34,9 +34,9 @@ Blocked tasks → escalate one level up on the SAME board:
 
 Checks for existing escalation cards and RESOLVED comments to avoid duplicates.
 
-## Phase 5: qa-trigger (hybrid git-diff + verifier card)
+## Phase 5: qa-trigger (structural metadata + fallback)
 
-The most-iterated phase (6 approaches). Creates a QA re-test card when code lands on master.
+The most-iterated phase (8 approaches). Creates a QA re-test card when code lands on master.
 
 **Approach history (what failed and why):**
 1. **Git HEAD tracking** — fired on PO spec/doc commits (false positives)
@@ -44,15 +44,14 @@ The most-iterated phase (6 approaches). Creates a QA re-test card when code land
 3. **Card-based with parent-child debugger filter** — loop_engine creates complex parent chains that don't match simple patterns; spurious QA cards
 4. **Regex merge detection on summaries** — worked for most cases but fragile: verifiers write "PASS" not "merged", and fast-forward merges have no merge commit
 5. **Regex with broader patterns** (`merged to master`, `. merged `, etc.) — still failed when verifier used "PASS" without mentioning merge
+6. **Hybrid git-diff + verifier card** — language-independent: checks master HEAD advanced + code extensions in diff + verifier card completed. Works but relies on git state + time window.
+7. **Card-based scan with time window + regex** — clean but natural-language dependency was fragile
 
-**Final approach (6): hybrid git-diff + verifier card** — language-independent, structural:
-1. Master HEAD advanced via `git rev-parse HEAD`
-2. Changed files include code extensions (`.py`, `.js`, `.ts`, `.rs`, `.go`, `.java`, `.rb`, `.sh`, `.sql`, `.yaml`, `.yml`, `.toml`) via `git diff --name-only <old>..<new>`
-3. A verifier/debugger card (not probe/sub-review) completed in the last hour
+**Final approach (8): structured metadata + fallback** — two-tier:
+1. **PRIMARY**: check completed verifier/debugger cards for `merged_commit_sha` AND `verdict == "PASS"` in `task_runs.metadata`. Structural, no parsing, no git state, no time window dependency on the primary path.
+2. **FALLBACK**: if no cards carry the metadata contract, fall back to approach 6 (git-diff + verifier card + code file extensions). Labeled `(fallback)` in action output.
 
-All three signals together. State tracked via `qa-trigger-state.json` per board (first run seeds state without creating a card). Idempotency key `qa-merge-<sha>`. Filters out `[probe]` and `verify t_` cards.
-
-**Why this works:** PO spec commits change only `.md` files (no code extensions) → filtered. Verifier cards without a merge → master hasn't advanced → filtered. Fast-forward merges → code files still changed → detected. The approach doesn't depend on what the agent wrote in its summary.
+The verifier's `adversarial-review` skill instructs PASS verdicts to include `merged_commit_sha` in metadata. The QA `live-testing` skill instructs verdicts to include `{verdict, claims_tested, claims_passed, findings_count, bug_bead_ids, commit_tested}`. Over time the fallback path will fire less as profiles adopt the contract.
 
 **Dedup:** idempotency key `qa-merge-<current-sha>` — one QA card per master state.
 

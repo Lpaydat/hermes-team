@@ -89,6 +89,33 @@ This is language-independent — it doesn't depend on what the agent wrote in it
 
 **Root cause of ALL QA trigger failures (gaps 11-16):** relying on agent-written natural language or indirect git metadata to signal a merge. Agents write "PASS", "zero findings", "clean" — rarely the word "merged". Fast-forward merges have no merge commit for `--merges` count. The structural signal (git diff showing code files + a verifier card completing) is reliable where both language and commit metadata are not.
 
+## Gap 17: Verifier PASS doesn't include merge signal — structural fix (approach 8)
+
+**Symptom:** Across 16 gaps and 7 QA-trigger approaches, the root cause was always the same: the engine parsed natural language to detect structural events. Verifiers write "PASS" not "merged". Fast-forward merges leave no merge commit. Regex patterns match some phrasings but not others. Every fix introduced a new edge case.
+
+**Root cause:** Agent-written natural language is not a reliable signal for pipeline control flow. The engine was trying to answer "did a merge happen?" by reading prose, when the answer was already available structurally — the verifier knows it merged, it just wasn't required to say so in machine-readable form.
+
+**Fix (approach 8 — shipped on `feat/structured-output-contracts`, commit `4bae628`):**
+1. Verifier's `adversarial-review` skill: PASS verdicts MUST include `merged_commit_sha` in `kanban_complete(metadata={...})` — the short SHA of the merge commit just landed.
+2. QA's `live-testing` skill: verdicts MUST include `{verdict, claims_tested, claims_passed, findings_count, bug_bead_ids, commit_tested}`.
+3. Engine's `phase_qa_trigger`: reads `merged_commit_sha` + `verdict == "PASS"` from `task_runs.metadata` as the **primary signal** — no regex, no summary parsing, no title filtering. The git-diff + verifier-card approach (approach 6/7) remains as **fallback** for cards without the metadata contract, labeled `(fallback)` in action output.
+
+**Design principle (generalizable):** When the engine needs to detect a structural event (merge, verdict, completion), the agent that performed the event should declare it in structured metadata — not describe it in prose that the engine then has to parse. This is the core insight from design #2 (IO schema model) in the 8-doc workflow engine design session: every node declares an output schema (JSON Schema), the engine validates `task_runs.metadata` against it, and downstream triggers are structural, not lexical. The regex QA trigger pain (gaps 11-16, 5 iterations) is the canonical example of what happens when this principle is violated.
+
+**Livetest evidence:** The structured contracts were tested in a livetest. Verifier probe cards correctly stamped `{verdict, acs_verified, findings_count, findings, adr_conformance, dev_tests}`. The main verifier card stamped the same shape on FAIL. No `merged_commit_sha` was emitted because the escalation path caught a duplicate-bead issue and no merge occurred — but the contract mechanism itself (metadata stamping + structural reading) is proven. The full IO schema design (per-node output schemas, variable substitution, failure policy) is in `references/workflow-node-contracts.md`.
+
+## Gap 18: PO creates duplicate beads — destructive merge risk
+
+**Symptom:** PO created beads 98m.1 ("CSV reader scaffold") AND 98m.2 ("CSV reader scaffold") — same title, same description, different bead IDs. Both dispatched to tech-lead. The second tech-lead built on a branch forked from the initial commit, while the first slice's 8 commits of hardened work had already evolved master. When the verifier tried to merge slice 2's branch, it would have destroyed the hardened master via conflict.
+
+**Root cause:** The PO's `to-tickets` decomposition created duplicate slices. The bead hierarchy showed: 98m.1 (CSV reader) → 98m.1.1 (type inference) → 98m.1.1.1 (edge cases), AND 98m.2 (CSV reader again), 98m.3 (type inference again), 98m.4 (edge cases again). The second set was a complete duplicate of the first.
+
+**Detection:** The tech-lead caught this during escalation (iteration-3 circuit breaker): "CORRECTED VERDICT: DO NOT MERGE — bead 98m.2 is redundant. Branch would destroy 8 commits of hardened master work via conflict."
+
+**Fix (pending):** The PO's `to-tickets` skill should deduplicate beads by title+description before creating them. Alternatively, the dev-planning skill should check for existing beads with similar titles before running to-tickets. This is a PO-side fix, not an engine fix.
+
+**Lesson:** Duplicate beads cause destructive merges because each spawns a separate tech-lead card with a separate branch, and the branches diverge from different baselines. The tech-lead's escalation review is the safety net, but the root cause is upstream bead duplication.
+
 ## Key Lesson
 
 The biggest lesson across all 16 gaps: **agent-creates-card patterns are fragile for process-compliance steps.** When a step must happen every time (QA re-test, bug linkage, merge trigger), move it to infrastructure (workflow engine hook) rather than relying on the agent reading its SOUL.md correctly. The agent's natural instinct is to complete its own work and close — not to spawn follow-up cards for other profiles.
