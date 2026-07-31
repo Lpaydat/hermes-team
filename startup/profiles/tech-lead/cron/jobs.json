@@ -27,18 +27,18 @@
       "schedule_display": "0 */4 * * *",
       "repeat": {
         "times": 999999,
-        "completed": 167
+        "completed": 168
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T09:00:32.413473+07:00",
-      "next_run_at": "2026-08-01T04:00:00+07:00",
-      "last_run_at": "2026-08-01T00:05:36.054819+07:00",
+      "next_run_at": "2026-08-01T08:00:00+07:00",
+      "last_run_at": "2026-08-01T04:00:01.411218+07:00",
       "last_status": "ok",
       "last_error": null,
-      "last_delivery_error": "platform 'telegram' not configured/enabled",
+      "last_delivery_error": null,
       "deliver": "telegram",
       "origin": null,
       "enabled_toolsets": [
@@ -53,5 +53,5 @@
       "fire_claim": null
     }
   ],
-  "updated_at": "2026-08-01T00:05:36.055257+07:00"
+  "updated_at": "2026-08-01T04:00:01.411720+07:00"
 }

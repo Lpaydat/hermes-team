@@ -59,3 +59,23 @@ A foreach node creates N cards and waits for ALL of them to complete before the 
 ## Dedup is critical for re-runnable workflows
 
 Without dedup, running the same workflow twice creates duplicate cards. The parse command must check the board for existing cards before outputting ideas.
+
+## Schedule/scheduled trigger removed (do not re-add)
+
+We built a `scheduled` trigger source and `schedule` node type, then removed them because Hermes cron already owns scheduling. The engine should NOT have cron expression parsing — that's Hermes cron's job. If a workflow needs to run on a schedule, Hermes cron calls `main.py start <workflow-id>`.
+
+The `wait` node type IS kept — it polls a condition string each tick. That's workflow logic, not scheduling.
+
+## _ensure_schema must check engine_events table
+
+When the state DB exists from an older engine version (before engine_events), `_ensure_schema` must check for the table and run `_init_schema()` if missing. The check `SELECT 1 FROM engine_events LIMIT 1` handles this — an OperationalError triggers full re-init.
+
+## AND/OR edge semantics (the big one)
+
+The original OR-semantics for explicit edges was WRONG. A node with multiple unconditional incoming edges dispatched when only ONE source was done. The fix:
+
+- **Unconditional edges (no condition field): AND** — ALL sources must be DONE
+- **Conditional edges (has condition field): OR** — ANY source DONE + condition passes
+- **Activation: all unconditional done AND (conditional ok OR no conditional edges)**
+
+This was found by an adversarial test: `test_multiple_waits_one_blocks` — w1 resolved, w2 blocked, but `go` still dispatched because w1's unconditional edge triggered OR semantics.
