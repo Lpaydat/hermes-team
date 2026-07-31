@@ -97,9 +97,11 @@ The engine runs every minute on cron. All 5 phases run per-project:
 4. **scanner** — blocked tasks → escalate via ESCALATION_CHAIN (dev/verifier/debugger/qa → tech-lead, tech-lead → PO)
 5. **qa-trigger** — master advanced with code files + a verifier/debugger card completed recently → creates QA re-test card. Hybrid git-diff detection: `git rev-parse HEAD` changed + `git diff --name-only` shows code extensions (.py/.js/etc) + a completed verifier/debugger card in the last hour. Dedup via `qa-merge-<sha>`. State tracked in `qa-trigger-state.json` per board.
 
+> **⚠ CURRENT STATE (verified 2026-07-31): `phase_qa_trigger` is DISABLED.** It is commented out in `workflow-engine.py` `main()` (the call block is wrapped in `# QA trigger disabled — now handled by new workflow engine`). The intended replacement — cron job `94e735a11be6` ("New Workflow Engine", targeting `startup/scripts/workflow_engine/main.py`) — is **erroring every tick** ("Script not found", 389+ error completions). Net effect: **QA re-test cards are NOT being created automatically** — a live pipeline gap. Before relying on auto-QA, check (a) whether the comment block in `main()` is still there, and (b) whether the replacement cron's script exists. To reactivate the hybrid phase: uncomment the `try`/`except` block at the end of `main()`.
+
 **QA trigger design lesson:** The trigger went through 7 iterations — the fundamental lesson is that **natural-language detection (regex on summaries) is fragile** because agents don't write predictable text (verifiers write "PASS" not "merged"). The final working approach uses **structural signals**: git diff detects code files (language-independent), the verifier card completion confirms it was a code merge not a manual push. Never depend on what an agent wrote in its summary for pipeline triggers.
 
-See [`references/workflow-engine-phases.md`](references/workflow-engine-phases.md) for the full phase reference.
+See [`references/workflow-engine-phases.md`](references/workflow-engine-phases.md) for the full phase reference (including the filter chain and the abandoned-regex design history).
 
 ### Workflow graph model (the declarative successor)
 

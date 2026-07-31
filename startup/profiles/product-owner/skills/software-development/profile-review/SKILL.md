@@ -1,6 +1,6 @@
 ---
 name: profile-review
-description: Review and audit a Hermes specialist profile's identity (SOUL.md) and configuration (config.yaml) for correctness — line-test compliance, skill-index liveness, enforcer-pin soundness, and charter↔skill consistency. Use when asked to "review the architect/qa/tech-lead profile", "audit a profile", "check enforcer pins", or "check SOUL.md compliance". Works across all profiles in ~/.hermes-teams/startup/profiles/<name>/.
+description: Review and audit a Hermes specialist profile's identity (SOUL.md) and configuration (config.yaml) for correctness — line-test compliance, skill-index liveness, enforcer-pin soundness, and charter↔skill consistency. Use when asked to "review the architect/qa/tech-lead profile", "audit a profile", "check enforcer pins", "check SOUL.md compliance", "diagnose the pipeline", or "map the workflow for migration". Works across all profiles in ~/.hermes-teams/startup/profiles/<name>/. For whole-team pipeline diagnosis (all profiles at once), see the "Pipeline diagnosis for workflow engine migration" section below.
 ---
 
 # Profile review
@@ -12,6 +12,7 @@ A specialist profile is three coupled layers: a **charter** (SOUL.md specialty b
 1. `<profile>/SOUL.md` — the specialty block (between `<!-- SPECIALTY:BEGIN -->` and `<!-- SPECIALTY:END -->`).
 2. Every skill the specialty indexes — load each via `skill_view`.
 3. `<profile>/config.yaml` — three sections: `skills.disabled`, `skill_enforcer.mandatory`, `plugins.enabled`.
+4. **When diagnosing a profile as a running system** (not just a charter audit): also read `<profile>/cron/jobs.json`, `<profile>/scripts/*.{sh,py}`, and cross-profile automation like `~/.hermes-teams/startup/profiles/product-owner/scripts/workflow-engine.py`. The core trio tells you what the profile is *configured to do interactively*; cron + scripts tell you what it *does automatically*. Without these you miss broken crons, stalled pipelines, and the scanner/escalation chain. See `references/profile-diagnosis-data-sources.md` for the complete data-source map.
 
 ## Checks (run all five)
 
@@ -34,6 +35,12 @@ Echo every durable claim in the charter against the indexed skill. The highest-v
 ### 3. Skill-index liveness (each entry is loadable)
 
 For every skill named in the specialty's "Skill index" section, confirm it is **not** in that profile's `skills.disabled`. A charter that indexes a disabled skill is a broken pointer: `skill_view` refuses disabled skills (`success: false`), so the agent can never load what the charter tells it to reach for. Cross-check each index name against the `disabled` list.
+
+### 3b. Charter-capability vs disabled-skill (broader than the index)
+
+The skill-index liveness check (#3) only catches skills **explicitly named in the index**. A more insidious failure: the charter **describes a capability in prose** that depends on skills the config has disabled — but the charter doesn't name the skill by its index entry. Example: the researcher's SOUL.md describes "you are the only thing that writes to `~/vault/wiki/`" and prescribes Obsidian note-writing steps, but `obsidian`, `llm-wiki`, and `deep-research` are all in `skills.disabled`. The charter is a correct description of intent; the config makes it impossible to execute.
+
+**How to detect:** read the charter's "how you work" / "what you do" prose and extract every *capability verb* (writes notes, searches the vault, reads PDFs, sends digests). For each capability, identify the skill that provides it and check whether that skill is disabled. This is a prose→skill→disabled-list echo that the named-index check doesn't cover. Common in profiles that were specialized via template-copy (template disables everything, the charter was written for the full skill set).
 
 ### 3a. Phantom / mis-attributed skill references (externally named)
 
@@ -72,6 +79,46 @@ If the profile was recently refactored (SOUL.md stripped to identity-only), veri
 
 Present findings as a table: profile × (pass/fail) × severity, then a per-finding block with the file, line, the exact contradiction, and the one-line fix. Lead with the verdict. Distinguish "verified by reading the file" from "verified by tracing source" — flag the dead-pin check as source-verified because the consequence (zero enforcement) is not visible from the config alone.
 
+## Pipeline diagnosis for workflow engine migration
+
+When the goal is to replace hard-coded cron phases with declarative workflow templates,
+diagnose ALL profiles as a system — not one at a time. The unit of analysis is the
+**handoff** (who creates a card for whom, what crosses the boundary, what triggers it),
+not the individual profile.
+
+### Method: parallel subagent diagnosis + synthesis
+
+Dispatch one subagent per profile (max 3 per batch). Each reads SOUL.md, config.yaml,
+all skills, and the old cron. Each produces:
+1. What this profile does
+2. What triggers it (cron? card? beads? manual?)
+3. Inputs it needs
+4. Outputs it produces (including structured completion metadata)
+5. Every handoff to other profiles (trigger, mechanism, what crosses the boundary)
+6. JSON node definitions for each task that could become a workflow template
+
+Synthesize all diagnoses into a single pipeline map with mermaid diagrams showing:
+- The main happy path (e.g., PO→architect→tech-lead→dev↔verifier→merge→QA)
+- Conditional branches (PASS→ship, FAIL→fix→re-review)
+- Bug/debug loop (QA→debugger→dev→verifier)
+- Escalation chain (blocked cards escalate up the hierarchy)
+- Which cron phases are already migrated vs pending
+
+### Key findings pattern (what to look for)
+
+- **Hidden trigger conditions** — what metadata does each profile stamp on completion?
+  (verifier: verdict/findings/merge; QA: verdict/bugs; debugger: rca/post-mortem)
+- **Dynamic card trees** — tech-lead uses kanban_chains (parent→children), debugger uses
+  loop_engine (converge). The engine doesn't see these — it watches only the parent card.
+- **Bypass routing** — bugs go directly to debugger (not through PO). Wayfinder beads
+  route by label to different profiles. The engine's bead_ready trigger handles this.
+- **One-at-a-time guards** — only one PO dispatch card at a time. Only one merge slot.
+  The engine needs equivalent guards.
+- **Escalation chain terminal** — PO is the terminal automated node. After PO = HUMAN.
+
+See `references/pipeline-diagnosis-methodology.md` for the proven 8-profile diagnosis
+that mapped the entire Hermes team pipeline to workflow engine migration candidates.
+
 ## Pitfalls
 
 1. **Reviewing config in isolation.** Reading only config.yaml, or only SOUL.md, catches neither the disabled∩mandatory contradiction (needs both config sections) nor the charter↔skill contradiction (needs both layers). Read all three layers before judging.
@@ -81,3 +128,8 @@ Present findings as a table: profile × (pass/fail) × severity, then a per-find
 3. **Trusting the enforcer to force-load.** The enforcer only *reframes* a `skill_view` result into directive tone — it never force-loads a skill and never overrides `disabled`. Do not assume "mandatory" means "will be loaded regardless of other config."
 
 4. **Skipping the skill's pitfalls/numbering.** Sediment hides at the bottom of long skills. Read the full file, including the pitfalls tail, not just the procedure body.
+
+## Linked files
+
+- `references/profile-diagnosis-data-sources.md` — complete data source map for single-profile and cross-profile diagnosis (what to read beyond SOUL.md + config.yaml + skills)
+- `references/pipeline-diagnosis-methodology.md` — proven methodology for mapping an entire multi-profile team's pipeline to workflow engine migration candidates (8-profile parallel diagnosis, 9 handoffs, migration priorities, JSON node patterns)
