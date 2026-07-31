@@ -54,6 +54,10 @@ How this happens: copying a profile config from a template lands the skill in `d
 
 Check the indexed skill's own body for stale pitfalls or sediment that predates a refactor: unnumbered bullet lists, pitfall numbering that breaks (8, 9, then unnumbered, then 12), or pitfalls that describe a *different* skill's domain (e.g. a "use clarify for design" pitfall inside a live-testing skill). These accumulate when skills are copied or edited in place.
 
+### 6. Gap analysis verification (after refactor)
+
+If the profile was recently refactored (SOUL.md stripped to identity-only), verify that every procedure removed from the charter is covered by the operational skill. This means: read both files in full, cross-reference every rule/stance/constraint in the old SOUL against the skill body. Common gaps: merge-gate procedures missing ("never merge" without saying "create verifier card"), wrong routing targets (findings to `developer` instead of `debugger`), missing heartbeat/contract-immutability/escalation rules. This check is separate from the line test — the line test checks charter form, the gap analysis checks skill coverage completeness.
+
 ## Output shape
 
 Present findings as a table: profile × (pass/fail) × severity, then a per-finding block with the file, line, the exact contradiction, and the one-line fix. Lead with the verdict. Distinguish "verified by reading the file" from "verified by tracing source" — flag the dead-pin check as source-verified because the consequence (zero enforcement) is not visible from the config alone.
