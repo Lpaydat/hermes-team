@@ -1306,7 +1306,7 @@ def test_state_cleanup_gc():
 # ═══════════════════════════════════════════════════ DONE══════════════════
 
 def test_dead_branch():
-    """A conditional node whose condition never passes should leave the workflow stuck."""
+    """A conditional node whose condition never passes gets SKIPPED — workflow completes."""
     world = FakeWorld()
     world.add_template({
         "id": "dead-branch",
@@ -1332,12 +1332,14 @@ def test_dead_branch():
     actions = world.tick()
     assert any("DONE" in a and "check" in a for a in actions), \
         f"Expected check DONE, got: {actions}"
-    # pass_path should NOT dispatch (condition fails)
+    # pass_path should be SKIPPED (condition fails), not dispatched
+    assert any("SKIPPED" in a and "pass_path" in a for a in actions), \
+        f"pass_path should be SKIPPED on FAIL, got: {actions}"
     assert not any("DISPATCHED" in a and "pass_path" in a for a in actions), \
         f"pass_path should not dispatch on FAIL, got: {actions}"
-    # Workflow should NOT complete (pass_path is pending forever)
-    assert not any("WORKFLOW COMPLETE" in a for a in actions), \
-        f"Workflow should not complete with dead branch, got: {actions}"
+    # Workflow SHOULD complete — both nodes reached terminal state (DONE + SKIPPED)
+    assert any("WORKFLOW COMPLETE" in a for a in actions), \
+        f"Workflow should complete with SKIPPED branch, got: {actions}"
 
     world.cleanup()
     print("OK: test_dead_branch")
@@ -2400,10 +2402,9 @@ def test_adv_graph_forward_reference():
 def test_adv_graph_all_conditions_impossible():
     """Every node has a condition that can never be true.
 
-    All nodes reference trigger context keys that don't exist. No node ever
-    dispatches. WEAKNESS: no liveness analysis — the engine can't distinguish
-    'condition not yet met' from 'condition can never be met'. Instance hangs
-    silently forever.
+    All nodes reference trigger context keys that don't exist. With the SKIPPED
+    terminal state, impossible conditions now mark nodes SKIPPED and the workflow
+    completes (rather than hanging forever as it did before the fix).
     """
     world = FakeWorld()
     world.add_template({
@@ -2422,18 +2423,18 @@ def test_adv_graph_all_conditions_impossible():
     world.start("all-impossible", context={"unrelated": "data"})
     actions = world.tick()
 
-    # Neither node dispatches — conditions reference nonexistent keys
+    # Neither node dispatches — conditions are impossible → both SKIPPED
     assert not any("DISPATCHED" in a for a in actions), \
         f"Nodes with impossible conditions should not dispatch, got: {actions}"
+    assert any("SKIPPED" in a and "a" in a for a in actions), \
+        f"Node a should be SKIPPED, got: {actions}"
+    assert any("SKIPPED" in a and "b" in a for a in actions), \
+        f"Node b should be SKIPPED, got: {actions}"
     assert count_cards(world.board_db) == 0
 
-    # Tick again — still nothing
-    actions2 = world.tick()
-    assert not any("DISPATCHED" in a for a in actions2)
-
-    # Instance is permanently stuck
-    active = world.engine.state.load_active_instances()
-    assert len(active) == 1
+    # Workflow completes — all nodes reached terminal state (SKIPPED)
+    assert any("WORKFLOW COMPLETE" in a for a in actions), \
+        f"Workflow should complete with all nodes SKIPPED, got: {actions}"
 
     world.cleanup()
     print("OK: test_adv_graph_all_conditions_impossible")

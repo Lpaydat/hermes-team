@@ -45,6 +45,7 @@ class NodeStatus(str, Enum):
     DISPATCHED = "dispatched"
     DONE = "done"
     FAILED = "failed"
+    SKIPPED = "skipped"  # condition evaluated false, or a dependency FAILED/SKIPPED
 
 
 @dataclass
@@ -212,6 +213,7 @@ class StateDB:
             conn.close()
 
     def create_instance(self, instance: WorkflowInstance):
+        self._ensure_schema()
         # Validate created_at — reject negative timestamps
         if instance.created_at is not None and instance.created_at < 0:
             raise ValueError(
@@ -317,6 +319,7 @@ class StateDB:
 
     def update_node_state(self, instance_id: str, node_id: str, status: NodeStatus,
                           card_id: str | None = None, output: dict | None = None):
+        self._ensure_schema()
         """Atomic UPSERT that merges with existing values via COALESCE.
 
         Avoids the read-then-write lost-update problem: when card_id or output
@@ -356,6 +359,7 @@ class StateDB:
             conn.close()
 
     def complete_instance(self, instance_id: str):
+        self._ensure_schema()
         conn = _db_connect(self.db_path)
         try:
             conn.execute(
@@ -384,6 +388,7 @@ class StateDB:
             return 0
 
     def set_watermark(self, board: str, ts: int):
+        self._ensure_schema()
         conn = _db_connect(self.db_path)
         try:
             conn.execute(
@@ -702,18 +707,32 @@ class Engine:
                 continue
 
             if node.condition and not evaluate_condition(node.condition, ctx):
+                # Mark as SKIPPED so the all_done check can complete the workflow
+                self.state.update_node_state(
+                    inst.instance_id, node.id, NodeStatus.SKIPPED, None, {},
+                )
+                ns = inst.node_states.get(node.id)
+                if ns:
+                    ns.status = NodeStatus.SKIPPED
+                actions.append(f"SKIPPED node {node.id} on {inst.board} (condition false)")
                 continue
 
             # INPUT SCHEMA VALIDATION: if the node declares an input schema,
-            # verify all required variables are present in the resolved context
-            # before dispatching. Missing inputs → FAILED (not DISPATCHED).
+            # verify all required inputs can be resolved from context.
+            # Uses node.input.sources to know which context keys feed each input.
             if node.input and node.input.schema:
                 required = node.input.schema.get("required", [])
                 missing = []
                 for req_var in required:
-                    # Check if the required variable is in context
-                    # Variables may be referenced as ${nodes.X.output.key} or flat keys
-                    if req_var not in ctx and f"nodes.{req_var}" not in ctx:
+                    # Check if the variable is available in context.
+                    # Look up via input.sources mapping, then direct context lookup.
+                    source_expr = node.input.sources.get(req_var, "")
+                    if source_expr:
+                        # Resolve the source variable key
+                        source_key = strip_template_var(source_expr)
+                        if source_key not in ctx:
+                            missing.append(req_var)
+                    elif req_var not in ctx and f"trigger.{req_var}" not in ctx:
                         missing.append(req_var)
                 if missing:
                     log.warning(
@@ -754,10 +773,12 @@ class Engine:
                 else:
                     actions.append(f"FAILED to dispatch node {node.id} on {inst.board}: {msg}")
 
-        # Check if all nodes done → complete instance
+        # Check if all nodes reached a terminal state → complete instance
+        # Terminal states: DONE, FAILED, SKIPPED. PENDING/DISPATCHED are non-terminal.
+        terminal_states = {NodeStatus.DONE, NodeStatus.FAILED, NodeStatus.SKIPPED}
         if wf.nodes:
             all_done = all(
-                ns is not None and ns.status == NodeStatus.DONE
+                ns is not None and ns.status in terminal_states
                 for node in wf.nodes
                 for ns in [inst.node_states.get(node.id)]
             )
@@ -1227,7 +1248,12 @@ class Engine:
                         if self._matches_trigger(card, wf.trigger.condition):
                             trig_key = f"trig:{wf.id}:{card.id}"
 
-                            # Atomic: check + record + create instance in one transaction
+                            # Record the trigger key to prevent re-triggering.
+                            # NOTE: This is not fully atomic — the key is recorded
+                            # in a separate connection from the instance creation.
+                            # A crash between key-record and instance-create could
+                            # orphan the trigger key (the workflow won't start but
+                            # the key exists, preventing future re-trigger).
                             conn = _db_connect(self.state.db_path)
                             try:
                                 existing = conn.execute(
@@ -1263,7 +1289,7 @@ class Engine:
         instance for each matching bead. Bead ID flows into trigger context.
         """
         actions = []
-        project_dir = self._board_to_project_dir("") or "."
+        project_dir = self._first_active_project_dir()
 
         try:
             result = subprocess.run(
@@ -1437,6 +1463,27 @@ class Engine:
         if fallback.exists():
             return str(fallback)
         return ""
+
+    def _first_active_project_dir(self) -> str:
+        """Get the first active project directory (for bead_ready trigger).
+
+        Beads are project-scoped, not board-scoped. When no specific board
+        context is available, use the first active project.
+        """
+        projects_file = Path.home() / ".hermes-teams/startup/active-projects.json"
+        if projects_file.exists():
+            try:
+                data = json.loads(projects_file.read_text())
+                if "active_projects" in data:
+                    for proj in data["active_projects"]:
+                        path = proj.get("path", "")
+                        if path:
+                            return path
+                elif isinstance(data, dict) and data:
+                    return next(iter(data.values()), "")
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return "."
 
     def start_manual(self, workflow_id: str, board: str, project_dir: str = "",
                      context: dict | None = None) -> str:

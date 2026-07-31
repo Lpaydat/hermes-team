@@ -119,6 +119,14 @@ def get_card(board: str, card_id: str) -> CardInfo | None:
         )
 
 
+def _parse_metadata(raw: str | None) -> dict:
+    """Parse a JSON metadata string, returning {} on any error."""
+    try:
+        return json.loads(raw) if raw else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
 def get_card_metadata(board: str, card_id: str) -> dict:
     """Get the latest run metadata for a card."""
     db = board_db_path(board)
@@ -134,12 +142,7 @@ def get_card_metadata(board: str, card_id: str) -> dict:
         ).fetchone()
         if not row:
             return {}
-        meta = {}
-        try:
-            meta = json.loads(row["metadata"]) if row["metadata"] else {}
-        except (json.JSONDecodeError, TypeError):
-            pass
-        return {"metadata": meta, "summary": row["summary"] or ""}
+        return {"metadata": _parse_metadata(row["metadata"]), "summary": row["summary"] or ""}
 
 
 def find_cards_by_idempotency_key(board: str, key: str) -> list[CardInfo]:
@@ -186,11 +189,7 @@ def find_recent_completions(board: str, since_ts: int) -> list[CardInfo]:
         ).fetchall()
         cards = []
         for r in rows:
-            meta = {}
-            try:
-                meta = json.loads(r["metadata"]) if r["metadata"] else {}
-            except (json.JSONDecodeError, TypeError):
-                pass
+            meta = _parse_metadata(r["metadata"])
             cards.append(
                 CardInfo(
                     id=r["id"],

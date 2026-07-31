@@ -18,6 +18,7 @@ class TemplateStore:
     def __init__(self, templates_dir: str | Path):
         self.dir = Path(templates_dir)
         self._cache: dict[str, Workflow] = {}
+        self._cache_mtime: dict[str, float] = {}
 
     def load(self, workflow_id: str) -> Workflow | None:
         """Load a workflow template by ID.
@@ -26,7 +27,17 @@ class TemplateStore:
         Never raises — all errors are caught and logged.
         """
         if workflow_id in self._cache:
-            return self._cache[workflow_id]
+            # Check if the file has been modified since caching
+            path = self.dir / f"{workflow_id}.json"
+            if path.exists():
+                mtime = path.stat().st_mtime
+                cached_mtime = self._cache_mtime.get(workflow_id, 0)
+                if mtime > cached_mtime:
+                    del self._cache[workflow_id]  # stale — force reload
+                else:
+                    return self._cache[workflow_id]
+            else:
+                return self._cache[workflow_id]  # cached, file gone (ok)
 
         path = self.dir / f"{workflow_id}.json"
         if not path.exists():
@@ -52,6 +63,7 @@ class TemplateStore:
             return None
 
         self._cache[workflow_id] = wf
+        self._cache_mtime[workflow_id] = path.stat().st_mtime
         return wf
 
     def list_ids(self) -> list[str]:

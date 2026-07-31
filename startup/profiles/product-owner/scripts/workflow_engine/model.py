@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import json
+import re
 
 
 @dataclass
@@ -151,7 +152,7 @@ class Workflow:
             if node.skill:
                 label += f" [{node.skill}]"
             if node.type == "subworkflow":
-                lines.append(f"    {node.id}(({{label}}))".replace("{label}", label))
+                lines.append(f"    {node.id}(({label}))")
             elif node.foreach:
                 lines.append(f'    {node.id}{{{{{label}}}}}')
             else:
@@ -186,7 +187,6 @@ def resolve_template(template: str, context: dict) -> str:
     for key, value in context.items():
         result = result.replace("${" + key + "}", str(value))
     # Remove any unresolved variables
-    import re
     result = re.sub(r"\$\{[^}]+\}", "", result)
     return result
 
@@ -200,7 +200,6 @@ def evaluate_condition(condition: str, context: dict) -> bool:
       - "${var} exists"      (truthy check)
       - "${var} is empty"    (falsy check)
     """
-    import re
 
     # ${var} exists
     m = re.match(r"\$\{(.+?)\}\s+exists", condition)

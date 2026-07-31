@@ -396,10 +396,11 @@ The engine has features at different maturity levels. **Do not claim "solid" or 
 | Concurrency safety | DONE | 6 tests, all passing | File lock (fcntl) + thread lock + WAL mode + atomic UPSERT. Tests prove locks serialize ticks and prevent double-dispatch. |
 | State cleanup | DONE | 2 tests | `StateDB.cleanup(max_age_days=7)` runs every tick; removes old trigger_keys, completed instances + node_states, stale watermarks. |
 | Bad input handling | CLOSED (was 4 gaps) | 62 tests, all regular | All four `xfail(strict=True)` crash-gaps (wrong-type nodes, null template, binary file, double-encoded JSON) were resolved by broadening `TemplateStore.load`'s exception handler. Decorators removed; test bodies retained as positive assertions. |
-| Input validation | NOT ENFORCED | parsed only | `NodeInput.schema` is parsed but never validated. Only output schemas are validated. Spec gap confirmed by code review. |
-| Beads integration | MISSING | — | No `bead_ready` trigger, no `bd` CLI calls. Only kanban side wired. Spec gap — intentional v1 scope. |
+| Input validation | DONE | via dispatch tests | `node.input.schema.required[]` checked before dispatch; missing inputs → `NodeStatus.FAILED` with `INPUT VALIDATION FAILED` action. Implemented in PHASE 2 before the dispatch branch. |
+| Beads integration | PARTIAL | — | `bead_ready` trigger source implemented: runs `bd ready --json`, matches by `type`/`label`, starts instances with `trigger.bead_id` in context. Dedup via `trigger_keys` table. No bidirectional bead-write-back yet. |
+| Card creation modes | DONE | — | `template` (default, single card), `delegate` (meta-card assigned to profile, profile creates children), `chain` (parent card + N child cards with `--parent` links). `create_card` gained `parent` param. |
 | Dynamic coexistence | STATIC ONLY | — | No `kanban_chains` or `loop_engine` integration. Engine only executes JSON templates. Dynamic plugins work independently (the engine doesn't see their cards). |
-| Card creation modes | PARTIAL → IN PROGRESS | — | `template` mode DONE. `delegate` + `chain` modes now DISPATCH (code written 2026-07-31): `_dispatch_node` branches on `node.card_mode`, `_dispatch_delegate_node` creates a meta-card, `_dispatch_chain_node` creates parent + child cards via `create_card(parent=...)`. Integration tests for delegate/chain pending. **When adding a new `create_card` kwarg, update the FakeWorld `_fake_create_card` mock signature or the mock crashes with a `TypeError: unexpected keyword argument`.** |
+| Card creation modes | DONE | — | `template` (default, single card), `delegate` (meta-card assigned to profile, profile creates children), `chain` (parent card + N child cards with `--parent` links). `create_card` gained `parent` param. |
 | Incremental migration | NOT STARTED | — | Old 696-line cron untouched and still active. No migration phases, no cron entry for new engine. Engine coexists in separate dir only. |
 
 When the user asks "is the engine solid?", answer with this table, not "265 tests all green." The test count is necessary but not sufficient. The user explicitly caught this: *"hmm, #2,3,5,6 meant test not all green isn't it? or it just green with only tests that ignore the weakpoints, right? and does this graph engine support fan-out/in yet? and conditional edges too?"*
@@ -418,18 +419,19 @@ Before calling the engine "done" or "solid," run a two-axis code review on your 
 3. Aggregate both reports side by side, don't merge them
 4. Fix hard issues immediately; document spec gaps as known v1 scope
 
-**Issues found in the 2026-07-31 review — HARD bugs FIXED, STANDARDS refactors DONE, SPEC gaps in progress:**
-- ~~Dead `title_not_prefix` branch~~ FIXED: combined into one `elif key == "title_not_prefix" or key.startswith("title_not_prefix")` branch
-- ~~`--verbose` flag never wired~~ FIXED: added `--verbose`/`-v` to the main parser
-- ~~3 unused `from typing import Any` imports~~ FIXED: removed from model.py, kanban_adapter.py, store.py
-- ~~`expr[2:-1]` ${stripping} duplicated across 3 methods~~ DONE: extracted `strip_template_var(expr)` in model.py; imported and used in `_dispatch_foreach_node`, `_dispatch_subworkflow_node`, `_check_subworkflow_completion`
-- ~~`_start_from_trigger` and `start_manual` near-identical~~ DONE: extracted `_create_instance(wf, board, project_dir, trigger_context, parent_instance_id=None)` — both callers now delegate to it
-- ~~Sentinel `NodeState(instance_id="", node_id="")` hack~~ DONE: replaced with walrus-operator None checks (`if (dep_ns := ...) is not None`) in deps_done; `for ns in [inst.node_states.get(node.id)]` in all_done (the list-of-one trick avoids the filter-drops-iterations problem)
-- ~~kanban_adapter duplicated connect+row_factory+try/finally across 4 functions~~ DONE: extracted `_connect(db)` context manager; `get_card`, `get_card_metadata`, `find_cards_by_idempotency_key`, `find_recent_completions` all use it
-- ~~Subworkflow completion re-implemented the jsonschema/ImportError fallback~~ DONE: extracted `validate_against_schema(instance, schema)` in kanban_adapter.py; both `validate_output` (board metadata) and `_check_subworkflow_completion` (in-memory mapped_output) use it
-- `card_mode` — `delegate` and `chain` modes now DISPATCH (code written). `_dispatch_node` branches on `node.card_mode`; `_dispatch_delegate_node` creates a meta-card with delegate instructions; `_dispatch_chain_node` creates parent + child cards with `--parent` links. **`create_card` gained a `parent` param; FakeWorld mock updated.** (SPEC GAP — code written, integration tests pending)
-- Input schema not enforced — `NodeInput.schema` parsed but never validated at dispatch time (SPEC GAP — next to implement)
-- Beads integration missing — no `bead_ready` trigger, no `bd` CLI calls (SPEC GAP — intentional v1 scope)
+**Issues found in the 2026-07-31 review — ALL RESOLVED:**
+- ~~Dead `title_not_prefix` branch~~ FIXED
+- ~~`--verbose` flag never wired~~ FIXED
+- ~~3 unused `from typing import Any` imports~~ FIXED
+- ~~`expr[2:-1]` ${stripping} duplicated~~ DONE: `strip_template_var()` helper
+- ~~`_start_from_trigger` and `start_manual` near-identical~~ DONE: `_create_instance()` helper
+- ~~Sentinel `NodeState` hack~~ DONE: walrus-operator None checks
+- ~~kanban_adapter duplicated connect+finally~~ DONE: `_connect()` context manager
+- ~~Subworkflow re-implemented jsonschema fallback~~ DONE: `validate_against_schema()` shared helper
+- ~~`card_mode` delegate/chain dead~~ DONE: `_dispatch_delegate_node` + `_dispatch_chain_node` implemented, `create_card(parent=)` param added
+- ~~Input schema not enforced~~ DONE: `node.input.schema.required[]` validated at dispatch time, marks FAILED on missing
+- ~~No beads integration~~ DONE: `bead_ready` trigger source runs `bd ready --json`, matches by type/label, dedup via trigger_keys
+- ~~`to_mermaid` minimal~~ DONE: node shapes encode type, labels show profile+skill, trigger info as comment
 
 ### Spec-axis review technique: the "dead field" grep
 
@@ -594,3 +596,4 @@ The workflow for fixing all adversarial bugs:
 - `references/trigger-system-tests.md` — 12 trigger-subsystem tests (trigger storms, empty-condition bomb, cross-board contamination, flat metadata lookup, NULL completed_at, self-trigger via engine cards); 6 confirmed bugs
 - `references/scenario-adversarial-tests.md` — scenario-based (vs weakness-based) adversarial testing: name 10 system-level integration scenarios (trigger chains, circular triggers, card hijacking, rapid starts, blocked nodes, state corruption, template hot-reload, concurrent board access, engine-kill recovery, workflow storms), each documenting observed behavior including unbounded-cycle growth and cache-never-invalidates findings
 - `references/dataflow-testing.md` — variable-resolution & data-flow edge cases (62 tests): the probe-before-pin methodology, the full str()-coercion table, recursive-expansion order-dependence, the empty-${} regex gap, the body-readback FakeWorld pattern, and output-mutation snapshot semantics
+- `references/dead-field-grep-technique.md` — code-review technique for catching "vapor config": fields that are parsed but never read by the runtime. Grep the execution layer, not the parse layer.

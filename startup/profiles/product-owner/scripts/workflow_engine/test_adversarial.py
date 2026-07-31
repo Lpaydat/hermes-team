@@ -576,15 +576,8 @@ def test_06_state_db_corruption():
 def test_07_template_hot_reload():
     """Change a template file while a workflow instance is running.
 
-    TemplateStore caches loaded templates in _cache. Changing the file on disk
-    does NOT invalidate the cache, so running instances continue using the OLD
-    template. New instances started after the change also use the old cached
-    version.
-
-    FINDING: Templates are NOT hot-reloaded. The cache is never invalidated.
-    Both running instances AND new instances use the originally-cached version.
-    The only way to pick up changes is to restart the engine (new TemplateStore
-    = empty cache). This is a KNOWN LIMITATION by design (performance).
+    TemplateStore now invalidates cache on file modification (mtime check).
+    Changed templates are picked up on the next load() call.
     """
     world = setup_world()
     try:
@@ -620,19 +613,11 @@ def test_07_template_hot_reload():
         template_path = world.templates_dir / "hotswap.json"
         template_path.write_text(json.dumps(new_template, indent=2))
 
-        # Load again — should return CACHED version (not the new file)
+        # Load again — cache invalidated by mtime, returns NEW version
         wf_again = world.engine.store.load("hotswap")
         node_ids_again = {n.id for n in wf_again.nodes}
-        assert node_ids_again == {"v1", "v1b"}, \
-            f"Template should be cached (old version), got {node_ids_again}. " \
-            f"Hot-reload does NOT work — TemplateStore never invalidates cache."
-
-        # New instance also uses cached version
-        world.start("hotswap")
-        world.tick()
-        # Should create v1 card (not v2_new) because cache is used
-        card_v1 = get_card_id_by_assignee(world.board_db, "worker")
-        assert card_v1
+        assert node_ids_again == {"v2_new"}, \
+            f"Template should hot-reload to v2_new, got {node_ids_again}"
 
         # Verify title contains v1's template (title is "[v1] test")
         conn = sqlite3.connect(str(world.board_db))
