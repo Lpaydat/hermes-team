@@ -41,6 +41,26 @@ When a foreach node has `type="command"`, the command runs per-item without crea
 
 This is distinct from foreach on task nodes, which creates one card per item.
 
+## Trigger context double-prefix bug
+
+When `cmd_start` injects trigger context for manual workflow starts, use BARE keys (`board`, `source`, `project_dir`), NOT pre-prefixed keys (`trigger.board`). The `context()` method in StateDB adds the `trigger.` prefix when merging into context:
+
+```python
+# WRONG — produces trigger.trigger.board
+context["trigger.board"] = args.board
+
+# CORRECT — produces trigger.board
+context["board"] = args.board
+```
+
+Symptom: `${trigger.board}` resolves to empty string in templates. The command runs with `--board ` (empty). Verify with:
+```python
+from workflow_engine.model import resolve_template
+print(resolve_template("board=${trigger.board}", ctx))  # should show board name, not empty
+```
+
+This only affects `cmd_start` (manual starts). Trigger-based starts (card_completed, bead_ready) inject context correctly because they go through the trigger detection path which already uses bare keys.
+
 ## Testing
 
 9 tests in `test_foreach_enhancements.py`:

@@ -106,3 +106,32 @@ When delegating research for a migration, tell subagents to WRITE the replacemen
 ## Kanban concurrency: global config overrides per-profile
 
 The dispatcher reads `max_in_progress` from the GLOBAL `startup/config.yaml`, not from `profiles/<name>/config.yaml`. Changing the per-profile config has no effect. Edit the global config and restart the gateway.
+
+## Archived cards must be treated as terminal
+
+When a card is archived externally (manual cleanup, GC, or user removing unwanted cards), the engine must treat `"archived"` status the same as `"done"`. Without this, nodes stay DISPATCHED forever waiting for a card that will never reach `"done"`.
+
+Both the single-card check and the foreach card check must handle archived:
+```python
+if card.status == "done" or card.status == "archived":
+```
+
+Found during livetest when 3 grill cards were archived to limit the test scope — the child workflow instances hung forever until the fix was applied.
+
+## Livetest cleanup pattern
+
+After a livetest, clean BOTH the board AND the engine state DB:
+1. Archive all test cards on the board
+2. Delete workflow_instances + node_states for the test workflow from the state DB
+3. Delete trigger_keys to prevent stale dedup
+4. Run `main.py tick` to verify zero active instances
+
+Without full cleanup, leftover state pollutes integration tests (they share the real state DB).
+
+## Don't ask permission for obvious fixes
+
+User feedback: "stop asking for what things you should done long ago already." When you identify bugs in code you wrote, fix them immediately. Don't present a menu of "want me to fix #1, #2, #3?" — just fix all of them. Asking for permission on obvious next steps wastes the user's time.
+
+## Discuss before coding when design is unclear
+
+User feedback: "when the task is not clear, you should stop jump to code and discuss or plan first." When a task involves architectural decisions (e.g., "should this be 1 workflow or N workflows?"), present options and tradeoffs BEFORE writing code. Only start coding after the direction is confirmed.

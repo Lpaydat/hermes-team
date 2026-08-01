@@ -9,6 +9,10 @@ triggers:
   - trigger detection
   - card-based workflow
   - replace cron
+  - agent behavioral testing
+  - prompt A/B test
+  - loop_engine enforcement
+  - kanban prompt experiment
 ---
 
 # Workflow Engine Development
@@ -742,9 +746,13 @@ Do NOT skip straight to real integration — prove the logic first with fakes.
 Do NOT stop at happy paths — the user explicitly wants adversarial tests that
 TRY to break the system.
 
-## Hybrid integration testing (real boards, simulated completions)
+## Livetest quality verification (see references/livetest-quality-verification.md)
 
-A third testing tier between FakeWorld (fully mocked) and real integration testing.
+After a livetest completes, verify the builder actually followed mandated processes — especially loop_engine usage, grill depth, and portfolio entries. Full procedure in `references/livetest-quality-verification.md`.
+
+## Engine bugs discovered during livetests (see references/engine-bugs-from-livetests.md)
+
+Four bugs found and fixed during the builder pipeline livetest. Full details in `references/engine-bugs-from-livetests.md`.
 Creates **real kanban boards** and dispatches **real cards** via the engine's CLI
 path, but **simulates card completions via direct SQLite writes** instead of
 waiting for real agents. Runs in 1-3s per test while proving the real plumbing

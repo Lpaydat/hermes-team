@@ -933,6 +933,43 @@ def _park_driver(kb, conn, my_card_id, terminal_id, run_id):
 # ── T2: verifier verdict + card factories ─────────────────────────────────────
 
 
+def _parse_string_verdict(s):
+    """Best-effort parse of a string-form dod_verdict into a dict.
+
+    Verifier agents sometimes write ``dod_met=true/advance`` (or
+    ``dod_met=false/replan``) as a STRING rather than the structured dict
+    ``{dod_met: true, recommendation: "advance"}``. Without this, the engine
+    sees ``dod_verdict`` but rejects it (``isinstance(verdict, dict)`` is
+    False), loops on stale-verifier re-evaluation, and burns reeval attempts.
+
+    Returns a dict ``{dod_met: bool, recommendation: str|None}`` or None when
+    the string can't be parsed.
+    """
+    if not isinstance(s, str):
+        return None
+    text = s.strip()
+    if not text:
+        return None
+    import re
+    met = None
+    rec = None
+    m = re.search(r"dod_met\s*[:=]\s*(true|false)", text, re.IGNORECASE)
+    if m:
+        met = m.group(1).lower() == "true"
+    m = re.search(r"(?:recommendation\s*[:=])?\b(advance|replan|escalate)\b",
+                  text, re.IGNORECASE)
+    if m:
+        rec = m.group(1).lower()
+    if met is None and rec is None:
+        return None
+    out = {}
+    if met is not None:
+        out["dod_met"] = met
+    if rec is not None:
+        out["recommendation"] = rec
+    return out
+
+
 def _extract_verdict(run):
     """Pull the structured dod_verdict from a verifier card's closing run.
 
@@ -941,12 +978,40 @@ def _extract_verdict(run):
     driver reads it back through the latest_run direct-read path (the same
     path T1 used for the execution result). Returns None when no verdict is
     present (verifier not yet completed, or completed without a verdict).
+
+    FALLBACK 1: when ``dod_verdict`` is a STRING (e.g. ``dod_met=true/advance``)
+    rather than a dict, parse it via :func:`_parse_string_verdict` so the
+    engine still advances instead of looping on stale-verifier re-evaluation.
+
+    FALLBACK 2 (flat-metadata): when the verifier put the verdict fields
+    (``dod_met``, ``recommendation``, ``score``, ``gaps``) flat at the top
+    level of ``run.metadata`` instead of nested under ``dod_verdict``,
+    construct the verdict dict from those flat fields. This is the most
+    common verifier output shape: the task body says ``Complete with
+    dod_verdict in metadata: {dod_met: ...}`` which workers interpret as
+    "put these fields in metadata" rather than "nest under a key". Without
+    this fallback the engine sees no verdict and burns reeval attempts.
     """
     if run is None:
         return None
     meta = getattr(run, "metadata", None) or {}
     verdict = meta.get("dod_verdict") if isinstance(meta, dict) else None
-    return verdict if isinstance(verdict, dict) else None
+    if isinstance(verdict, dict):
+        return verdict
+    # String fallback — verifier wrote a compact form instead of a dict.
+    if isinstance(verdict, str):
+        parsed = _parse_string_verdict(verdict)
+        if parsed is not None:
+            return parsed
+    # Flat-metadata fallback — verdict fields at top level of metadata.
+    if isinstance(meta, dict) and "dod_met" in meta:
+        return {
+            "dod_met": meta["dod_met"],
+            "score": meta.get("score"),
+            "gaps": meta.get("gaps", []),
+            "recommendation": meta.get("recommendation"),
+        }
+    return None
 
 
 def _validate_dod_artifact(verdict, artifact_required=False):

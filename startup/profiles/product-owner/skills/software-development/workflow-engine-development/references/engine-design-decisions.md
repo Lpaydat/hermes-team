@@ -39,6 +39,10 @@ The `wait` node type IS kept — it polls a condition string each tick. That's w
 
 **Critical:** foreach on task nodes is a BARRIER. All N cards must complete before the next node dispatches. Use `foreach + subworkflow` when items should flow independently through a multi-node pipeline (e.g., grill→build→handoff per idea).
 
+## Terminal card statuses
+
+Both `"done"` and `"archived"` are treated as terminal by the engine. A node whose card is archived will complete (not hang forever). This handles manual cleanup, GC, and user-removed cards.
+
 ## title_template
 
 Works on ALL node types, not just foreach. Set `title_template` on any task node to control the card title:
