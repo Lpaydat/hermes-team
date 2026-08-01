@@ -52,9 +52,20 @@ Integration tests share the real state DB. Leftover instances from livetests pol
 
 The FakeWorld's `_fake_create_card` must include `body` in the INSERT statement. Without it, card bodies are always empty in tests, masking variable resolution bugs.
 
-## Foreach waits for ALL items
+## Foreach task barrier — the WRONG pattern for pipelines
 
-A foreach node creates N cards and waits for ALL of them to complete before the next node dispatches. With 10 grill cards (max 3 concurrent), the build node waits for all 10 to finish. This is slightly slower than independent parent-child pairs but acceptable since the profile processes sequentially anyway.
+A foreach on a task node creates N cards and waits for ALL of them to complete before advancing. With 10 grill cards, the build node can't start until ALL 10 grills finish. This is WRONG when each item should flow independently through a multi-node pipeline (grill→build→handoff).
+
+**User expectation:** "I expect each prototype run in its workflow" — each idea should run grill→build→handoff independently. When grill(A) completes, build(A) starts immediately, even while grill(B) is still running.
+
+**Fix:** Use `foreach + subworkflow`. The parent workflow has a command node (parse idea bank) → foreach subworkflow node that spawns N independent child workflows. Each child has grill→build→handoff as its own sequential pipeline. No barriers.
+
+```
+Parent:  parse (command) → spawn (foreach + subworkflow)
+Child:   grill (task) → build (task) → handoff (task)
+```
+
+**When foreach barrier IS fine:** batch processing where all items genuinely must complete before downstream work. E.g., "collect all test results, then aggregate."
 
 ## Dedup is critical for re-runnable workflows
 
@@ -79,3 +90,19 @@ The original OR-semantics for explicit edges was WRONG. A node with multiple unc
 - **Activation: all unconditional done AND (conditional ok OR no conditional edges)**
 
 This was found by an adversarial test: `test_multiple_waits_one_blocks` — w1 resolved, w2 blocked, but `go` still dispatched because w1's unconditional edge triggered OR semantics.
+
+## Foreach subworkflow child dispatch needs extra tick
+
+When `_dispatch_foreach_subworkflow` spawns child instances during PHASE 2 of a tick, the children won't dispatch their own nodes until the NEXT tick. This is because `load_active_instances()` runs at the START of the tick — children created mid-tick aren't in the list.
+
+**In tests:** call `world.tick()` twice after expecting child dispatch — once to spawn, once for children to dispatch their cards.
+
+**In production:** the cron tick runs every 60s, so children dispatch on the next tick naturally. Not a production issue.
+
+## Subagent research must prescribe, not describe
+
+When delegating research for a migration, tell subagents to WRITE the replacement templates — not to "analyze what exists." Descriptive analysis produces "these profiles just receive cards" when the real question is "should THIS ENGINE be what sends those cards." Prescribe the target, don't describe the current state.
+
+## Kanban concurrency: global config overrides per-profile
+
+The dispatcher reads `max_in_progress` from the GLOBAL `startup/config.yaml`, not from `profiles/<name>/config.yaml`. Changing the per-profile config has no effect. Edit the global config and restart the gateway.

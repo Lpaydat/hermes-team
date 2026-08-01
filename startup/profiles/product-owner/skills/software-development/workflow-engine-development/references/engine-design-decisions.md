@@ -27,6 +27,28 @@ The `wait` node type IS kept — it polls a condition string each tick. That's w
 | `subworkflow` | Starts child workflow, blocks until done | No (child creates its own) |
 | `wait` | Polls a condition string each tick until true | No |
 
+## Foreach modes (3)
+
+`foreach` can be combined with any node type:
+
+| Combination | Behavior |
+|-------------|----------|
+| `foreach` (task) | Creates N kanban cards, **waits for ALL** before advancing. Barrier. |
+| `foreach + command` | Runs command per item, no cards. Zero tokens. |
+| `foreach + subworkflow` | Spawns N **independent** child workflow instances. No barrier — each runs its own pipeline. |
+
+**Critical:** foreach on task nodes is a BARRIER. All N cards must complete before the next node dispatches. Use `foreach + subworkflow` when items should flow independently through a multi-node pipeline (e.g., grill→build→handoff per idea).
+
+## title_template
+
+Works on ALL node types, not just foreach. Set `title_template` on any task node to control the card title:
+
+```json
+{"id": "grill", "title_template": "Grill: ${trigger.name}", ...}
+```
+
+For foreach: `"Grill: ${item.name}"`. Without it, defaults to `[node.id] skill` or `[node#idx] skill` for foreach.
+
 ## Trigger sources (3)
 
 | Source | What it does |
@@ -57,3 +79,16 @@ Engine-created cards (idempotency_key `wf:...`) from workflows with explicit edg
 ## Command node security
 
 All variable values are shlex-quoted before substitution into command strings. Prevents shell injection via card metadata.
+
+## Kanban concurrency config
+
+The dispatcher reads `max_in_progress` and `max_in_progress_per_profile` from the **global** `startup/config.yaml`, NOT from the per-profile `config.yaml`. If you change per-profile config, the global overrides it.
+
+- `max_in_progress` — global cap across ALL profiles on the board
+- `max_in_progress_per_profile` — cap per individual profile (tighter constraint)
+
+Requires gateway restart to take effect. Kill the gateway process and start a new one.
+
+## Engine location
+
+Shared infrastructure at `~/.hermes-teams/startup/scripts/workflow_engine/`. NOT inside any profile directory. All profiles can use it. The cron wrapper lives in the PO profile's `scripts/` dir (`wf-engine-tick.py`).

@@ -28,6 +28,20 @@ Polls a `wait_condition` string each tick. Uses same condition format as
 `node.condition`. Stays PENDING until condition evaluates true, then DONE.
 Does not create cards. Empty condition fires immediately.
 
+## Foreach modes (3)
+
+`foreach` can be combined with node types:
+
+| Combination | Behavior | Barrier? |
+|-------------|----------|----------|
+| `foreach` (task) | Creates N kanban cards, waits for ALL before advancing | YES — barrier |
+| `foreach + command` | Runs command per item, no cards. Zero tokens | N/A (synchronous) |
+| `foreach + subworkflow` | Spawns N independent child workflow instances | NO — each flows independently |
+
+**Critical:** foreach on task nodes is a BARRIER. Use `foreach + subworkflow`
+when items should flow independently through a multi-node pipeline.
+See `references/foreach-enhancements.md` for the full pattern.
+
 ### foreach enhancements
 
 - `title_template` field on Node: custom card titles (`"Grill: ${item.name}"`)
@@ -35,6 +49,8 @@ Does not create cards. Empty condition fires immediately.
   `value["slug"]` when item is a dict
 - Falls back to `[node#idx]` when no title_template
 - Without dot-path: `${item}` renders the whole dict as a string
+- `title_template` works on ALL task nodes (not just foreach) — set it
+  on any task node to control the card title
 
 ## Trigger sources
 

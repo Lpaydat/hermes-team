@@ -121,6 +121,39 @@ curl -sL "https://itunes.apple.com/lookup?id=TRACK_ID&country=us"
 Returns base price (e.g. "Free"), seller, description. Does NOT return IAP
 tier prices.
 
+### ✅ Meta developer docs (developers.facebook.com) — host Meta API facts
+
+Meta's own developer docs are curl/browser-accessible and are the authoritative
+source for any WhatsApp / Instagram / Messenger / Meta Graph API question.
+They render as readable text in the `browser_navigate` snapshot (often more
+complete than the visible page because the accessibility tree captures all
+section content). For long pages, the snapshot saves to a cache file —
+`read_file` it in pages.
+
+**Meta restructured these docs in 2026.** Old paths under
+`developers.facebook.com/docs/whatsapp/...` (and some `/docs/.../partners/`,
+`/docs/.../onboarding-for-tech-providers/` pages) now frequently 404. The
+canonical live path moved to
+`developers.facebook.com/documentation/business-messaging/whatsapp/...`.
+Redirects from old URLs are unreliable. If a `/docs/...` URL 404s, try the
+`/documentation/business-messaging/...` equivalent, or navigate to the
+section root and use the left-sidebar nav. Confirmed 2026-08-01.
+
+**The published doc text is more complete than a feature-comparison screenshot.**
+When you need a comparison matrix (e.g. partner-tier capabilities), the page's
+text snapshot captures the row/column labels and StaticText even when the
+checkmarks render as images — extract from the snapshot text rather than
+blocking on vision analysis of the rendered table. Vision tools can error on
+provider-side content-type issues; the text snapshot is the resilient fallback.
+Confirmed 2026-08-01.
+
+### ✅ Vendor / company marketing sites (business.whatsapp.com, etc.)
+
+Meta's product marketing sites (e.g. `business.whatsapp.com/partners/...`)
+curl/browser-render cleanly and often host the human-readable framing of a
+partner program or feature set that the developer docs only express in API
+terms. Good for feature matrices, positioning, and ecosystem maps.
+
 ## Accessing JSON APIs directly via the browser (sidesteps security flags)
 
 The security scanner flags `curl URL | python3` (pipe-to-interpreter) and
@@ -220,3 +253,12 @@ both a §2 Evidence quote and a §3 Competitor entry.
   extraction recipe. Reusable for any spec-driven-dev / architecture-spec /
   diagramming-as-code / dev-tool dossier, and as a reference for the
   `<style>`-stripping pitfall. (2026-07-28)
+- `references/whatsapp-cloud-api-partner-model.md` — WhatsApp Cloud API
+  partner/access architecture: BSP is NOT required (legacy On-Premise concept),
+  the Tech Provider / Tech Partner / Solution Partner tier matrix (only Solution
+  Partners get line-of-credit billing), the Embedded Signup onboarding path for
+  multi-tenant SaaS, direct-vs-BSP trade-offs, and the Meta docs URL-restructure
+  navigation fact. Reusable for any WhatsApp-messaging / shared-inbox /
+  DTC-support venture. Pairs with `venture-research`'s
+  `whatsapp-bsp-competitor-pricing.md` (which covers competitor pricing + per-
+  message economics). (2026-08-01)

@@ -31,14 +31,18 @@ A livetest IS:
 
 ## Increasing concurrency
 
-Edit the profile's `config.yaml`:
+Edit the **global** `startup/config.yaml` (NOT the per-profile config — the dispatcher reads global config):
+
 ```yaml
 kanban:
-  max_in_progress: 5
-  max_in_progress_per_profile: 5
+  max_in_progress: 10              # global cap across all profiles
+  max_in_progress_per_profile: 5   # per-profile cap (tighter)
 ```
 
-Requires gateway restart to take effect (kill + restart, or use the `gateways` fish function).
+- `max_in_progress` — total cards running on the board
+- `max_in_progress_per_profile` — max cards per single profile
+
+Requires gateway restart to take effect (kill + restart with `terminal(background=true)`).
 
 ## Monitoring commands
 

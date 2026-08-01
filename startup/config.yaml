@@ -76,10 +76,10 @@ compression:
   protect_last_n: 20
   protect_first_n: 3
 kanban:
-  max_in_progress_per_profile: 3
+  max_in_progress_per_profile: 5
   auto_decompose: false
   dispatch_stale_timeout_seconds: 14400
-  max_in_progress: 3
+  max_in_progress: 10
 prompt_caching:
   cache_ttl: 5m
 display:

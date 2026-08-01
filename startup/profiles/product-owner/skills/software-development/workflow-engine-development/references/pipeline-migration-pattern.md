@@ -68,12 +68,16 @@ foreach completes.
 
 ## Key insights from the builder migration
 
-1. **Foreach creates cards, not instances.** One foreach node creates N
-   cards on the board. The engine watches all N and advances when all complete.
+1. **Foreach task nodes create a BARRIER.** One foreach node creates N
+   cards on the board, but the engine waits for ALL N to complete before
+   advancing. With 10 grill cards, the build node can't start until ALL
+   10 grills finish. This is WRONG for independent pipelines.
 
-2. **Foreach cards have independent lifecycles.** Each grill card is
-   independently claimed, worked, and completed by the dispatcher. The
-   engine tracks all of them.
+2. **Use foreach + subworkflow for independent pipelines.** Each item
+   gets its own child workflow instance that runs grill→build→handoff
+   independently. When grill(A) completes, build(A) starts immediately,
+   even while grill(B) is still running. No barriers. See
+   `references/foreach-enhancements.md` for details.
 
 3. **Dot-path resolution enables rich templates.** `${item.slug}`,
    `${item.name}`, `${item.score}` all resolve from dict items. Without
@@ -83,6 +87,10 @@ foreach completes.
    differ across runs (new instance = new keys). Dedup logic stays in
    the Python parse script, not the template.
 
-5. **The `.context/` vs `context/` inconsistency.** The builder skills
+5. **title_template works on ALL node types**, not just foreach. Set it
+   on any task node to control the card title. Without it, defaults to
+   `[node.id] skill` or `[node#idx] skill` for foreach.
+
+6. **The `.context/` vs `context/` inconsistency.** The builder skills
    reference both dotted and non-dotted paths. This is a pre-existing
    inconsistency in the skills, not an engine issue.
