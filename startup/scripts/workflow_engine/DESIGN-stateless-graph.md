@@ -37,7 +37,7 @@ orthogonal to status and must be ported. This is the complete inventory.
   node existence, back-edge caps — see §Validation).
 - `kanban_adapter.py` — board interface. Unchanged (reads are card truth).
 
-### Dispatch logic (8 shapes — ALL preserved)
+### Dispatch logic (9 shapes — ALL preserved)
 
 The tick's dispatch step must branch on node type + card mode exactly as the
 current engine does. These ~850 lines are orthogonal to the status model.
@@ -221,11 +221,18 @@ def node_phase(node, node_state, ctx) -> str:
     """Derive a node's phase from its state. Never persisted.
     Returns: 'pending' | 'running' | 'done' | 'failed' | 'skipped'
     """
+    # Terminal flags written by pass 3 (skip propagation, validation failure).
+    # MUST be checked first — they override card/child state.
+    if node_state.get("skipped"):
+        return "skipped"
+    if node_state.get("failed"):
+        return "failed"
+
     # command/wait: check explicit done flag
     if node_state.get("done"):
         return "done"
     if node.type in ("command", "wait"):
-        return "done" if node_state.get("done") else "pending"
+        return "pending"
 
     # subworkflow: check child completion
     if node.type == "subworkflow" or (node.foreach and node.type == "subworkflow"):
@@ -255,7 +262,7 @@ def node_phase(node, node_state, ctx) -> str:
     if node_state.get("card_id"):
         return "running"
 
-    # No card yet — check if it should be skipped (dead branch)
+    # No card yet — not yet dispatched
     return "pending"
 ```
 
@@ -336,10 +343,16 @@ For each node in the workflow template:
       state.nodes[node_id]["output"] = {"_validation_error": f"missing: {missing}"}
       continue
 
-  # Dispatch by type (8 shapes — see §Dispatch Logic)
+  # Dispatch by type (9 shapes — see §Dispatch Logic)
   _dispatch_by_type(node, state, ctx)
   # State is persisted AFTER each dispatch (see §State Persistence)
 ```
+
+**Note on command→task latency:** command nodes execute synchronously in pass 3,
+but their output is not re-read into state until pass 1 of the NEXT tick. So a
+command→task chain gains one tick of latency (~1 minute at default cron cadence)
+vs. the current engine's intra-pass ctx rebuild. This is a minor, predictable
+regression — arguably cleaner (no mid-pass state mutation). Accepted trade-off.
 
 ### Completion check (after pass 3)
 
@@ -380,9 +393,23 @@ for exit_node in exit_nodes:
   if phase not in ("done", "failed", "skipped"):
     return  # not ready
 
-# Check reachability: every pending non-exit node must be reachable
-# from a done node via active edges. Unreachable pending nodes are
-# orphans (disconnected components) — ignore them (or they'd hang forever).
+# Check reachability: ignore structurally disconnected components.
+# A disconnected component is a set of nodes with NO edges connecting them
+# to the main graph (no path from any entry/dispatched node). These are
+# orphan subgraphs (template errors that passed load validation but have
+# disconnected nodes). They do NOT block completion.
+#
+# Algorithm: BFS from all dispatched/done nodes following ALL edges
+# (regardless of condition). Any node NOT in the BFS-visited set is
+# structurally unreachable → ignore it for completion purposes.
+#
+# Note: conditionally-dead nodes (their only incoming edge has a false
+# condition) are NOT structurally unreachable — they ARE connected by
+# edges. They are handled by SKIP propagation (§Activation Rule), which
+# marks them skipped so they count as terminal. The two mechanisms are
+# complementary:
+#   - SKIP propagation: handles conditionally-dead nodes (connected but dead)
+#   - Reachability check: handles structurally disconnected nodes (no edges)
 
 Instance completes.
 ```
@@ -406,9 +433,8 @@ A node N is dispatchable when, over its set of incoming edges:
   Let U = unconditional incoming edges (no condition)
   Let C = conditional incoming edges (has condition)
 
-  U_sat = every e in U has source phase in {done, failed, skipped}
-          (terminal — but for unconditional AND, all must be DONE specifically)
-  CORRECTION: U_sat = every e in U has source phase == 'done'
+  U_sat = every e in U has source phase == 'done'
+          (AND semantics: all unconditional sources must be done)
 
   C_sat = some e in C has source phase == 'done'
           AND evaluate(e.condition, ctx) is True
