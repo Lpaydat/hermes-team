@@ -78,6 +78,11 @@ link) is unchanged.
 - **Self-trigger guard** — REWRITTEN (see §Self-Trigger Guard Fix).
 - Trigger-key dedup (`trigger_keys` table) — independent of node/card state,
   preserved unchanged.
+- **Per-iteration re-trigger semantics:** each iteration of a node produces a
+  distinct card and thus a distinct completion event. Any `card_completed`
+  trigger matching that card shape fires once per iteration. Workflows needing
+  once-per-logical-change firing must dedup in their own trigger condition
+  (e.g. a merge-commit sha), not per-card.
 - `bead_ready` trigger enrichment — add title/description/labels to context
   (latent gap, fix as part of this rewrite since dispatch needs it).
 
@@ -163,7 +168,7 @@ GC completed) as simple SQL without JSON parsing.
     "card_status": "done",       # synced from board each tick
     "output": {"verdict": "PASS", "merged_sha": "..."},
     "iteration": 0,              # bumped on back-edge reset
-    "iterations": [],            # audit trail: [{card_id, output}, ...]
+    "iterations": [],            # audit trail: [{card_id, card_status, output}, ...]
 }
 
 # command node (inline, synchronous)
@@ -295,7 +300,7 @@ Compute reset set from a SNAPSHOT of state (never mutate during computation):
 
 Apply resets:
   For each node in reset set:
-    1. Move current {card_id, output} to iterations[] (audit trail, cap 10)
+    1. Move current {card_id, card_status, output} to iterations[] (audit trail, cap 10)
     2. Clear card_id, card_status
     3. Bump iteration += 1
     4. Keep output pointing at last-known-good value (don't wipe)
@@ -341,13 +346,33 @@ For each node in the workflow template:
 ```
 exit_nodes = [n for n in wf.nodes if no outgoing edges]
 
-# Completion fence: re-read exit-node cards from board (not state)
+# Completion fence: re-read board truth for EVERY exit node (not cached state).
+# Must handle all node types, not just single-card task nodes.
 for exit_node in exit_nodes:
-  card_id = state.nodes[exit_node.id].get("card_id")
-  if card_id:
-    card = get_card(board, card_id)  # FRESH read, not cached state
-    if card.status not in ("done", "archived"):
+  ns = state.nodes[exit_node.id]
+
+  if exit_node.foreach and exit_node.type == "task":
+    # FOREACH exit node: re-read ALL card statuses from board
+    for card_id in ns.get("cards", []):
+      card = get_card(board, card_id)  # FRESH read
+      if not card or card.status not in ("done", "archived"):
+        return  # don't complete — a foreach card regressed or not done
+
+  elif exit_node.type == "subworkflow" or (exit_node.foreach and exit_node.type == "subworkflow"):
+    # SUBWORKFLOW exit node: re-read child instance status from state DB
+    for child_id in ([ns.get("child_instance_id")] if ns.get("child_instance_id")
+                     else ns.get("child_instance_ids", [])):
+      child_status = _read_instance_status(child_id)  # SELECT status, fresh
+      if child_status != "completed":
+        return  # don't complete — child not done yet
+
+  elif ns.get("card_id"):
+    # SINGLE-CARD task exit node: re-read the card from board
+    card = get_card(board, ns["card_id"])  # FRESH read, not cached state
+    if not card or card.status not in ("done", "archived"):
       return  # don't complete — card regressed or not done
+
+  # command/wait exit nodes: synchronous, no board race — skip fence
 
 # All exit nodes terminal?
 for exit_node in exit_nodes:
@@ -597,6 +622,38 @@ the current engine's behavior (each dispatch is individually durable via
 The tick has no single save point — mutations are flushed as they occur. On
 crash recovery, a dispatched-but-card-missing node is retried and idempotency
 dedup catches it.
+
+### Dispatch sequence (crash-safe ordering)
+
+Each dispatch follows this exact sequence, which makes the crash-safety
+argument explicit:
+
+1. **Compute idempotency key** from `instance_id + node_id + iteration`
+   (plus foreach/chain/sw suffix if applicable).
+2. **Dedup lookup** — `find_cards_by_idempotency_key(key)`. If a card exists,
+   adopt it (set `card_id` in state), persist state, done.
+3. **Create card** on the board (only if no existing card found).
+4. **Set `card_id` and `card_status`** in state.
+5. **Persist state immediately** (incremental save, version-bumped).
+
+Crash at any point leaves a recoverable state:
+- Crash before step 3: no card created, state unchanged → re-dispatch next tick.
+- Crash after step 3, before step 5: orphan card exists with the idem key.
+  Next tick: state has no `card_id` → re-dispatch → dedup lookup (step 2)
+  finds the orphan card → adopts it. **No duplicate.**
+- Crash after step 5: state and board are consistent.
+
+This ordering (dedup-lookup → create → save-state) ensures a crash never
+produces a duplicate card, because the idem key is deterministic and the
+dedup lookup always runs before creation.
+
+### Version bump on each incremental save
+
+After each successful incremental SAVE, update the in-memory `state.version`
+to the new DB value (`version + 1`) so the next incremental save in the same
+tick passes its own guard. On `rowcount == 0` (lost the race), abort the tick
+— already-committed saves from this tick remain durable, and idempotency-key
+dedup prevents duplicate cards on re-dispatch next tick.
 
 ---
 
