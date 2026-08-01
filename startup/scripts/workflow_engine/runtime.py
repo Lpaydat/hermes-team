@@ -40,6 +40,53 @@ LOCK_FILE = Path.home() / ".hermes-teams/startup/kanban/workflow-engine.lock"
 TRIGGER_LOOKBACK_SECS = 3600  # 1 hour
 
 
+def _extract_parent_workflow(idempotency_key: str) -> str | None:
+    """Deterministically parse the parent workflow ID from an engine card's
+    idempotency key.
+
+    Engine-created cards carry an idempotency key of the shape:
+
+        wf:<instance_id>[:<suffix>...]
+
+    where ``<instance_id>`` is ``wf_<timestamp>_<workflow.id>_<uuid8>`` and
+    ``<workflow.id>`` may itself contain hyphens (but never underscores —
+    enforced by ``Workflow.from_dict``). The optional ``:<suffix>...`` tail
+    encodes foreach/chain/sw iteration indices and is ignored here.
+
+    Returns the parent workflow ID, or ``None`` when the key is not an engine
+    card (does not start with ``wf:wf_``) or is malformed.
+
+    This replaces the prior heuristic that guessed the workflow ID chunk via
+    "first chunk longer than 3 chars, non-digit" — which misclassified short
+    workflow IDs (≤3 chars) and crashed on degenerate shapes.
+    """
+    if not idempotency_key or not idempotency_key.startswith("wf:"):
+        return None
+    parts = idempotency_key.split(":")
+    if len(parts) < 2:
+        return None
+    instance_part = parts[1]
+    # Engine instance IDs always start with "wf_"; anything else is not an
+    # engine card we recognise.
+    if not instance_part.startswith("wf_"):
+        return None
+    inst_chunks = instance_part.split("_")
+    # Shape: ["wf", <timestamp>, <wf.id chunks...>, <uuid8>]
+    # Need at least: wf + timestamp + 1 id chunk + uuid  →  >= 4 chunks.
+    if len(inst_chunks) < 4:
+        return None
+    # Rejoin everything between the timestamp (index 1) and the uuid (last),
+    # preserving hyphenated workflow IDs intact.
+    return "_".join(inst_chunks[2:-1])
+
+
+# DEPRECATED — T4 state-blob migration (bead hermes-teams-qxb5).
+# NodeStatus is being replaced by a derived node_phase() value computed from the
+# card's actual status on the board (the ground truth) rather than a monotonic
+# local flag. This class is retained as a backwards-compat shim for one release
+# cycle so existing test modules and call sites keep importing it without
+# modification. Do NOT add new usages; new code should read phase from the
+# board. Scheduled for removal in T5's contract phase.
 class NodeStatus(str, Enum):
     PENDING = "pending"
     DISPATCHED = "dispatched"
@@ -116,7 +163,12 @@ class StateDB:
                 created_at INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
                 completed_at INTEGER,
-                node_ids TEXT NOT NULL DEFAULT '[]'
+                node_ids TEXT NOT NULL DEFAULT '[]',
+                -- T4 state-blob migration (expand phase): denormalized JSON
+                -- snapshot of node states. Old code path still uses the
+                -- node_states table; new code path (T5) reads this blob.
+                state TEXT NOT NULL DEFAULT '{}',
+                version INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS node_states (
@@ -167,6 +219,11 @@ class StateDB:
         for col, ddl in [
             ("completed_at", "ALTER TABLE workflow_instances ADD COLUMN completed_at INTEGER"),
             ("node_ids", "ALTER TABLE workflow_instances ADD COLUMN node_ids TEXT NOT NULL DEFAULT '[]'"),
+            # T4 state-blob migration (expand phase). Existing instances are
+            # backfilled to '{}' by the default; active instances get real
+            # blobs via backfill_state_blob() / migrate_to_state_blob.py.
+            ("state", "ALTER TABLE workflow_instances ADD COLUMN state TEXT NOT NULL DEFAULT '{}'"),
+            ("version", "ALTER TABLE workflow_instances ADD COLUMN version INTEGER NOT NULL DEFAULT 0"),
         ]:
             try:
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(workflow_instances)").fetchall()}
@@ -365,6 +422,182 @@ class StateDB:
             instances.append(inst)
         conn.close()
         return instances
+
+    # ─── T4 state-blob helpers (scaffolding for T5) ───────────────────────
+    # These are NOT called by the tick loop yet. The old node_states code path
+    # remains the source of truth until T5's contract phase swaps over. These
+    # helpers exist now so the migration can backfill the blob and so T5 can
+    # adopt them without touching StateDB's schema again.
+
+    def load_state(self, instance_id: str) -> dict:
+        """Read the state-blob and its version for an instance.
+
+        Returns a dict with two keys:
+          - ``state``: the parsed JSON blob (``{}`` if the instance has no blob
+            yet, e.g. before backfill).
+          - ``version``: the optimistic-concurrency version counter.
+        Returns ``{"state": {}, "version": 0}`` if the instance does not exist.
+        """
+        self._ensure_schema()
+        conn = _db_connect(self.db_path)
+        try:
+            row = conn.execute(
+                "SELECT state, version FROM workflow_instances WHERE instance_id = ?",
+                (instance_id,),
+            ).fetchone()
+        except sqlite3.OperationalError as e:
+            log.warning("load_state failed: %s", e)
+            conn.close()
+            return {"state": {}, "version": 0}
+        conn.close()
+        if row is None:
+            return {"state": {}, "version": 0}
+        raw_state = row["state"] if "state" in row.keys() else "{}"
+        version = row["version"] if "version" in row.keys() else 0
+        try:
+            state = json.loads(raw_state) if raw_state else {}
+        except (json.JSONDecodeError, TypeError):
+            log.warning("load_state: corrupt state blob for %s, returning {}", instance_id)
+            state = {}
+        return {"state": state, "version": version or 0}
+
+    def save_state(self, instance_id: str, state_dict: dict, expected_version: int) -> bool:
+        """Optimistically write the state blob, bumping the version counter.
+
+        Uses ``expected_version`` for optimistic concurrency: the UPDATE only
+        succeeds if the row's current ``version`` equals ``expected_version``.
+        Returns ``True`` on success (exactly one row updated), ``False`` on a
+        version conflict or if the instance does not exist. Callers that get
+        ``False`` should re-``load_state``, merge, and retry.
+        """
+        self._ensure_schema()
+        blob = json.dumps(state_dict)
+        conn = _db_connect(self.db_path)
+        try:
+            cur = conn.execute(
+                """UPDATE workflow_instances
+                   SET state = ?, version = version + 1
+                   WHERE instance_id = ? AND version = ?""",
+                (blob, instance_id, expected_version),
+            )
+            conn.commit()
+            # rowcount == 1 means version matched and the row was updated;
+            # rowcount == 0 means either the version conflicted or the
+            # instance does not exist — either way the caller must retry.
+            return cur.rowcount == 1
+        except sqlite3.OperationalError as e:
+            log.warning("save_state failed: %s", e)
+            return False
+        finally:
+            conn.close()
+
+    def backfill_state_blob(self) -> dict:
+        """One-time migration: populate ``state`` blobs from ``node_states``.
+
+        For each active workflow instance, read its ``node_states`` rows and
+        construct a JSON blob of the form::
+
+            {
+              node_id: {
+                "card_id": <str|null>,
+                "card_status": <status looked up from the board, or None>,
+                "output": <parsed output dict>,
+                "iteration": 0,
+                "_legacy_status": <the old node_states.status value>,
+              },
+              ...
+            }
+
+        then UPDATE the instance row with the blob (version stays at 0). The
+        ``node_states`` table is left intact so old code keeps working.
+
+        This is idempotent: running it twice rewrites the same blobs. Returns a
+        stats dict ``{"migrated": N, "skipped": N, "errors": N}``.
+        """
+        self._ensure_schema()
+        # Local import to avoid a hard dependency cycle at module load — the
+        # board lookup is only needed during migration, not on the hot path.
+        from .kanban_adapter import get_card
+
+        migrated = 0
+        skipped = 0
+        errors = 0
+
+        conn = _db_connect(self.db_path)
+        try:
+            instances = conn.execute(
+                "SELECT instance_id, board FROM workflow_instances WHERE status = 'active'"
+            ).fetchall()
+            for inst in instances:
+                instance_id = inst["instance_id"]
+                board = inst["board"]
+                try:
+                    ns_rows = conn.execute(
+                        "SELECT node_id, status, card_id, output "
+                        "FROM node_states WHERE instance_id = ?",
+                        (instance_id,),
+                    ).fetchall()
+                except sqlite3.OperationalError as e:
+                    log.warning("backfill: cannot read node_states for %s: %s", instance_id, e)
+                    errors += 1
+                    continue
+
+                if not ns_rows:
+                    skipped += 1
+                    continue
+
+                blob: dict[str, dict] = {}
+                for ns_row in ns_rows:
+                    node_id = ns_row["node_id"]
+                    card_id = ns_row["card_id"]
+                    # Parse the stored output defensively — a corrupt row must
+                    # not abort the whole migration.
+                    try:
+                        output = json.loads(ns_row["output"]) if ns_row["output"] else {}
+                    except (json.JSONDecodeError, TypeError):
+                        log.warning(
+                            "backfill: corrupt output for %s/%s, using {}",
+                            instance_id, node_id,
+                        )
+                        output = {}
+
+                    # card_status is looked up from the board (ground truth).
+                    card_status = None
+                    if card_id:
+                        try:
+                            card = get_card(board, card_id)
+                            card_status = card.status if card else None
+                        except Exception as e:
+                            log.warning(
+                                "backfill: card lookup failed for %s/%s: %s",
+                                instance_id, node_id, e,
+                            )
+
+                    blob[node_id] = {
+                        "card_id": card_id,
+                        "card_status": card_status,
+                        "output": output,
+                        "iteration": 0,
+                        "_legacy_status": ns_row["status"],
+                    }
+
+                conn.execute(
+                    "UPDATE workflow_instances SET state = ? WHERE instance_id = ?",
+                    (json.dumps(blob), instance_id),
+                )
+                migrated += 1
+            conn.commit()
+        except sqlite3.OperationalError as e:
+            log.error("backfill_state_blob failed: %s", e)
+            errors += 1
+        finally:
+            conn.close()
+
+        log.info(
+            "backfill_state_blob: migrated %d instance(s), skipped %d, errors %d",
+            migrated, skipped, errors,
+        )
+        return {"migrated": migrated, "skipped": skipped, "errors": errors}
 
     def update_node_state(self, instance_id: str, node_id: str, status: NodeStatus,
                           card_id: str | None = None, output: dict | None = None):
@@ -1780,24 +2013,26 @@ class Engine:
                         # Exception: if the card's workflow_id differs from the trigger's
                         # workflow_id AND the parent workflow has NO explicit edges, allow
                         # the trigger (backward compat for trigger-based composition).
-                        if card.idempotency_key and card.idempotency_key.startswith("wf:"):
-                            idem_parts = card.idempotency_key.split(":")
-                            if len(idem_parts) >= 2:
-                                instance_part = idem_parts[1]
-                                # Same-workflow self-trigger: always block
-                                if f"_{wf.id}_" in instance_part:
-                                    continue
-                                # Cross-workflow: block if the card's parent workflow
-                                # uses explicit edges (handles routing internally)
-                                parent_wf_id = None
-                                for chunk in instance_part.split("_"):
-                                    if chunk not in ("wf", "") and not chunk.isdigit() and len(chunk) > 3:
-                                        parent_wf_id = chunk
-                                        break
-                                if parent_wf_id:
-                                    parent_wf = self.store.load(parent_wf_id)
-                                    if parent_wf and parent_wf.edges:
-                                        continue  # parent has explicit edges — skip
+                        # Self-trigger / cross-workflow suppression.
+                        #
+                        # Engine-created cards (idempotency_key starts with
+                        # "wf:") are routed by the engine itself. We parse the
+                        # parent workflow ID deterministically (see
+                        # _extract_parent_workflow) and apply two rules:
+                        #   1. Same-workflow self-trigger → always block
+                        #      (prevents infinite trigger loops).
+                        #   2. Cross-workflow → block only when the parent
+                        #      workflow uses explicit edges (it handles the
+                        #      routing internally); otherwise allow, for
+                        #      backward-compat trigger-based composition.
+                        if card.idempotency_key:
+                            parent_wf_id = _extract_parent_workflow(card.idempotency_key)
+                            if parent_wf_id is not None:
+                                if parent_wf_id == wf.id:
+                                    continue  # same-workflow self-trigger
+                                parent_wf = self.store.load(parent_wf_id)
+                                if parent_wf and parent_wf.edges:
+                                    continue  # parent routes internally — skip
                         if self._matches_trigger(card, wf.trigger.condition):
                             trig_key = f"trig:{wf.id}:{card.id}"
 
