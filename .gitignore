@@ -17,6 +17,10 @@
 !startup/profiles/*/SOUL.md
 !startup/profiles/*/SPECIALTY.md
 
+# ── Re-include: shared scripts (workflow engine) ───────────────
+!startup/scripts/
+!startup/scripts/**
+
 # ── Re-include: general doctrine skills (autoresearch) ─────────
 # startup/skills/ is the hub-managed skill store (runtime); only
 # hand-authored doctrine skills are whitelisted individually.
@@ -148,4 +152,6 @@ startup/plugins/hermes-achievements/
 # Non-kanban SQLite databases (beads, state, etc.)
 # Note: kanban.db files are re-included above via !startup/kanban/boards/*/kanban.db
 startup/profiles/*/beads.db
+*.state.db
+startup/scripts/workflow_engine/workflow_state.db
 *.state.db

@@ -1,0 +1,7 @@
+{
+  "id": "dev-pipeline",
+  "name": "Dev Pipeline — incremental migration from workflow-engine.py",
+  "description": "Single workflow template for migrating the remaining cron phases (dispatch, bug routing, human escalation, scanner). Built up one node at a time. Each addition is livetested before the next.",
+  "nodes": [],
+  "edges": []
+}

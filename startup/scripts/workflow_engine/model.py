@@ -1,0 +1,286 @@
+"""Workflow definition model — a workflow is a JSON file with nodes and edges."""
+from __future__ import annotations
+from dataclasses import dataclass, field
+from pathlib import Path
+import json
+import re
+
+
+@dataclass
+class Trigger:
+    """What starts this workflow."""
+    source: str          # "card_completed" | "bead_ready" | "manual"
+    condition: dict      # filter params, e.g. {"assignee": "qa", "metadata.verdict": "PASS"}
+
+
+@dataclass
+class NodeInput:
+    """What a node needs to run."""
+    schema: dict         # JSON Schema the input must conform to
+    sources: dict        # variable bindings, e.g. {"spec_path": "${nodes.plan.output.spec_path}"}
+
+
+@dataclass
+class NodeOutput:
+    """What a node must produce."""
+    schema: dict         # JSON Schema the output metadata must conform to
+
+
+@dataclass
+class Node:
+    """A single step in the workflow.
+
+    type: "task" (default) — creates a kanban card for a profile to execute.
+    type: "subworkflow" — starts a child workflow instance and blocks until it completes.
+    """
+    id: str
+    profile: str         # which agent profile runs this (e.g. "verifier")
+    skill: str           # which skill to load (e.g. "adversarial-review")
+    body_template: str   # card body template with ${} variables
+    title_template: str = ""  # custom card title for foreach nodes (supports ${item}, ${item.field})
+    input: NodeInput | None = None
+    output: NodeOutput | None = None
+    card_mode: str = "template"  # "template" | "delegate" | "chain"
+    depends_on: list[str] = field(default_factory=list)
+    condition: str | None = None  # if set, node only runs when this evaluates true
+    foreach: str | None = None     # if set, iterate over a list (e.g. "${nodes.tickets.output.beads}")
+    type: str = "task"             # "task" | "subworkflow" | "command" | "wait"
+    workflow_ref: str = ""         # for type="subworkflow": child workflow template ID
+    input_mapping: dict = field(default_factory=dict)   # params to pass to child workflow
+    output_mapping: dict = field(default_factory=dict)  # child outputs to map back to parent
+    command: str = ""              # for type="command": shell command to run (supports ${} vars)
+    wait_condition: str = ""       # for type="wait": condition string to poll each tick
+
+
+@dataclass
+class Edge:
+    """An explicit edge between two nodes with an optional condition.
+
+    Edges can be declared explicitly in the JSON template:
+      "edges": [
+        {"from": "check", "to": "ship", "condition": "${nodes.check.output.verdict} == 'PASS'"},
+        {"from": "check", "to": "fix", "condition": "${nodes.check.output.verdict} == 'FAIL'" }
+      ]
+
+    Or implicitly via Node.depends_on + Node.condition (backwards compatible).
+    Explicit edges take precedence when present.
+    """
+    from_node: str
+    to_node: str
+    condition: str | None = None  # if set, edge only active when this evaluates true
+
+
+@dataclass
+class Workflow:
+    """A declarative workflow definition."""
+    id: str
+    name: str
+    description: str = ""
+    trigger: Trigger | None = None
+    nodes: list[Node] = field(default_factory=list)
+    edges: list[Edge] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Workflow:
+        trigger = None
+        if "trigger" in data:
+            t = data["trigger"]
+            trigger = Trigger(source=t["source"], condition=t.get("condition", {}))
+
+        nodes = []
+        raw_nodes = data.get("nodes", [])
+        if not isinstance(raw_nodes, list):
+            raise TypeError(f"'nodes' must be a list, got {type(raw_nodes).__name__}")
+
+        for n in raw_nodes:
+            if not isinstance(n, dict):
+                raise TypeError(f"Each node must be a dict, got {type(n).__name__}")
+            if "id" not in n:
+                raise KeyError("Node missing required field: 'id'")
+            if "profile" not in n:
+                raise KeyError("Node missing required field: 'profile'")
+
+            inp = None
+            if "input" in n and isinstance(n["input"], dict):
+                inp = NodeInput(
+                    schema=n["input"].get("schema", {}),
+                    sources=n["input"].get("sources", {}),
+                )
+            out = None
+            if "output" in n and isinstance(n["output"], dict):
+                out = NodeOutput(schema=n["output"].get("schema", {}))
+
+            deps = n.get("depends_on", [])
+            if not isinstance(deps, list):
+                raise TypeError(f"Node '{n['id']}': depends_on must be list, got {type(deps).__name__}")
+
+            nodes.append(Node(
+                id=n["id"],
+                profile=n["profile"],
+                skill=n.get("skill", ""),
+                body_template=n.get("body_template", ""),
+                title_template=n.get("title_template", ""),
+                input=inp,
+                output=out,
+                card_mode=n.get("card_mode", "template"),
+                depends_on=deps,
+                condition=n.get("condition"),
+                foreach=n.get("foreach"),
+                type=n.get("type", "task"),
+                workflow_ref=n.get("workflow_ref", ""),
+                input_mapping=n.get("input_mapping", {}),
+                output_mapping=n.get("output_mapping", {}),
+                command=n.get("command", ""),
+                wait_condition=n.get("wait_condition", ""),
+            ))
+
+        # Parse explicit edges if present
+        edges = []
+        raw_edges = data.get("edges", [])
+        if isinstance(raw_edges, list):
+            for e in raw_edges:
+                if isinstance(e, dict) and "from" in e and "to" in e:
+                    edges.append(Edge(
+                        from_node=e["from"],
+                        to_node=e["to"],
+                        condition=e.get("condition"),
+                    ))
+
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            description=data.get("description", ""),
+            trigger=trigger,
+            nodes=nodes,
+            edges=edges,
+        )
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> Workflow:
+        data = json.loads(Path(path).read_text())
+        return cls.from_dict(data)
+
+    def get_node(self, node_id: str) -> Node | None:
+        for n in self.nodes:
+            if n.id == node_id:
+                return n
+        return None
+
+    def entry_nodes(self) -> list[Node]:
+        """Nodes with no dependencies."""
+        return [n for n in self.nodes if not n.depends_on]
+
+    def to_mermaid(self) -> str:
+        """Render the workflow as a mermaid graph.
+
+        Node shapes encode type:
+          [] = task, (()) = subworkflow, {{}} = foreach
+        Node labels show id + profile.
+        Trigger info appears as a comment above the graph.
+        """
+        lines = ["graph TD"]
+
+        # Trigger info as comment
+        if self.trigger:
+            cond_str = ", ".join(f"{k}={v}" for k, v in self.trigger.condition.items())
+            lines.insert(0, f"%% trigger: {self.trigger.source} ({cond_str})")
+
+        for node in self.nodes:
+            label = f"{node.id}\\n{node.profile}"
+            if node.skill:
+                label += f" [{node.skill}]"
+            if node.type == "subworkflow":
+                lines.append(f"    {node.id}(({label}))")
+            elif node.type == "command":
+                lines.append(f"    {node.id}[{label} ●]")  # square with dot marker
+            elif node.type == "wait":
+                lines.append(f"    {node.id}[/ {label} /]")  # parallelogram
+            elif node.foreach:
+                lines.append(f'    {node.id}{{{{{label}}}}}')
+            else:
+                lines.append(f"    {node.id}[{label}]")
+        lines.append("")
+
+        # Render edges: explicit edges take precedence, else implicit depends_on
+        if self.edges:
+            for edge in self.edges:
+                edge_label = f"|{edge.condition}|" if edge.condition else ""
+                lines.append(f"    {edge.from_node} -->{edge_label} {edge.to_node}")
+        else:
+            for node in self.nodes:
+                for dep in node.depends_on:
+                    edge_label = f"|{node.condition}|" if node.condition else ""
+                    lines.append(f"    {dep} -->{edge_label} {node.id}")
+        return "\n".join(lines)
+
+
+def strip_template_var(expr: str) -> str:
+    """Strip a ${...} template-variable wrapper, returning the inner key.
+
+    "${nodes.plan.output.spec_path}" → "nodes.plan.output.spec_path"
+    If the string isn't wrapped, returns it unchanged.
+    """
+    if expr.startswith("${") and expr.endswith("}"):
+        return expr[2:-1]
+    return expr
+
+
+def resolve_template(template: str, context: dict) -> str:
+    """Resolve ${variable} references in a template string.
+
+    Supports dot-path resolution for dict values:
+      ${item.slug} — if context has "item" = {"slug": "x"}, resolves to "x"
+
+    Example: "Spec is at ${nodes.plan.output.spec_path}"
+    With context = {"nodes.plan.output.spec_path": "/path/to/spec.md"}
+    Returns: "Spec is at /path/to/spec.md"
+    """
+    result = template
+    for key, value in context.items():
+        if isinstance(value, dict):
+            # Resolve dot-paths: ${key.field} → value["field"]
+            for sub_key, sub_val in value.items():
+                result = result.replace("${" + key + "." + sub_key + "}", str(sub_val))
+            # Also resolve the whole dict as ${key} (string repr)
+            result = result.replace("${" + key + "}", str(value))
+        elif isinstance(value, list):
+            # For lists of dicts, don't try to resolve — just string repr
+            result = result.replace("${" + key + "}", str(value))
+        else:
+            result = result.replace("${" + key + "}", str(value))
+    # Remove any unresolved variables
+    result = re.sub(r"\$\{[^}]+\}", "", result)
+    return result
+
+
+def evaluate_condition(condition: str, context: dict) -> bool:
+    """Evaluate a simple condition expression against the context.
+
+    Supports:
+      - "${var} == 'value'"  (equality check)
+      - "${var} != 'value'"  (inequality check)
+      - "${var} exists"      (truthy check)
+      - "${var} is empty"    (falsy check)
+    """
+
+    # ${var} exists
+    m = re.match(r"\$\{(.+?)\}\s+exists", condition)
+    if m:
+        return bool(context.get(m.group(1)))
+
+    # ${var} is empty
+    m = re.match(r"\$\{(.+?)\}\s+is empty", condition)
+    if m:
+        return not context.get(m.group(1))
+
+    # ${var} == 'value'
+    m = re.match(r"\$\{(.+?)\}\s*==\s*'(.+?)'", condition)
+    if m:
+        return str(context.get(m.group(1))) == m.group(2)
+
+    # ${var} != 'value'
+    m = re.match(r"\$\{(.+?)\}\s*!=\s*'(.+?)'", condition)
+    if m:
+        return str(context.get(m.group(1))) != m.group(2)
+
+    return False

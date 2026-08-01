@@ -1,0 +1,29 @@
+{
+  "id": "builder-idea-intake",
+  "name": "Builder — Idea Intake Cycle",
+  "description": "Stage 2: ingest signals, score, build dossiers, fact-verify. Runs 4x/day. Replaces pipeline-guard.sh cron.",
+  "trigger": {
+    "source": "manual"
+  },
+  "nodes": [
+    {
+      "id": "guard",
+      "profile": "",
+      "skill": "",
+      "body_template": "",
+      "type": "command",
+      "command": "bash ~/.hermes-teams/startup/profiles/builder/scripts/pipeline-guard.sh"
+    },
+    {
+      "id": "intake",
+      "profile": "builder",
+      "skill": "",
+      "body_template": "You are the builder running the pipeline cycle.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:RECENT (and no URGENT items), complete immediately with {\"skipped\": true}.\n- If STATUS:RECENT_BUT_URGENT, process the urgent board items only.\n- If STATUS:DUE, run the full pipeline:\n\n  PHASE 1: INGEST — Read ~/vault/ventures/signals/daily-scan.md\n  PHASE 2: SCORE — Score each signal /25 (Pain,Freq,WTP,Comp,WhyNow)\n  PHASE 3: DOSSIER — Write full 13-section dossier per idea to ~/vault/ventures/ideas/<slug>.md\n  PHASE 3.5: VERIFY — Dispatch independent fact-check subagent for each dossier\n  PHASE 4: UPDATE — Update ~/vault/ventures/portfolio.md and idea-bank.md\n\nRules:\n- NEVER kill ideas. Score and rank only.\n- NEVER grill or build. Those are separate cards.\n- NEVER skip fact-verification.\n\nUpdate marker: write epoch to ~/vault/ventures/.last-pipeline\nComplete with {\"dossiers_created\": N, \"skipped\": false} when done.",
+      "depends_on": ["guard"],
+      "condition": "${nodes.guard.output.stdout} contains 'DUE' or ${nodes.guard.output.stdout} contains 'URGENT'"
+    }
+  ],
+  "edges": [
+    {"from": "guard", "to": "intake"}
+  ]
+}

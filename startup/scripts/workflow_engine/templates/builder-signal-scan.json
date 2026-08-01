@@ -1,0 +1,29 @@
+{
+  "id": "builder-signal-scan",
+  "name": "Builder — Demand Signal Scan",
+  "description": "Stage 1: scan for demand signals every 3 hours. Replaces scan-guard.sh cron.",
+  "trigger": {
+    "source": "manual"
+  },
+  "nodes": [
+    {
+      "id": "guard",
+      "profile": "",
+      "skill": "",
+      "body_template": "",
+      "type": "command",
+      "command": "bash ~/.hermes-teams/startup/profiles/builder/scripts/scan-guard.sh"
+    },
+    {
+      "id": "scan",
+      "profile": "builder",
+      "skill": "",
+      "body_template": "You are the builder running a daily discovery scan.\n\nThe guard script output above tells you whether to run or skip.\n- If STATUS:ALREADY_SCANNED, complete this card immediately with {\"skipped\": true}.\n- If STATUS:NEEDS_SCANNING, run the full scan workflow:\n  1. Scan demand signals from configured sources\n  2. Write raw signals to ~/vault/ventures/signals/daily-scan.md\n  3. Tag each signal: A=Problem, B=Opportunity, C=Copycat, D=User\n  4. Update marker: write today's date to ~/vault/ventures/.last-scan\n\nComplete with {\"signals_found\": N, \"skipped\": false} when done.",
+      "depends_on": ["guard"],
+      "condition": "${nodes.guard.output.stdout} contains 'NEEDS_SCANNING'"
+    }
+  ],
+  "edges": [
+    {"from": "guard", "to": "scan"}
+  ]
+}

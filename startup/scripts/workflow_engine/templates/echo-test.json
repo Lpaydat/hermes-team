@@ -1,0 +1,38 @@
+{
+  "id": "echo-test",
+  "name": "Echo Test — 2 node pipeline",
+  "description": "Minimal real dispatch test. Node 1 writes a file, node 2 reads it and reports. Proves engine dispatches real cards, real profiles pick them up, real completion advances the workflow.",
+  "nodes": [
+    {
+      "id": "write",
+      "profile": "developer",
+      "skill": "developer-loop",
+      "body_template": "Write the string 'hello from workflow engine' to /tmp/wf-engine-test-output.txt\n\nThis is a test card from the workflow engine. Just write the file and complete the card with metadata: {file_written: true, content: 'hello from workflow engine'}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["file_written"],
+          "properties": {
+            "file_written": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    {
+      "id": "read",
+      "profile": "verifier",
+      "skill": "adversarial-review",
+      "body_template": "Read /tmp/wf-engine-test-output.txt and verify it contains 'hello from workflow engine'.\n\nThis is a test card from the workflow engine. Read the file, confirm the content, and complete with metadata: {verified: true, content_found: 'hello from workflow engine'}",
+      "depends_on": ["write"],
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verified"],
+          "properties": {
+            "verified": {"type": "boolean"}
+          }
+        }
+      }
+    }
+  ]
+}

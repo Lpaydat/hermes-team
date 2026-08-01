@@ -1,0 +1,18 @@
+{
+  "id": "builder-queue-builds",
+  "name": "Builder — Queue Builds",
+  "description": "Stage 3: read idea-bank, pick top 10, create grill+build card pairs. Zero tokens. Runs every 6h. Replaces queue-builds.sh cron.",
+  "trigger": {
+    "source": "manual"
+  },
+  "nodes": [
+    {
+      "id": "queue",
+      "profile": "",
+      "skill": "",
+      "body_template": "",
+      "type": "command",
+      "command": "bash ~/.hermes-teams/startup/profiles/builder/scripts/queue-builds.sh --board ${trigger.board}"
+    }
+  ]
+}

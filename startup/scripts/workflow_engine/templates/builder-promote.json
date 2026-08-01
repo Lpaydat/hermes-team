@@ -1,0 +1,52 @@
+{
+  "id": "builder-promote",
+  "name": "Builder — Promote Prototype to Production",
+  "description": "Stage 6: user says 'ship it'. Creates project structure, dispatches to PO. Replaces project-promotion skill orchestration.",
+  "trigger": {
+    "source": "card_completed",
+    "condition": {
+      "assignee": "builder",
+      "metadata.verdict": "promote"
+    }
+  },
+  "nodes": [
+    {
+      "id": "setup_project",
+      "profile": "",
+      "skill": "",
+      "body_template": "",
+      "type": "command",
+      "command": "mkdir -p ~/projects/${trigger.slug}/.context/grill ~/projects/${trigger.slug}/.context && cp ~/vault/ventures/ideas/${trigger.slug}.md ~/projects/${trigger.slug}/.context/dossier.md && cp ~/projects/${trigger.slug}/context/*.md ~/projects/${trigger.slug}/.context/grill/ && echo done"
+    },
+    {
+      "id": "init_git",
+      "profile": "",
+      "skill": "",
+      "body_template": "",
+      "type": "command",
+      "command": "cd ~/projects/${trigger.slug} && git init && git add -A && git commit -m 'promote: ${trigger.slug} prototype to production'",
+      "depends_on": ["setup_project"]
+    },
+    {
+      "id": "create_board",
+      "profile": "",
+      "skill": "",
+      "body_template": "",
+      "type": "command",
+      "command": "hermes kanban create --board ${trigger.slug}",
+      "depends_on": ["init_git"]
+    },
+    {
+      "id": "dispatch_po",
+      "profile": "product-owner",
+      "skill": "project-promotion",
+      "body_template": "Take this prototype to production.\n\nProject: ${trigger.slug}\nBoard: ${trigger.slug}\n\nRead:\n- ~/projects/${trigger.slug}/.context/grill/ for locked decisions\n- ~/projects/${trigger.slug}/.context/dossier.md for market context\n- ~/projects/${trigger.slug}/prototype/ for the working demo\n\nYou own: design goals, epics, milestones, beads tickets, dependencies.\nYou control tech-lead for implementation and verifier for review.\nYou maintain STATUS.md.\n\nCreate spec, epics, milestones, beads tickets for production.\nThis is NOT the builder anymore — this is production.",
+      "depends_on": ["create_board"]
+    }
+  ],
+  "edges": [
+    {"from": "setup_project", "to": "init_git"},
+    {"from": "init_git", "to": "create_board"},
+    {"from": "create_board", "to": "dispatch_po"}
+  ]
+}

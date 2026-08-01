@@ -1,0 +1,34 @@
+{
+  "id": "builder-single",
+  "name": "Builder — Single Prototype Pipeline",
+  "description": "Grill → build → handoff for one prototype. Each idea runs this independently.",
+  "nodes": [
+    {
+      "id": "grill",
+      "profile": "builder",
+      "skill": "self-grill",
+      "body_template": "Score: ${trigger.score}/25 | Slug: ${trigger.slug}\n\nA dossier exists at ~/vault/ventures/ideas/${trigger.slug}.md — read it first.\n\nYOUR JOB — Grill ONLY. Do NOT build the prototype (that is the next card).\n\n1. Grill with REAL PO using self-grill skill (REQUIRED — answer as founder).\n   - CRITICAL: env -u HERMES_KANBAN_TASK before launching PO (see grill-rpc-ops skill)\n   - Persist grill output to ~/projects/${trigger.slug}/context/ (per-branch files)\n   - Run validation: bash ~/.hermes-teams/shared-skills/self-grill/scripts/validate-grill-output.sh ${trigger.slug}\n2. Write grill decisions summary to ~/projects/${trigger.slug}/.context/grill/decisions.md\n3. Copy dossier to ~/projects/${trigger.slug}/.context/dossier.md\n\nComplete this card when grill validation passes.\nDo NOT build the prototype — that is the next card.\nNEVER put artifacts in ~/vault/ (Obsidian only). Everything goes in ~/projects/${trigger.slug}/.",
+      "title_template": "Grill: ${trigger.name}"
+    },
+    {
+      "id": "build",
+      "profile": "builder",
+      "skill": "venture-prototype",
+      "body_template": "Slug: ${trigger.slug}\n\nThe dossier and grill are DONE. Do NOT re-grill or re-research.\nRead grill decisions at ~/projects/${trigger.slug}/context/\n\nYOUR JOB — Build ONLY.\n\n1. Build prototype using loop_engine (MANDATORY — see venture-prototype skill).\n   - Write verify script at /tmp/verify-${trigger.slug}.py BEFORE building\n   - Parse every decision from ~/projects/${trigger.slug}/context/*.md\n   - Use loop_engine with 2 phases: (1) build prototype, (2) write README\n   - Drop in ~/projects/${trigger.slug}/prototype/\n2. Write README.md at ~/projects/${trigger.slug}/README.md\n3. Write review handoff — update ~/vault/ventures/portfolio.md 'Awaiting Review' section.\n\nNEVER put artifacts in ~/vault/. Everything in ~/projects/${trigger.slug}/.",
+      "title_template": "Build: ${trigger.name}",
+      "depends_on": ["grill"]
+    },
+    {
+      "id": "handoff",
+      "profile": "builder",
+      "skill": "prototype-review-handoff",
+      "body_template": "Write review handoff for: ${trigger.name}\n\nPrototype at ~/projects/${trigger.slug}/prototype/\nGrill decisions at ~/projects/${trigger.slug}/context/\n\n1. Update ~/vault/ventures/portfolio.md 'Awaiting Review' section\n2. Post kanban comment on the build card:\n   - Prototype path, README path, grill decisions path\n   - Aha moment, decisions to challenge\n\nComplete when portfolio updated and comment posted.",
+      "title_template": "Review: ${trigger.name}",
+      "depends_on": ["build"]
+    }
+  ],
+  "edges": [
+    {"from": "grill", "to": "build"},
+    {"from": "build", "to": "handoff"}
+  ]
+}

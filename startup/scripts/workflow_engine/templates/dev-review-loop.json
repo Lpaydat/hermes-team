@@ -1,0 +1,50 @@
+{
+  "id": "dev-review-loop",
+  "name": "Dev-Review Loop — build, review, iterate until PASS",
+  "description": "Full pipeline with conditional iteration: developer builds, verifier reviews. FAIL → developer fixes. PASS → done.",
+  "nodes": [
+    {
+      "id": "build",
+      "profile": "developer",
+      "skill": "developer-loop",
+      "body_template": "Write a Python function `calculate_total(items)` in calculate.py that takes a list of prices and returns the sum. Handle empty list (return 0). Include test_calculate.py."
+    },
+    {
+      "id": "review",
+      "profile": "verifier",
+      "skill": "adversarial-review",
+      "body_template": "Review calculate.py. Run the tests. Is the implementation correct? Set verdict to PASS or FAIL.",
+      "depends_on": ["build"]
+    },
+    {
+      "id": "fix",
+      "profile": "developer",
+      "skill": "developer-loop",
+      "body_template": "The verifier found issues. Fix calculate.py based on the review feedback and resubmit.",
+      "depends_on": ["review"],
+      "condition": "${nodes.review.output.verdict} == 'FAIL'"
+    },
+    {
+      "id": "re-review",
+      "profile": "verifier",
+      "skill": "adversarial-review",
+      "body_template": "Re-review the fixed calculate.py. Set verdict to PASS or FAIL.",
+      "depends_on": ["fix"]
+    },
+    {
+      "id": "ship",
+      "profile": "qa",
+      "skill": "live-testing",
+      "body_template": "Final QA: run all tests and verify the calculate function works correctly.",
+      "depends_on": ["review"],
+      "condition": "${nodes.review.output.verdict} == 'PASS'"
+    }
+  ],
+  "edges": [
+    {"from": "build", "to": "review"},
+    {"from": "review", "to": "ship", "condition": "${nodes.review.output.verdict} == 'PASS'"},
+    {"from": "review", "to": "fix", "condition": "${nodes.review.output.verdict} == 'FAIL'"},
+    {"from": "fix", "to": "re-review"},
+    {"from": "re-review", "to": "ship", "condition": "${nodes.re-review.output.verdict} == 'PASS'"}
+  ]
+}

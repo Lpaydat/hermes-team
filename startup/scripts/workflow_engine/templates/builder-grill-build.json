@@ -1,0 +1,29 @@
+{
+  "id": "builder-grill-build",
+  "name": "Builder — Queue Builds Pipeline",
+  "description": "Parses idea-bank.md, spawns one independent builder-single workflow per idea. Each prototype runs grill→build→handoff independently — no barriers. Replaces queue-builds.sh.",
+  "nodes": [
+    {
+      "id": "parse_idea_bank",
+      "profile": "",
+      "skill": "",
+      "body_template": "",
+      "type": "command",
+      "command": "python3 ~/.hermes-teams/startup/profiles/builder/scripts/parse-idea-bank.py --board ${trigger.board} --max 10"
+    },
+    {
+      "id": "spawn_prototypes",
+      "profile": "builder",
+      "skill": "",
+      "body_template": "",
+      "type": "subworkflow",
+      "workflow_ref": "builder-single",
+      "foreach": "${nodes.parse_idea_bank.output.ideas}",
+      "input_mapping": {},
+      "depends_on": ["parse_idea_bank"]
+    }
+  ],
+  "edges": [
+    {"from": "parse_idea_bank", "to": "spawn_prototypes"}
+  ]
+}
