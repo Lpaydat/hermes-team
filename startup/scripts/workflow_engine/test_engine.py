@@ -3073,20 +3073,22 @@ def test_adv_data_condition_double_quotes():
 
 
 def test_adv_data_condition_trailing_garbage():
-    """evaluate_condition ignores trailing content (re.match, not fullmatch).
+    """evaluate_condition handles trailing content correctly.
 
-    WEAKNESS: re.match anchors at start but not end, so
-    "${var} == 'val' EVIL CODE" matches the equality and ignores the rest.
+    The old regex-based code used re.match (anchors at start, not end),
+    so trailing garbage was silently ignored. The new condition engine
+    is stricter: a clause with unrecognized trailing content fails to
+    match and returns False, which is the correct behavior.
     """
-    # Equality with trailing garbage — still matches!
+    # Equality with trailing garbage — no longer matches (correct: stricter parsing)
     result = evaluate_condition("${var} == 'val' EVIL TRAILING", {"var": "val"})
-    assert result is True, \
-        f"Trailing garbage after equality should still match (match not fullmatch), got {result}"
+    assert result is False, \
+        f"Trailing garbage after equality should not match (strict parsing), got {result}"
 
-    # "exists" with trailing garbage
+    # "exists" with trailing garbage — no longer matches either
     result = evaluate_condition("${var} exists garbage", {"var": "truthy"})
-    assert result is True, \
-        f"Trailing garbage after 'exists' should still match, got {result}"
+    assert result is False, \
+        f"Trailing garbage after 'exists' should not match (strict parsing), got {result}"
 
     print("OK: test_adv_data_condition_trailing_garbage")
 
@@ -4115,11 +4117,11 @@ def test_adv_trigger_duplicate_conditions_two_workflows():
     world = FakeWorld()
     try:
         cond = {"assignee": "verifier", "status": "done", "metadata.verdict": "PASS"}
-        world.add_template({"id": "wf_a", "name": "A",
+        world.add_template({"id": "wf-a", "name": "A",
                             "trigger": {"source": "card_completed", "condition": cond},
                             "nodes": [{"id": "a", "profile": "qa", "skill": "live-testing",
                                        "body_template": "x"}]})
-        world.add_template({"id": "wf_b", "name": "B",
+        world.add_template({"id": "wf-b", "name": "B",
                             "trigger": {"source": "card_completed", "condition": cond},
                             "nodes": [{"id": "b", "profile": "qa", "skill": "live-testing",
                                        "body_template": "x"}]})
@@ -4131,8 +4133,8 @@ def test_adv_trigger_duplicate_conditions_two_workflows():
         assert len(started) == 2, (
             f"Two identical-condition workflows should each fire → 2 starts, "
             f"got {len(started)}: {started}")
-        assert any("wf_a" in s for s in started)
-        assert any("wf_b" in s for s in started)
+        assert any("wf-a" in s for s in started)
+        assert any("wf-b" in s for s in started)
     finally:
         world.cleanup()
     print("OK: test_adv_trigger_duplicate_conditions_two_workflows")

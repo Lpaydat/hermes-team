@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import json
 import re
+from typing import Any
 
 
 @dataclass
@@ -82,6 +83,21 @@ class Workflow:
 
     @classmethod
     def from_dict(cls, data: dict) -> Workflow:
+        # Preserve TypeError for None input (data["id"] on None raises TypeError)
+        wf_id = data["id"]
+
+        # No-underscore invariant: workflow IDs must not contain "_".
+        # The engine's self-trigger guard parses engine card idempotency keys
+        # by splitting the instance segment on "_"
+        # (["wf", <ts>, <wf.id chunks...>, <uuid>]); an underscore in the
+        # workflow ID would break that parse and can cause infinite trigger
+        # loops. Reject early at parse time.
+        if "_" in wf_id:
+            raise ValueError(
+                f"Workflow id must not contain underscores (got {wf_id!r}); "
+                "the self-trigger guard relies on this invariant."
+            )
+
         trigger = None
         if "trigger" in data:
             t = data["trigger"]
@@ -253,34 +269,104 @@ def resolve_template(template: str, context: dict) -> str:
     return result
 
 
-def evaluate_condition(condition: str, context: dict) -> bool:
-    """Evaluate a simple condition expression against the context.
+def _evaluate_single_clause(clause: str, context: dict) -> bool:
+    """Evaluate one atomic comparison clause (no AND/OR).
 
-    Supports:
-      - "${var} == 'value'"  (equality check)
-      - "${var} != 'value'"  (inequality check)
-      - "${var} exists"      (truthy check)
-      - "${var} is empty"    (falsy check)
+    Operators: == 'x', != 'x', exists, is empty, <, <=, >, >= (numeric-aware).
+    Returns False on any unrecognized form (safe default).
     """
-
-    # ${var} exists
-    m = re.match(r"\$\{(.+?)\}\s+exists", condition)
+    # ${var} exists  (truthy check)
+    m = re.match(r"^\s*\$\{(.+?)\}\s+exists\s*$", clause)
     if m:
         return bool(context.get(m.group(1)))
 
-    # ${var} is empty
-    m = re.match(r"\$\{(.+?)\}\s+is empty", condition)
+    # ${var} is empty  (falsy check)
+    m = re.match(r"^\s*\$\{(.+?)\}\s+is empty\s*$", clause)
     if m:
         return not context.get(m.group(1))
 
-    # ${var} == 'value'
-    m = re.match(r"\$\{(.+?)\}\s*==\s*'(.+?)'", condition)
+    # ${var} == 'value'  (exact string equality)
+    m = re.match(r"^\s*\$\{(.+?)\}\s*==\s*'(.+?)'\s*$", clause)
     if m:
         return str(context.get(m.group(1))) == m.group(2)
 
-    # ${var} != 'value'
-    m = re.match(r"\$\{(.+?)\}\s*!=\s*'(.+?)'", condition)
+    # ${var} != 'value'  (exact string inequality)
+    m = re.match(r"^\s*\$\{(.+?)\}\s*!=\s*'(.+?)'\s*$", clause)
     if m:
         return str(context.get(m.group(1))) != m.group(2)
 
+    # Numeric comparisons: <, <=, >, >=
+    # Right-hand side may be a bare number (e.g. ${x} < 3) or a quoted
+    # string (e.g. ${x} <= '3'). Either is eligible for numeric coercion.
+    m = re.match(r"^\s*\$\{(.+?)\}\s*(<=|>=|<|>)\s*(.+?)\s*$", clause)
+    if m:
+        var_path, op, rhs_raw = m.group(1), m.group(2), m.group(3)
+        lhs_val = context.get(var_path)
+        # Strip surrounding quotes from the RHS if present.
+        rhs_raw = rhs_raw.strip()
+        if len(rhs_raw) >= 2 and rhs_raw[0] in "'\"" and rhs_raw[-1] == rhs_raw[0]:
+            rhs_raw = rhs_raw[1:-1]
+        # Type coercion: attempt float() on both sides. If both succeed,
+        # compare numerically; otherwise fall back to string comparison.
+        # NB: lhs/rhs are always the SAME type (both float or both str),
+        # so the comparison is type-safe at runtime even though the static
+        # type is Any.
+        lhs_str = "" if lhs_val is None else str(lhs_val)
+        lhs: Any
+        rhs: Any
+        try:
+            lhs = float(lhs_str)
+            rhs = float(rhs_raw)
+        except (TypeError, ValueError):
+            lhs = lhs_str
+            rhs = rhs_raw
+        if op == "<":
+            return lhs < rhs
+        if op == "<=":
+            return lhs <= rhs
+        if op == ">":
+            return lhs > rhs
+        if op == ">=":
+            return lhs >= rhs
+
+    return False
+
+
+def evaluate_condition(condition: str, context: dict) -> bool:
+    """Evaluate a condition expression against the context.
+
+    Grammar (no parentheses):
+        condition := clause (OR clause)*
+        clause    := atom (AND atom)*
+        atom      := ${var} <op> <value>
+
+    - ``AND`` binds tighter than ``OR`` (e.g. ``A AND B OR C AND D``
+      groups as ``(A AND B) OR (C AND D)``).
+    - Evaluation is left-to-right within a group; AND short-circuits on
+      the first False atom, OR short-circuits on the first True group.
+    - Atomic operators: ``== 'x'``, ``!= 'x'``, ``exists``, ``is empty``,
+      ``<``, ``<=``, ``>``, ``>=``. Numeric operators attempt ``float()``
+      coercion on both sides; if either fails they fall back to string
+      comparison (never stringify-then-compare, which would make
+      ``"10" < "3"`` True).
+    - Unrecognized forms return False (safe default).
+    """
+    condition = condition.strip()
+    if not condition:
+        return False
+
+    # OR groups: any group True → whole condition True.
+    for or_group in condition.split(" OR "):
+        or_group = or_group.strip()
+        if not or_group:
+            continue
+        # AND clauses within a group: all must be True for the group.
+        and_clauses = or_group.split(" AND ")
+        group_true = True
+        for clause in and_clauses:
+            if not _evaluate_single_clause(clause.strip(), context):
+                group_true = False
+                break  # short-circuit AND
+        if group_true:
+            return True  # short-circuit OR
     return False
