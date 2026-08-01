@@ -26,11 +26,80 @@ if len(sys.argv) == 1:
 exec(open(engine_main).read())
 ```
 
-## Cross-workflow double-fire prevention
+## Cross-workflow trigger guard — the critical composition blocker
 
-Engine-created cards (idempotency_key `wf:...`) from workflows with explicit edges are blocked from triggering OTHER workflows. This prevents e.g. dev-review-loop's verifier card from also triggering qa-loop.
+Engine-created cards (idempotency_key `wf:...`) are subject to a self-trigger
+prevention guard at `runtime.py:1783-1800`. The guard has two rules:
 
-Workflows WITHOUT explicit edges still allow cross-workflow triggering (backward compat for trigger-based composition).
+1. **Same-workflow self-trigger: always block.** If `_{wf.id}_` appears in the
+   instance part of the idempotency key, the card cannot trigger its own workflow.
+2. **Cross-workflow: block if parent has explicit edges.** If the card's parent
+   workflow declares explicit `edges`, the card is blocked from triggering ANY
+   other workflow. The rationale: an edge-using workflow "handles routing
+   internally."
+
+Workflows WITHOUT explicit edges (implicit `depends_on` only) still allow
+cross-workflow triggering — backward compat for trigger-based composition.
+
+### Why this is a composition blocker (empirically verified, 2026-08-02)
+
+Approach C (goal-bounded workflows: multiple agents cooperate inside one
+workflow via edges, composed via card_completed triggers between workflows) is
+**self-blocking under this guard.** Every goal workflow uses explicit edges
+internally → every cross-workflow handoff card carries a `wf:` key → the guard
+suppresses the downstream trigger. Probed with the real engine (FakeWorld):
+
+```
+CASE 1: construction WITH explicit edges (C shape)
+  → qa-loop instances: 0   ← trigger SILENTLY BLOCKED
+
+CASE 2: construction WITHOUT edges (implicit depends_on, B shape)
+  → qa-loop instances: 1   ← trigger fires
+```
+
+**This means**: the shipped `qa-loop.json` works today ONLY because the verifier
+card is agent-created (kanban_chains, no `wf:` key). The moment a verifier card
+becomes an engine node in an edge-using workflow, the qa-loop trigger dies.
+
+### The fix: `idempotency_key_template` on terminal nodes
+
+Give the handoff card a non-`wf:` key so the guard is skipped entirely:
+
+```json
+{
+  "id": "verify",
+  "idempotency_key_template": "qa-merge-${trigger.bead_id}",
+  ...
+}
+```
+
+Intermediate nodes keep `wf:` keys (no accidental cross-workflow firing from
+mid-pipeline cards); only terminal/export nodes get custom keys. This also
+matches the old cron's idempotency conventions (e.g. `qa-merge-<sha>`,
+`bead-<bead_id>`) enabling safe coexistence during incremental migration.
+
+**STATUS: This field does NOT exist in the engine yet.** It is referenced as
+load-bearing in `MIGRATION-PLAN.md §7` and the Phase 0 checklist, but has 0
+grep hits in `model.py`/`runtime.py`. It is the #1 prerequisite for goal-bounded
+composition.
+
+### The hyphenated-ID parsing bug
+
+The guard extracts the parent workflow ID from the instance part by splitting on
+`_` and looking for "a chunk that isn't wf, isn't empty, isn't all digits, and
+is longer than 3 chars." This heuristic BREAKS on:
+
+- Workflow IDs with hyphens (e.g. `tech-lead-build` splits into `tech`, `lead`,
+  `build` — each ≤4 chars, may match wrong workflow or fail to match)
+- Timestamp chunks that happen to look non-digit-ish
+
+Consequences: cross-workflow triggers that should fire get blocked (parent_wf
+misidentified as having edges); self-triggers that should be blocked slip through
+(substring match fails on hyphenated IDs).
+
+**Before relying on cross-workflow triggering, fix this parser** to use a
+structured lookup (store the workflow_id explicitly in the instance row) rather
+than parsing it out of the idempotency key string.
 
 ## Shell injection in command nodes
 
@@ -135,3 +204,27 @@ User feedback: "stop asking for what things you should done long ago already." W
 ## Discuss before coding when design is unclear
 
 User feedback: "when the task is not clear, you should stop jump to code and discuss or plan first." When a task involves architectural decisions (e.g., "should this be 1 workflow or N workflows?"), present options and tradeoffs BEFORE writing code. Only start coding after the direction is confirmed.
+
+## Engine code was untracked — gitignore whitelist needed
+
+The engine at `startup/scripts/workflow_engine/` was gitignored because `.gitignore` whitelisted `startup/profiles/*/scripts/` but NOT `startup/scripts/`. This meant a git worktree created from main was missing the entire engine, and the engine had never been version-controlled.
+
+Fix (commit `c9e297a1` on main): add to `.gitignore`:
+```
+!startup/scripts/
+!startup/scripts/**
+```
+Then commit the engine to main BEFORE creating a worktree branch. Also exclude `workflow_state.db` (runtime SQLite state, not source):
+```
+startup/scripts/workflow_engine/workflow_state.db
+```
+
+When starting engine work in a worktree, ALWAYS verify `startup/scripts/workflow_engine/` is present after `git worktree add` — a missing directory means the gitignore whitelist isn't applied yet.
+
+## Run all 16 test suites, not just one
+
+The engine has 16 test suites. 15 pass consistently; the concurrency suite (`test_concurrency_standalone.py`) has 3 known failures (double-dispatch race, lost-update on concurrent state writes, overlapping ticks). These are pre-existing timing-sensitive failures in the engine's concurrency model, not test bugs. When verifying engine changes:
+```bash
+cd startup/scripts && for f in workflow_engine/test_*.py; do python3 "$f" >/dev/null 2>&1 && echo "PASS $(basename $f)" || echo "FAIL $(basename $f)"; done
+```
+Expect 15 pass + 1 fail (concurrency). Any OTHER failure is real. Do NOT treat the concurrency failures as caused by your change unless you touched `_check_instance` or `update_node_state`.

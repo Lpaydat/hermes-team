@@ -135,3 +135,15 @@ When the canonical primary source is a paywalled book/paper or a moved first-par
 - Corroporate a framing ("iterative and incremental approach") with a citable source (e.g. an Ars Technica article cited in the references).
 
 Cite the primary it points to, not Wikipedia itself — but lean on Wikipedia's reference list as a search-substitute when search engines are blocked (§7).
+
+## 13. JS-redirected SPA doc sites → curl returns a stub, not content
+
+Some modern doc sites (LangGraph `docs.langchain.com`, Next.js/Vite SPAs, Docusaurus with client-side routing) return only a `<title>Redirecting...</title>` stub to `curl` — the real content is rendered by JavaScript after the page loads. `curl -L` follows HTTP 3xx redirects but **cannot follow JS-based `window.location` / client-router redirects**. Signals: curl output is a few bytes of "Redirecting..." or an empty `<div id="root">` shell, even though `curl -o /dev/null -w "%{http_code}"` returns 200.
+
+**Don't keep trying curl path variants — the content exists, it's just JS-rendered.** Switch tools:
+
+1. **Use `browser_navigate`** — the browser executes JS and renders the real page. It also follows client-side redirects to the final URL. Check `url` in the response to see where it actually landed.
+2. **If the browser also lands on a redirect loop or wrong page**, try the **raw markdown source** from the repo: many doc sites (Docusaurus, MkDocs, Sphinx) store `.md`/`.mdx` source files on GitHub. Try `raw.githubusercontent.com/<org>/<repo>/main/docs/<path>.md` — probe a few path variants with §9.
+3. **If the site has a `/llms.txt` or `/llms-full.txt` endpoint** (increasingly common — CrewAI docs expose this), curl THAT instead of the HTML. It returns the doc content as plain text designed for LLM consumption.
+
+This is distinct from §4 (404 / moved URL) and §10 (whole-site restructure): the URL is correct and returns 200, but the content is behind a JS render wall.

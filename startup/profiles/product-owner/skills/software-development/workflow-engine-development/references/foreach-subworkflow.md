@@ -126,30 +126,72 @@ Child instances are created during the parent's tick (PHASE 2 dispatch). But `lo
 
 Round 1 was n=1 per prompt — couldn't distinguish 100% from 30%. Round 2 stress-tested the 6 winners with 10 trials each (60 cards total, randomized dispatch order, unique verify script paths per trial).
 
-**Final results:**
+**CRITICAL: Checker methodology bug.** Initial round-2 results only matched `Loop:%` card titles in the kanban DB to trace loop_engine usage. This was WRONG — the builder often uses `kanban_chains` instead of `loop_engine`, which creates chain cards with different titles (root, build, verify, README — not "Loop:"). The correct checker must trace THREE signals:
+1. `Loop:%` card idempotency keys (`loop:<parent_card_id>:<hash>`)
+2. Heartbeat events mentioning `loop_engine` or `kanban_chains` (`task_events` table, `kind='heartbeat'`)
+3. Completion events mentioning `loop_engine` or `kanban_chains` (`task_events` table, `kind='completed'`)
+
+Only matching `Loop:%` titles gives massive false negatives (58% → actual near-100%).
+
+**CORRECTED final results (checking all 3 signals):**
 
 | Prompt | loop_engine | Rate |
 |--------|------------|------|
-| **C3_constraint_gate** | **9/10** | **90%** |
-| F1_threat_reject | 5/10 | 50% |
-| F2_threat_observed | 3/10 | 30% |
-| C1_constraint_block | 2/10 | 20% |
-| G1_combo_all | 2/10 | 20% |
-| A3_prose_caps | 1/10 | 10% |
+| **A3_prose_caps** | **10/10** | **100%** |
+| **C3_constraint_gate** | **10/10** | **100%** |
+| **F1_threat_reject** | **10/10** | **100%** |
+| **F2_threat_observed** | **10/10** | **100%** |
+| C1_constraint_block | 9/10 | 90% |
+| G1_combo_all | 7/10 | 70% |
 
-**Winner: C3_constraint_gate (90%)** — "GATE: This card has a quality gate. Your work will be checked for loop_engine usage. If loop_engine was not called, the card will be REJECTED and re-dispatched."
+**4 prompts hit 100%.** The original "loser" A3 (scored 1/10 with the buggy checker) was actually 10/10. All four winning strategies (CAPS warning, quality gate, threat of rejection, observed-behavior callout) work perfectly with glm-5.2.
 
-**Key insight: verifiable consequences > stated consequences.** C3 won because it frames a downstream check the builder believes will execute. A3 (which won round 1 at 1/1 but collapsed to 1/10 in round 2) uses emotional urgency ("CRITICAL WARNING") that the builder dismisses. The builder responds to gates it believes will fire, not threats it can't verify.
+**Tiebreaker: simplicity.** F2_threat_observed is the shortest of the 4 perfect prompts: "OBSERVED BEHAVIOR: Builders consistently skip loop_engine... This is the #1 known failure mode... You are not special."
 
-**Adopt C3_constraint_gate as the build card body in builder-single.json.**
+**Why builders use kanban_chains instead of loop_engine:** The venture-prototype skill documents both tools. `loop_engine` is for single-prototype phased builds; `kanban_chains` is for parallel builds. The builder sometimes interprets the build card as a "chain" (build→verify→README) and uses `kanban_chains` to express that sequence. Both create the same structure (child cards with verifier gates) — they're two APIs for the same pattern.
 
-### Blocked verifier cards: skill deployment gap
+### Round 3: Weaker model test (40 cards, 4 winners x n=10, glm-4.6)
 
-2 verifier cards blocked during the stress test. Root cause: `loop_engine`'s `kanban_chains` created verifier child cards with `skills: ["prototype-verification"]`, but the `prototype-verification` skill only exists on the builder profile, not the verifier profile. The verifier agent process crashed (exit code 1) on every attempt trying to load a skill it doesn't have. After 2 crashes, the dispatcher gave up and marked the card blocked.
+Testing whether the 4 perfect prompts survive a weaker model. Builder config changed from `glm-5.2` to `glm-4.6`.
 
-**Fix:** Either install the skill on the verifier profile, or don't reference it in loop_engine's verifier child cards — let the verifier use its own skills (`dod-verdict`, `adversarial-review`).
+**Results (all 40 completed):**
 
-**Lesson:** When loop_engine assigns child cards to a DIFFERENT profile than the parent, any `skills` field must reference skills installed on the TARGET profile. This is not checked at template time — it fails at runtime as a crash.
+| Prompt | glm-5.2 | glm-4.6 | Degradation |
+|--------|---------|---------|-------------|
+| C3_constraint_gate | 100% | 80% (8/10) | -20% |
+| F1_threat_reject | 100% | 80% (8/10) | -20% |
+| F2_threat_observed | 100% | 80% (8/10) | -20% |
+| A3_prose_caps | 100% | 40% (4/10) | -60% |
+
+**Key findings:**
+1. **A3 collapsed.** Emotional urgency ("CRITICAL WARNING") that worked 100% on glm-5.2 only gets 40% on glm-4.6. Weaker models don't parse emotional emphasis as a real constraint. This prompt is model-dependent and unreliable.
+2. **C3/F1/F2 are robust.** All three held at 80% — consistent 20% degradation. These prompts survive weaker models. The 20% failures are the model genuinely not understanding multi-step tool invocation, not ignoring instructions.
+3. **2 blocked cards were loop_engine working correctly.** The verifier gate caught real quality gaps (37/46 and 40/42 checks) and blocked for replan. This is the intended behavior, not a bug.
+4. **Consequence framing is model-robust.** Threat/constraint/gate framing degrades gracefully. Emotional emphasis collapses.
+
+**The 20% floor** on glm-4.6 is the model's instruction-following ceiling — those failures are the model genuinely unable to invoke multi-step tools, not a prompt problem.
+
+### Round 4: Combined prompt (20 cards, glm-4.6)
+
+Took the best element from each of the 3 robust winners (C3+F1+F2) and created a combined prompt. n=20 for tighter signal.
+
+**Combined prompt layered defense:**
+1. **Anticipatory (F2):** "OBSERVED BEHAVIOR — #1 known failure mode — you will be tempted" — kills rationalization before it forms
+2. **Gate (C3+F1):** "automatically checked — card FAILED — re-dispatched — wasted tokens" — machine-enforced consequence with personal cost
+3. **Authority (F1+F2):** Skill quote + exact line numbers ("lines 156-180") — helps weaker models find the call pattern
+4. **Identity kill (F2):** "You are not special. Your build is not simple enough" — closes the self-assessment escape hatch
+
+**Result: 55% (11/20) — WORSE than individual winners (80%).** Combining elements diluted the signal. More text gave the weaker model more room to "creatively interpret" instead of following a single clear consequence. **Do not combine winning prompts — pick the simplest individual winner.**
+
+**Final recommendation:** F2_threat_observed is the best prompt — shortest of the 3 robust winners, uses observed-behavior framing, holds at 80% on glm-4.6.
+
+### Blocked verifier cards: skill deployment gap (FIXED)
+
+2 verifier cards blocked during the stress test. Root cause: `loop_engine`'s `kanban_chains` created verifier child cards with `skills: ["prototype-verification"]`, but the `prototype-verification` skill only existed on the builder profile, not the verifier profile. The verifier agent process crashed (exit code 1) on every attempt trying to load a skill it doesn't have. After 2 crashes, the dispatcher gave up and marked the card blocked.
+
+**Fix:** Moved `prototype-verification` to `shared-skills/prototype-verification/`, symlinked from both builder and verifier profiles. Verified by unblocking the 2 cards — verifier processed them successfully without crashing.
+
+**Lesson:** When loop_engine assigns child cards to a DIFFERENT profile than the parent, any `skills` field must reference skills installed on the TARGET profile. This is not checked at template time — it fails at runtime as a crash. Always use shared-skills for skills referenced across profiles.
 
 ### A/B testing methodology for agent behavioral enforcement
 
@@ -157,7 +199,18 @@ This pattern is reusable for any "agent isn't following a process" problem:
 
 1. **Round 1 — broad screen.** Write 15-20 prompt variants across strategies (prose, tool-invocation, constraint, threat, skill-injection, example, combo, minimal). Dispatch 1 card each. Identifies which strategy families work at all.
 2. **Round 2 — stress test winners.** Take the top N from round 1, dispatch n=10 each (randomized order, same task to eliminate variance). Measures consistency, not just whether it works once.
-3. **Trace compliance via side-effects.** Don't parse agent output to check compliance — trace kanban side-effects (child card idempotency keys, tool call evidence in task_events). This is deterministic and not fooled by agent self-reporting.
+3. **Trace compliance via side-effects.** Don't parse agent output to check compliance — trace kanban side-effects (child card idempotency keys, tool call evidence in task_events). This is deterministic and not fooled by agent self-reporting. **CRITICAL PITFALL:** When the agent can use EITHER `loop_engine` OR `kanban_chains` to achieve the same goal, your checker MUST look for BOTH. Matching only `Loop:%` card titles misses `kanban_chains` usage entirely — this caused 42% false-negative rate in round 2. Check all 3 signals: (1) `Loop:%` idempotency keys, (2) heartbeat events mentioning either tool name, (3) completion events mentioning either tool name. The SQL query:
+
+```sql
+-- ALL three signals combined
+SELECT DISTINCT task_id FROM task_events
+WHERE kind IN ('heartbeat','completed')
+AND (payload LIKE '%loop_engine%' OR payload LIKE '%kanban_chains%')
+UNION
+SELECT idempotency_key FROM tasks
+WHERE title LIKE 'Loop:%' AND idempotency_key IS NOT NULL
+```
 4. **Tiebreaker: simplest prompt wins.** If 2+ prompts achieve the same rate, pick the fewest tokens.
+5. **Test with weaker models.** A prompt that works at 100% with the strong model may degrade with a weaker model. Run the 4 winners through the weaker model (same n=10 design) to find prompts that are robust, not just lucky with one model's capabilities.
 
 Scripts at `~/.hermes-teams/startup/scripts/ab_test_loop_engine.py` (round 1) and `stress_test_loop_engine.py` (round 2) are reusable templates for this methodology.

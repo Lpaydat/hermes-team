@@ -118,6 +118,27 @@ Only one node fires per trigger; the rest are SKIPPED (terminal state).
 | Core dispatch (pipeline entry) | MEDIUM | If broken, no new work enters | Same — keys prevent dupes |
 | Blocked-task scanner | HIGH | Complex SQL, may need new trigger type | Keep as cron script |
 
+## Incremental Migration — goal-bounded templates (Approach C)
+
+**Architecture decision (2026-08-02):** the dev pipeline uses **goal-bounded
+workflows** — multiple agents cooperate inside one workflow with a clear
+objective, composed via card handoffs between workflows. See
+`goal-bounded-workflow-architecture.md` for the full decision record.
+
+The pipeline decomposes into 4 goal workflows (planning, construction, qa,
+bug-fix), each independently deployable and testable. Build each goal template
+**one node at a time across sessions** — discuss, implement, livetest before the
+next node.
+
+Do NOT create one mega-template for the entire pipeline (Approach A — no loops,
+single point of failure, proven unexpressible). Do NOT create per-agent
+micro-templates (Approach B — trigger soup, no visibility). The goal boundary is
+the template boundary.
+
+The original `dev-pipeline.json` empty scaffolding was created for Approach A
+and is now superseded — it should be renamed to a goal-bounded template (e.g.
+`construction.json`) or removed.
+
 ## What NOT to Migrate
 
 - **Bead-sync** — data synchronization, not card-creation orchestration. Keep as script.

@@ -96,3 +96,20 @@ Requires gateway restart to take effect. Kill the gateway process and start a ne
 ## Engine location
 
 Shared infrastructure at `~/.hermes-teams/startup/scripts/workflow_engine/`. NOT inside any profile directory. All profiles can use it. The cron wrapper lives in the PO profile's `scripts/` dir (`wf-engine-tick.py`).
+
+## Related reference: runtime execution model
+
+This file documents the WHAT (node types, trigger sources, design decisions).
+For the HOW — the exact tick-loop phase ordering, the guard rails in their
+fixed state, the StateDB schema, and the completion-verification logic — see
+`references/runtime-execution-model.md`. That's the mental model you need
+when debugging or extending the engine.
+
+## Related reference: orchestration vs choreography
+
+For architecture-level guidance on WHEN to use explicit edges (orchestration)
+vs `card_completed` triggers (choreography) vs `subworkflow` nodes (child
+workflows) — with industry mapping to Camunda, Temporal, Airflow, Saga, and
+multi-agent frameworks — see `references/orchestration-vs-choreography.md`.
+That's the decision framework you need when choosing routing mechanisms for a
+new pipeline template.

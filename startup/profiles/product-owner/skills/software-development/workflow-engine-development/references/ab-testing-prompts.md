@@ -18,29 +18,41 @@ Dispatch N cards on a test board, each with the SAME task but a DIFFERENT prompt
 4. Wait for completion (10-20 min per card at the builder's pace)
 5. Check each card's task_events/comments for evidence of the target behavior
 
-### Success criteria
+### Success criteria — CORRECTED methodology
 
-For loop_engine enforcement, check:
-- `task_events` data for `loop_engine` or `kanban_chains` tool calls
-- Card comments for loop_engine mentions
-- Child cards created on the board (loop_engine creates develop/verify child cards)
+**CRITICAL: Do not only check for `Loop:%` card titles.** Most builders use `kanban_chains` instead of `loop_engine`, which creates different card structures (root, build, verify, README). You must check ALL signals:
 
 ```python
-def check_loop_engine_usage(card_id):
-    conn = sqlite3.connect(board_db)
-    # Check task_events
-    events = conn.execute(
-        "SELECT data FROM task_events WHERE task_id=? AND data LIKE '%loop_engine%'",
-        (card_id,)).fetchall()
-    if events:
-        return True
-    # Check comments
-    comments = conn.execute("SELECT body FROM task_comments WHERE task_id=?", (card_id,)).fetchall()
-    for c in comments:
-        if "loop_engine" in c[0].lower():
-            return True
-    return False
+# Signal 1: Loop:% root cards (loop_engine)
+loop_roots = conn.execute(
+    "SELECT idempotency_key FROM tasks WHERE title LIKE 'Loop:%'"
+).fetchall()
+parent_ids = {key.split(":")[1] for key in (lr[0] or "") if ":" in key}
+
+# Signal 2: Heartbeat events mentioning loop_engine/kanban_chains
+heartbeat_parents = {row[0] for row in conn.execute(
+    "SELECT task_id FROM task_events WHERE kind='heartbeat' "
+    "AND (payload LIKE '%loop_engine%' OR payload LIKE '%kanban_chains%')"
+)}
+
+# Signal 3: Completion events mentioning loop_engine/kanban_chains
+completed_parents = {row[0] for row in conn.execute(
+    "SELECT task_id FROM task_events WHERE kind='completed' "
+    "AND (payload LIKE '%loop_engine%' OR payload LIKE '%kanban_chains%')"
+)}
+
+# Combined
+all_le = parent_ids | heartbeat_parents | completed_parents
 ```
+
+The initial checker that only looked at `Loop:%` titles reported C3 at 90% and all others much lower. The corrected checker (above) found 4 prompts at 100% — the difference was kanban_chains usage invisible to the title-only check.
+
+### Schema notes
+
+- `task_events` uses `payload` column (NOT `data`)
+- `tasks` table has NO `parent_id` column — parent-child linkage is via `idempotency_key`
+- loop_engine root idempotency key: `loop:<parent_card_id>:<hash>`
+- kanban_chains root: has `[swarm:blackboard]` comment
 
 ## 20 prompt strategy groups
 
@@ -55,104 +67,78 @@ def check_loop_engine_usage(card_id):
 | G (combo) | Best elements combined | Combined force → compliance |
 | H (minimal) | Bare minimum, no mandate | Control group — should fail |
 
-## Round 1 Results (n=1 per prompt, 20 prompts total)
+## 4-Round Results (140 cards total, loop_engine enforcement)
 
-6/20 prompts triggered loop_engine (30% success rate).
+### Round 1 — Broad screen (20 prompts, n=1, glm-5.2)
 
-### Winners (triggered loop_engine)
+6/20 triggered loop_engine (30%). Winners: A3_prose_caps, C1_constraint_block, C3_constraint_gate, F1_threat_reject, F2_threat_observed, G1_combo_all.
 
-| Variant | Group | Strategy | loop_engine |
-|---------|-------|----------|-------------|
-| V03 A3_prose_caps | prose | CAPS threat: "CRITICAL WARNING: failing the build" | YES |
-| V07 C1_constraint_block | constraint | "You may NOT write prototype files directly" | YES |
-| V09 C3_constraint_gate | constraint | "Quality gate — will be checked — REJECTED" | YES |
-| V15 F1_threat_reject | threat | "Card will be FAILED and re-dispatched" | YES |
-| V16 F2_threat_observed | threat | "#1 known failure mode — you are not special" | YES |
-| V17 G1_combo_all | combo | Orchestrator + gate + example combined | YES |
+**Pattern: consequence-based framing works. Instruction-based framing fails.** Tool invocation (0/3), skill injection (0/3), examples (0/2), minimal (0/2) all completely failed.
 
-### Losers (did NOT trigger loop_engine)
+### Round 2 — Stress test winners (6 prompts, n=10, glm-5.2)
 
-| Group | Variants | Win rate |
-|-------|----------|----------|
-| tool_invocation | B1 (named params), B2 (first line), B3 (step-by-step) | 0/3 (0%) |
-| skill_injection | D1 (load skill), D2 (/skill command), D3 (skill context) | 0/3 (0%) |
-| example | E1 (inline code), E2 (copy pattern) | 0/2 (0%) |
-| minimal | H1 (bare), H2 (no-loop-mention) | 0/2 (0%) |
-| prose | A1 (weak), A2 (strong) | 0/2 (0%) |
-| constraint | C2 (orchestrator framing only) | 0/1 (0%) |
-| combo | G2 (minimal combo) | 0/1 (0%) |
+**CORRECTED RESULTS** (initial checker was buggy — only matched `Loop:%` titles, missed kanban_chains usage):
 
-### Win rate by group
+| Prompt | Rate | Strategy |
+|--------|------|----------|
+| **A3_prose_caps** | **10/10 (100%)** | "CRITICAL WARNING: failing the build" |
+| **C3_constraint_gate** | **10/10 (100%)** | "Quality gate — will be checked — REJECTED" |
+| **F1_threat_reject** | **10/10 (100%)** | "Card will be FAILED and re-dispatched" |
+| **F2_threat_observed** | **10/10 (100%)** | "#1 known failure mode — you are not special" |
+| C1_constraint_block | 9/10 (90%) | "You may NOT write files directly" |
+| G1_combo_all | 7/10 (70%) | Orchestrator + constraint + example |
 
-- **threat: 2/2 (100%)** — strongest signal
-- **constraint: 2/3 (67%)** — strong (the pure constraint worked, the soft "orchestrator" framing didn't)
-- **combo: 1/2 (50%)** — the full combo worked, the minimal combo didn't
-- **prose: 1/3 (33%)** — only the CAPS threat version worked
-- **tool_invocation: 0/3 (0%)** — explicit tool params don't help
-- **skill_injection: 0/3 (0%)** — skill loading language doesn't help
-- **example: 0/2 (0%)** — code examples don't help
-- **minimal: 0/2 (0%)** — control group confirmed
+On the strong model (glm-5.2), all 4 top prompts are equally effective.
 
-### The pattern
+### Round 3 — Weaker model test (4 winners, n=10, glm-4.6)
 
-**Consequence-based framing works. Instruction-based framing fails.**
+| Prompt | glm-5.2 | glm-4.6 | Degradation |
+|--------|---------|---------|-------------|
+| C3_constraint_gate | 100% | **80%** | -20% |
+| F1_threat_reject | 100% | **80%** | -20% |
+| F2_threat_observed | 100% | **80%** | -20% |
+| A3_prose_caps | 100% | **40%** | -60% |
 
-The agent knows HOW to call loop_engine — it doesn't need tool parameters, code examples, or skill-loading language. It needs a reason to not take the shortcut. Framing loop_engine as a hard constraint with consequences ("your work will be rejected", "you may NOT write files directly", "you are failing the build") forces the agent to use the structured path.
+A3 collapsed — emotional urgency ("CRITICAL WARNING") is model-dependent. C3/F1/F2 held at 80% — consequence framing is model-robust. The 20% floor is likely glm-4.6's instruction-following ceiling.
 
-### Important: this is an agent-behavior problem, not an engine problem
+**Lesson: ALWAYS test on the weakest model you'll deploy to.** A prompt that works on the strong model may collapse on the weak one.
 
-The engine delivers the card body verbatim. The issue is that LLM agents:
-1. Self-assess complexity and skip steps they deem unnecessary
-2. Don't load skills referenced in prose (they'd need a tool call)
-3. Prioritize task completion over process compliance
-4. Treat "MANDATORY" as a suggestion, not an enforcement mechanism
+### Round 4 — Combined prompt test (n=20, glm-4.6)
 
-The real fix may be STRUCTURAL (output schema validation, post-completion gate) rather than PROMPT-BASED.
+Combined the best elements of C3 (gate) + F1 (token waste + line pointers) + F2 (observed behavior + identity kill) into one prompt.
 
-## Round 2: Stress test methodology (n=10 per winner)
+**Result: 55% — WORSE than individual winners (80%).**
 
-Round 1 was n=1 — can't distinguish 100% from 30%. The stress test runs the 6 winners at n=10 each (60 cards total) with randomized dispatch order to eliminate position bias.
+Combining elements diluted the signal. More text gave the weaker model more room to "creatively interpret" instead of following a single clear consequence. **Do not combine winning prompts — pick the simplest individual winner.**
 
-### Design
+## Winning prompt characteristics
 
-- **Same slug** for all 60 cards (LeadPilot) — eliminates grill-quality variance
-- **Randomized dispatch order** — eliminates position bias (builder might be "warmer" on early cards)
-- **Unique verify script path** per trial (`/tmp/verify-<prompt_id>-<trial>.py`) — prevents cache reuse
-- **Success metric**: loop_engine child cards traceable via idempotency key `loop:<parent_card_id>:<hash>`
-- **Tiebreaker**: if 2+ prompts go 10/10, pick the simplest one (fewest tokens = cheapest to deploy)
+The three robust winners (C3, F1, F2) share these traits:
+1. **Concrete consequence** — "card will be FAILED", "work will be checked", "token budget wasted"
+2. **No ambiguity** — "REQUIRED" not "preferred", "if not, rejected"
+3. **Short** — under 200 tokens
+4. **No code examples** — the agent knows HOW, it needs a reason to not shortcut
 
-### Script location
+F2_threat_observed is the recommended choice — shortest, most robust, uses observed-behavior framing that anticipates rationalization.
 
-`startup/scripts/stress_test_loop_engine.py` — dispatches 60 cards in random order, `--check` flag shows per-prompt win rate.
+## Why builders use kanban_chains instead of loop_engine
 
-### What n=10 tells us
+The venture-prototype skill documents both. `loop_engine` is intended for single-prototype builds (phases with verifier gates). `kanban_chains` is documented for "parallel builds" but builders use it for single builds too because it's simpler. Both create the same structure (child cards with verify gates). This is acceptable — the key metric is whether structured verification happened, not which API was used.
 
-- 10/10 = the prompt is reliable (adopt it)
-- 7-9/10 = the prompt helps but isn't reliable (needs structural enforcement)
-- <7/10 = the prompt doesn't scale (ditch it)
+## Prototype-verification skill deployment
 
-## Tracking loop_engine via idempotency keys
+loop_engine/kanban_chains creates verifier child cards assigned to the `verifier` profile with `skills: ["prototype-verification"]`. If that skill doesn't exist on the verifier profile, the verifier agent crashes (exit code 1) and the card blocks after 2 crash retries.
 
-The `task_events` table uses `payload` column (NOT `data`), and parent-child linkage is via `idempotency_key` on the tasks table (NOT a `parent_id` column — that doesn't exist on the kanban tasks schema).
+FIX: `prototype-verification` must be in `shared-skills/` and symlinked from BOTH builder AND verifier profiles.
 
-```python
-# Correct way to trace loop_engine usage
-loop_roots = conn.execute(
-    "SELECT id, title, idempotency_key FROM tasks WHERE title LIKE 'Loop:%'"
-).fetchall()
-parent_map = {}
-for lr in loop_roots:
-    key = lr[2] or ""
-    if ":" in key:
-        parent_id = key.split(":")[1]  # loop:<parent_card_id>:<hash>
-        parent_map[parent_id] = lr[0]
+## Scripts
 
-# Then check: card_id in parent_map
-```
+- `~/.hermes-teams/startup/scripts/ab_test_loop_engine.py` — round 1 (20 variants)
+- `~/.hermes-teams/startup/scripts/stress_test_loop_engine.py` — round 2 (6 winners x 10)
+- `~/.hermes-teams/startup/scripts/stress_test_round3.py` — round 3 (4 winners x 10, glm-4.6)
+- `~/.hermes-teams/startup/scripts/stress_test_round4.py` — round 4 (combined prompt x 20, glm-4.6)
 
-## Script location
-
-`startup/scripts/ab_test_loop_engine.py` — 20 prompt variants, creates cards on `ab-loop-test` board, check results with `--check` flag.
+All scripts are reusable templates — swap the PROMPTS dict and SLUG for a different behavior under test.
 
 ## Quality comparison methodology
 
@@ -161,6 +147,6 @@ When comparing engine workflow output vs original pipeline (scripts):
 1. **Grill depth**: Count Q&A rounds (`^Q[0-9]` in context/*.md) and decisions (`Lock D[0-9]` or `D[0-9]+:` patterns). Don't use `^## Q` — the format is `Q1`, `Q2`, not markdown headers.
 2. **Prototype files**: Check `~/projects/<slug>/prototype/` exists and has the expected type (HTML, CLI, API).
 3. **Verify scripts**: Check `/tmp/verify-<slug>.py` exists and runs (exit code 0).
-4. **Tool usage**: Search task_events and task_comments on the board DB for tool names.
+4. **Tool usage**: Search heartbeat AND completion events (not just Loop:% titles) for tool mentions.
 5. **Portfolio entries**: Check `~/vault/ventures/portfolio.md` for "Awaiting Review" entries with the slug.
 6. **Card body diff**: Compare engine-generated card body against what the original script would produce. Missing enforcement lines cause behavior changes.

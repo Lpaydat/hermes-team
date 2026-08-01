@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-development
-description: "Build declarative workflow engines that orchestrate multi-agent pipelines through a kanban board. The engine reads JSON workflow templates, creates kanban cards for nodes, detects card completions as triggers, and advances the pipeline. Use when building a workflow engine, designing JSON workflow templates, testing engine code that integrates with Hermes kanban, or debugging tick-loop ordering, trigger dedup, or state persistence issues."
+description: "Build declarative workflow engines orchestrating multi-agent pipelines via kanban: JSON templates, per-node cards, trigger detection, tick-loop advancement. For template design, engine testing, tick ordering, trigger dedup, state persistence."
 triggers:
   - build workflow engine
   - declarative workflow
@@ -16,6 +16,8 @@ triggers:
 ---
 
 # Workflow Engine Development
+
+> **Trigger composition:** `card_completed` triggers are BLOCKED on cards from edge-declaring workflows (runtime.py ~L1783, empirically verified). Node states are monotonic — no loops. `idempotency_key_template` NOT implemented. See `references/trigger-composition-semantics.md`, `scripts/probe-trigger-guard.py`.
 
 Build declarative workflow engines that orchestrate multi-agent pipelines through a kanban board. The engine reads JSON workflow templates, creates kanban cards for nodes, detects card completions as triggers, and advances the pipeline by resolving variables and dispatching downstream nodes.
 
@@ -355,7 +357,11 @@ The engine supports BOTH implicit edges (via `Node.depends_on[]` + `Node.conditi
 
 **The bug that taught this (2026-07-31, found via adversarial test):** the initial implementation used pure OR for ALL edges — a node dispatched if ANY incoming edge source was DONE. This worked for conditional diamonds but BROKE dependency convergence: a `go` node with unconditional edges from `w1` (done) and `w2` (still pending) would dispatch prematurely because w1's edge satisfied OR. The fix: separate unconditional edges (AND) from conditional edges (OR) and require both groups to pass.
 
-**Proven via livetest (2026-07-31):** the `dev-review-loop.json` template has a conditional diamond: review→PASS:ship, review→FAIL:fix→re-review→PASS:ship. When review=PASS, `fix` and `re-review` get SKIPPED, and `ship` dispatches via the `review→ship` conditional edge despite `re-review` being skipped. AND verified: `test_multiple_waits_one_blocks` proves unconditional convergence requires ALL deps done.
+**Proven via livetest (2026-07-31):** `dev-review-loop.json` — conditional diamond
+review→PASS:ship / review→FAIL:fix→re-review→PASS:ship; on PASS, fix/re-review are SKIPPED
+(dead branches ignored). For the edge-vs-trigger decision rule and the 9 dev-pipeline
+handoff mapping (A: one template vs B: per-agent triggers), see
+`references/dev-pipeline-handoff-mapping.md`.
 
 **Backwards compatibility:** templates without an `"edges"` key use the original implicit `depends_on` + `condition` path. No changes needed to existing templates.
 
