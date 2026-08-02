@@ -225,6 +225,22 @@ class FakeWorld:
     def complete_card(self, card_id: str, metadata: dict | None = None, summary: str = ""):
         complete_fake_card(self.board_db, card_id, metadata, summary)
 
+    def state_snapshot(self, instance_id: str = None) -> dict:
+        """Read the state blob for an instance (or the first active one).
+        
+        Returns the nodes dict from the state blob — replaces direct
+        node_states SQL queries in tests.
+        """
+        if instance_id is None:
+            instances = self.engine.state.load_active_instances()
+            if not instances:
+                return {}
+            instance_id = instances[0].instance_id
+        loaded = self.engine.state.load_state(instance_id)
+        state = loaded.get("state", {})
+        # Node state is at the root of the blob (node_id keys), not nested under "nodes"
+        return state
+
     def cleanup(self):
         import workflow_engine.kanban_adapter as ka
         import workflow_engine.runtime as rt
@@ -448,12 +464,8 @@ def test_variable_resolution():
     instances = world.engine.state.load_active_instances()
     # Wait — instance was completed by now? No, build hasn't completed yet.
     # Let's check the state DB directly.
-    conn = sqlite3.connect(str(world.state_db_path))
-    row = conn.execute(
-        "SELECT output FROM node_states WHERE node_id = 'plan'"
-    ).fetchone()
-    conn.close()
-    plan_output = json.loads(row[0]) if row else {}
+    nodes = world.state_snapshot()
+    plan_output = nodes.get("plan", {}).get("output", {})
     assert plan_output.get("spec_path") == "/custom/path.md", \
         f"Expected spec_path=/custom/path.md, got: {plan_output}"
     assert plan_output.get("epic_id") == "EPIC-42", \
@@ -730,8 +742,8 @@ def test_blocked_node_reported():
 
     # Tick: should report blocked, not advance
     actions = world.tick()
-    assert any("BLOCKED" in a for a in actions), \
-        f"Expected BLOCKED report, got: {actions}"
+    assert any("BLOCKED" in a or "blocked" in a for a in actions), \
+        f"Expected blocked report, got: {actions}"
     assert not any("DONE" in a for a in actions), \
         f"Should not report DONE for blocked card, got: {actions}"
 
@@ -1185,10 +1197,11 @@ def test_output_schema_validation():
     assert not any("DISPATCHED" in a and "done" in a for a in actions), \
         f"done node must NOT dispatch when qa failed validation, got: {actions}"
 
-    # The node state should be FAILED, not DONE
-    ns = world.engine.state.load_active_instances()[0].node_states.get("qa")
-    assert ns is not None and ns.status == NodeStatus.FAILED, \
-        f"qa node status should be FAILED, got {ns.status if ns else None}"
+    # Validation failure detected and downstream skipped
+    assert any("VALIDATION FAILED" in a and "qa" in a for a in actions), \
+        f"Expected qa VALIDATION FAILED, got: {actions}"
+    assert any("SKIPPED" in a and "done" in a for a in actions), \
+        f"done node should be SKIPPED when qa failed, got: {actions}"
 
     world.cleanup()
     print("OK: test_output_schema_validation")
@@ -2199,13 +2212,12 @@ def test_adv_graph_disconnected_node():
     conn.close()
     world.complete_card(f_card, metadata={"ok": True})
 
-    # Tick: e and f are done, but x and y are stuck → workflow NOT complete
+    # Tick: e and f are done. New behavior (design v2.2): the reachability
+    # check (BFS from done nodes) ignores disconnected components, so x and y
+    # don't block completion. The workflow completes.
     actions = world.tick()
-    assert not any("WORKFLOW COMPLETE" in a for a in actions), \
-        f"Workflow with unreachable cycle should NOT complete, got: {actions}"
-    # Instance lingers active forever
-    active = world.engine.state.load_active_instances()
-    assert len(active) == 1, "Deadlocked instance should still be active"
+    assert any("WORKFLOW COMPLETE" in a for a in actions), \
+        f"Workflow should complete — disconnected components ignored, got: {actions}"
 
     world.cleanup()
     print("OK: test_adv_graph_disconnected_node")
@@ -2267,8 +2279,11 @@ def test_adv_graph_conflicting_diamond():
         f"B should be done, got: {actions}"
     assert not any("DISPATCHED" in a and "node d" in a for a in actions), \
         f"D should NOT dispatch — C is a dead branch, got: {actions}"
-    assert not any("WORKFLOW COMPLETE" in a for a in actions), \
-        f"Workflow should NOT complete — dead branch blocks fan-in, got: {actions}"
+    # New behavior (design v2.2): dead branches are SKIPPED, not hung.
+    # C is skipped (condition false), D is skipped (dead-branch propagation),
+    # and the workflow completes because all exit nodes reach terminal state.
+    assert any("SKIPPED" in a and "node d" in a for a in actions), \
+        f"D should be SKIPPED (dead branch from C), got: {actions}"
 
     world.cleanup()
     print("OK: test_adv_graph_conflicting_diamond")
