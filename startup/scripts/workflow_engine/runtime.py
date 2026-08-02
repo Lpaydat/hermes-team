@@ -1107,7 +1107,23 @@ class Engine:
             if isinstance(output, dict):
                 for k, v in output.items():
                     ctx[f"nodes.{node_id}.output.{k}"] = v
+            # Expose the node's iteration counter so back-edge conditions can
+            # gate on it (e.g. "${nodes.build.iteration} < 3"). Iteration 0 is
+            # the first run; it resets/bumps on each back-edge reset.
+            ctx[f"nodes.{node_id}.iteration"] = ns.get("iteration", 0)
         return ctx
+
+    @staticmethod
+    def _iter_suffix(iteration: int) -> str:
+        """The idempotency-key fragment for a node's iteration.
+
+        Iteration 0 (the first run) emits an EMPTY suffix so the key stays
+        backwards-compatible with existing in-flight DAG instances
+        (``wf:<inst>:<node>`` unchanged). Iteration 1+ emits ``:iter<N>``
+        which must precede any item-specific suffix (foreach index, chain
+        child, subworkflow child) per DESIGN §Idempotency.
+        """
+        return f":iter{iteration}" if iteration and iteration > 0 else ""
 
     def _persist(self, instance_id: str, state_nodes: dict[str, dict],
                  version: int) -> int:
@@ -1450,7 +1466,7 @@ class Engine:
             return ok, msg, ""  # silently waiting
 
         # task (template/delegate/chain): single card.
-        ok, msg = self._dispatch_node(inst, node, ctx)
+        ok, msg = self._dispatch_node(inst, node, ctx, ns)
         self._mirror_legacy_to_blob(inst, node, ns)
         return ok, msg, (f"DISPATCHED node {node.id} on {board} → card {msg}" if ok else f"FAILED to dispatch node {node.id} on {board}: {msg}")
 
@@ -2148,7 +2164,8 @@ class Engine:
 
         return actions
 
-    def _dispatch_node(self, inst: WorkflowInstance, node: Node, ctx: dict) -> tuple[bool, str]:
+    def _dispatch_node(self, inst: WorkflowInstance, node: Node, ctx: dict,
+                       ns: dict | None = None) -> tuple[bool, str]:
         """Create a kanban card for a node. Idempotent via find_cards_by_idempotency_key.
 
         Branches on node.card_mode:
@@ -2158,9 +2175,14 @@ class Engine:
           - "chain": create a parent card + N child cards with parent-child links.
             The node body_template may contain a JSON list of child specs; each
             child card links to the parent via --parent.
+
+        ``ns`` is the node's state-blob entry; its ``iteration`` field feeds the
+        iteration-aware idempotency key (DESIGN §Idempotency). ``None`` (legacy
+        call path) is treated as iteration 0 → backwards-compatible key.
         """
         body = resolve_template(node.body_template or "", ctx)
-        idem_key = f"wf:{inst.instance_id}:{node.id}"
+        iter_suf = self._iter_suffix((ns or {}).get("iteration", 0))
+        idem_key = f"wf:{inst.instance_id}:{node.id}{iter_suf}"
 
         # Check if already created (prevents double dispatch)
         existing = find_cards_by_idempotency_key(inst.board, idem_key)
@@ -2628,7 +2650,8 @@ class Engine:
             ns.output = output
         return True, f"{len(child_instance_ids)} instances"
 
-    def _dispatch_foreach_node(self, inst: WorkflowInstance, node: Node, ctx: dict) -> tuple[bool, str]:
+    def _dispatch_foreach_node(self, inst: WorkflowInstance, node: Node, ctx: dict,
+                               ns: dict | None = None) -> tuple[bool, str]:
         """Dispatch a foreach node: resolve the list, create one card per item.
 
         The node's `foreach` field is a template variable like
@@ -2664,6 +2687,7 @@ class Engine:
             return True, "0"
 
         workspace = f"dir:{inst.project_dir}" if inst.project_dir else None
+        iter_suf = self._iter_suffix((ns or {}).get("iteration", 0)) if ns else ""
         card_ids: list[str] = []
 
         for idx, item in enumerate(items):
@@ -2673,7 +2697,7 @@ class Engine:
             item_ctx["item_index"] = idx
             body = resolve_template(node.body_template or "", item_ctx)
 
-            idem_key = f"wf:{inst.instance_id}:{node.id}:{idx}"
+            idem_key = f"wf:{inst.instance_id}:{node.id}{iter_suf}:{idx}"
 
             # Check if already created (idempotency across ticks)
             existing = find_cards_by_idempotency_key(inst.board, idem_key)

@@ -1084,14 +1084,10 @@ def test_df_integration_output_persists_in_state_db():
         world.complete_card(src_card, metadata={"path": "/tmp/x.md", "count": 7})
         world.tick()
 
-        # Read the state DB directly
-        conn = sqlite3.connect(str(world.state_db_path))
-        row = conn.execute(
-            "SELECT output FROM node_states WHERE node_id = 'src'"
-        ).fetchone()
-        conn.close()
-        output = json.loads(row[0]) if row else {}
-        assert output.get("path") == "/tmp/x.md", f"State DB should persist output, got: {output}"
+        # Read the node output from the state blob (T5: node state lives in
+        # workflow_instances.state, not the legacy node_states table).
+        output = world.state_snapshot().get("src", {}).get("output", {})
+        assert output.get("path") == "/tmp/x.md", f"State blob should persist output, got: {output}"
         assert output.get("count") == 7
     finally:
         world.cleanup()
