@@ -3188,6 +3188,7 @@ class Engine:
             "card_id": trigger_card.id,
             "board": board,
             "assignee": trigger_card.assignee,
+            "title": trigger_card.title or "",
             **meta,
         }
 
