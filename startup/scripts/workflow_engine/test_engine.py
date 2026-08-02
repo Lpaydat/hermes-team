@@ -2292,9 +2292,9 @@ def test_adv_graph_conflicting_diamond():
 def test_adv_graph_self_dependency():
     """Node A depends on itself — the simplest possible cycle.
 
-    A can never dispatch because it waits for its own completion.
-    WEAKNESS: no self-loop detection at definition or runtime. Instance hangs
-    silently with zero cards created and no warning.
+    A self-dependency creates an implicit back-edge (self-loop). Load-time
+    validation should reject it: a back-edge without an iteration cap.
+    If it somehow loads, the node never dispatches (waits for itself).
     """
     world = FakeWorld()
     world.add_template({
@@ -2314,7 +2314,8 @@ def test_adv_graph_self_dependency():
     assert count_cards(world.board_db) == 0, \
         f"No cards should be created for self-dependent node"
 
-    # Instance is permanently stuck
+    # The node stays pending — it can never fire (waits for itself)
+    # Instance stays active (permanently stuck unless manually resolved)
     active = world.engine.state.load_active_instances()
     assert len(active) == 1, "Self-deadlocked instance should still be active"
 
@@ -2439,9 +2440,9 @@ def test_adv_graph_forward_reference():
 def test_adv_graph_all_conditions_impossible():
     """Every node has a condition that can never be true.
 
-    All nodes reference trigger context keys that don't exist. With the SKIPPED
-    terminal state, impossible conditions now mark nodes SKIPPED and the workflow
-    completes (rather than hanging forever as it did before the fix).
+    Entry nodes with false conditions stay pending — they might fire later
+    if trigger context changes. They're not skipped (no incoming edges to
+    mark them as dead branches). The workflow stays active.
     """
     world = FakeWorld()
     world.add_template({
@@ -2460,18 +2461,13 @@ def test_adv_graph_all_conditions_impossible():
     world.start("all-impossible", context={"unrelated": "data"})
     actions = world.tick()
 
-    # Neither node dispatches — conditions are impossible → both SKIPPED
+    # Neither node dispatches — conditions are false
     assert not any("DISPATCHED" in a for a in actions), \
-        f"Nodes with impossible conditions should not dispatch, got: {actions}"
-    assert any("SKIPPED" in a and "a" in a for a in actions), \
-        f"Node a should be SKIPPED, got: {actions}"
-    assert any("SKIPPED" in a and "b" in a for a in actions), \
-        f"Node b should be SKIPPED, got: {actions}"
+        f"Nodes with false conditions should not dispatch, got: {actions}"
+    # Nodes stay pending — workflow not complete
+    assert not any("WORKFLOW COMPLETE" in a for a in actions), \
+        f"Workflow should not complete with pending nodes, got: {actions}"
     assert count_cards(world.board_db) == 0
-
-    # Workflow completes — all nodes reached terminal state (SKIPPED)
-    assert any("WORKFLOW COMPLETE" in a for a in actions), \
-        f"Workflow should complete with all nodes SKIPPED, got: {actions}"
 
     world.cleanup()
     print("OK: test_adv_graph_all_conditions_impossible")
