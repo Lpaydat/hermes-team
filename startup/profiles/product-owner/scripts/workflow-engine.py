@@ -663,10 +663,11 @@ def main():
         except Exception as e:
             all_actions.append(f"bead-sync ERROR [{name}]: {e}")
 
-        try:
-            all_actions.extend(phase_dispatch(board, path))
-        except Exception as e:
-            all_actions.append(f"dispatch ERROR [{name}]: {e}")
+        # Dispatch disabled — replaced by dev-dispatch.json engine template
+        # try:
+        #     all_actions.extend(phase_dispatch(board, path))
+        # except Exception as e:
+        #     all_actions.append(f"dispatch ERROR [{name}]: {e}")
 
         try:
             all_actions.extend(phase_human_escalations(board, path))
@@ -678,9 +679,8 @@ def main():
         except Exception as e:
             all_actions.append(f"scanner ERROR [{name}]: {e}")
 
-        # QA trigger disabled — now handled by new workflow engine
-        # (templates/qa-loop.json + card_completed trigger).
-        # To rollback: uncomment the two lines below.
+        # QA trigger — replaced by qa-test.json engine template
+        # (command node check-merge does the two-signal git check)
         # try:
         #     all_actions.extend(phase_qa_trigger(board, path))
         # except Exception as e:
