@@ -38,7 +38,7 @@
           "type": "object",
           "required": ["plan_complete"],
           "properties": {
-            "plan_complete": {"type": "string", "enum": ["true"]},
+            "plan_complete": {"type": "boolean"},
             "sizing": {"type": "string", "enum": ["small", "medium", "large"]},
             "artifact_type": {"type": "string"},
             "claims": {"type": "array", "items": {"type": "string"}}
@@ -58,9 +58,8 @@
           "type": "object",
           "required": ["build_success"],
           "properties": {
-            "build_success": {"type": "string", "enum": ["true", "false"]},
-            "smoke_result": {"type": "string"},
-            "image_tag": {"type": "string"}
+            "build_success": {"type": "boolean"},
+            "smoke_result": {"type": "string"}
           }
         }
       },
