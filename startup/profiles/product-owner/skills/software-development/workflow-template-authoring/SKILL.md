@@ -5,7 +5,9 @@ description: "Author workflow templates for the Hermes workflow engine. Use when
 
 # Workflow Template Authoring
 
-Write declarative JSON templates that the stateless workflow engine compiles into a routing graph. Each template is one `.json` file in `startup/scripts/workflow_engine/templates/`.
+A template is a **contract** — nodes, edges, and schemas that the engine enforces. The agent fills it in; the engine validates it. Write the contract tight and the agent can't cut corners. Write it loose and the agent will.
+
+Each template is one `.json` file in `startup/scripts/workflow_engine/templates/`.
 
 **This is one of three building blocks.** Before authoring a template, check whether your workflow needs dynamic fan-out (`kanban_chains`) or dynamic iteration (`loop_engine`) — those run inside profile cards, not as template nodes. See the [`template-ab-testing`](../template-ab-testing) skill's [`references/building-blocks.md`](../template-ab-testing/references/building-blocks.md) for the decision tree and verified APIs.
 
@@ -188,58 +190,13 @@ When to use this pattern:
 
 The engine observes only the parent card's status. It doesn't track the dynamic children. This is the **static-dynamic coexistence** boundary.
 
-## Pitfalls (proven across 8 A/B rounds)
+## Pitfalls
 
-These are real bugs and behavioral findings discovered through empirical testing. Each was caught and fixed in production templates.
+Proven bugs and behavioral findings from 8 A/B rounds. See [`references/pitfalls.md`](references/pitfalls.md) for the full list with code examples. The headline: **output schema required fields enforce behaviour; body text doesn't.** When in doubt, make the contract tighter.
 
-### Output schema enforcement > body text
+## Completion criterion: the validation checklist
 
-The most important lesson. A `body_template` tells the agent what to do. An `output.schema` with `required` fields forces the agent to produce it — or the card fails validation and retries. Body text instructions are routinely ignored by the agent.
-
-```
-output.schema (required fields) → ENFORCED (card fails, retries)
-body_template (structured text) → IGNORED (agent writes what it wants)
-skill field on node             → NO-OP (skill_enforcer handles it)
-```
-
-If you need structured output (per-claim evidence, security checklists, exploration results), put them as required arrays in the output schema:
-
-```json
-"output": {
-  "schema": {
-    "type": "object",
-    "required": ["verdict", "verdicts", "checks"],
-    "properties": {
-      "verdicts": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "required": ["claim_id", "claim", "verdict", "evidence"],
-          "properties": { ... }
-        }
-      }
-    }
-  }
-}
-```
-
-### Boolean values and conditions
-
-Python `str(True)` produces `"True"` (capital T). Condition comparisons against `'true'` (lowercase) fail silently. Fix: use `type: "boolean"` in the output schema, and compare in conditions with the Python form.
-
-### Optional fields in output schema
-
-If a field might be `None` (e.g., `image_tag` when there's no container), don't put it in `required` or set a strict `type: "string"` — the engine will reject `None`. Either omit from schema or make it nullable.
-
-### `depends_on` with explicit edges
-
-If you use explicit `edges`, nodes declared in `depends_on` must also have corresponding explicit edges — otherwise they're unreachable and the template won't validate.
-
-### `skill` field is a no-op
-
-Setting `"skill": "live-testing"` on a node does not load the skill on the card. The profile's `skill_enforcer` config handles skill loading. The field is safe to set (documents intent) but has no runtime effect.
-
-## Validation checklist
+The contract is done when every checkbox passes. No exceptions, no "good enough" — a template that fails any check is not deployable.
 
 Before deploying a template:
 

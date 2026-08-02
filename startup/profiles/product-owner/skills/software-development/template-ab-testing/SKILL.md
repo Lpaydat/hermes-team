@@ -1,6 +1,6 @@
 ---
 name: template-ab-testing
-description: "A/B test workflow templates against each other on identical inputs, deep-analyze with subagents, pin the winner, ditch the losers. Use when improving a workflow template through iterative comparison — building competing versions, running them head-to-head, and empirically selecting the best."
+description: "A/B test workflow templates against each other on identical inputs, deep-analyze with subagents, pin the winner, ditch the losers. Use when improving a workflow template through iterative comparison."
 ---
 
 # Template A/B Testing
@@ -44,7 +44,7 @@ Update `active-projects.json` with all test boards. Add the new board suffix to 
 
 ### 4. Run the gauntlet
 
-Tick the engine every 90 seconds. Each version runs in parallel — the engine processes all boards in one tick. Monitor with a background process:
+Enter the gauntlet — tick the engine every 90 seconds. Each version runs in parallel — the engine processes all boards in one tick. The gauntlet runs until all competitors reach a terminal state:
 
 ```bash
 for i in $(seq 1 8); do
@@ -72,9 +72,9 @@ Pass each subagent the exact card IDs and board names. Read the consolidated rep
 
 **Completion criterion:** all subagent batches returned, consolidated scorecard produced.
 
-### 6. Pin one, ditch the rest
+### 6. Pin the gauntlet winner, ditch the rest
 
-The winner becomes the pinned version. Losers get renamed `.disabled` (or `.failed` for experiments that backfired). Both stay in git history.
+The gauntlet's winner becomes the pinned version. Losers get renamed `.disabled` (or `.failed` for experiments that backfired). Both stay in git history.
 
 ```bash
 mv templates/qa-test-e.json templates/qa-test-e.json.disabled
@@ -85,57 +85,13 @@ mv templates/qa-test-e.json templates/qa-test-e.json.disabled
 
 ### 7. Identify gaps for next round
 
-List every dimension where the winner didn't score full marks. Each gap becomes the hypothesis for the next fork. If no template-addressable gaps remain, the gauntlet is complete.
+List every dimension where the gauntlet winner didn't score full marks. Each gap becomes the hypothesis for the next fork. If no template-addressable gaps remain, the gauntlet is complete.
 
 **Completion criterion:** gap list written, each gap classified as template-addressable or infrastructure-blocked.
 
 ## Reference
 
-### Enforcement hierarchy
-
-The most important lesson from 8 rounds: how you enforce behaviour matters more than what you ask for.
-
-```
-Output schema (required fields)  ← ENFORCED. Card fails validation, retries.
-  > Body template (structured)    ← IGNORED. Agent reads it, writes what it wants.
-  > Body template (prose hints)   ← WEAKER. Suggestion, not contract.
-  > Skill loading                  ← NO-OP if skill_enforcer mandates it anyway.
-```
-
-Schema enforcement beat body text every time. F asked for per-claim evidence tables in the body — agent ignored it. G required `verdicts[]` in the output schema — agent produced it. This is tool-level enforcement over prompting.
-
-### What changes behaviour vs what doesn't
-
-| Change | Effect | Evidence |
-|--------|--------|----------|
-| Card structure (1 card vs 7 cards) | **Drives depth** — 7 cards executed all phases, 1 card skipped 5 | C vs B |
-| Output schema required fields | **Enforces output** — missing fields fail validation | G vs F |
-| Body template strengthening | **No effect** — agent ignores structured format | F vs E |
-| Adaptive routing (conditional edges) | **Works** — sizing field routes correctly | E |
-| Boolean values in conditions | **Bug trap** — `True != 'true'`, use schema `type: boolean` | C |
-
-### Dual-board setup checklist
-
-- [ ] Board created: `hermes kanban boards create qa-ab-X`
-- [ ] Repo cloned: `cp -rf /tmp/ab-test/repo-a /tmp/ab-test/repo-X`
-- [ ] active-projects.json updated with board + repo path
-- [ ] Cron skip list updated (add `-X` suffix)
-- [ ] check-merge state seeded to pre-change SHA
-- [ ] Verifier PASS card created on board
-- [ ] Engine state cleared: `rm -f workflow-state.db*`
-- [ ] Tick 1 dispatches qa-receive
-
-### Subagent dispatch template
-
-```
-goal: Compare [DIMENSION] between [VERSION-X] and [VERSION-Y].
-Read: hermes kanban --board qa-ab-X show t_CARDID
-      hermes kanban --board qa-ab-Y show t_CARDID
-Score each 1-10 on: [specific criteria]
-Report as scored table.
-```
-
-Dispatch 5–8 in parallel batches of 3. Read consolidated reports before deciding.
+The enforcement hierarchy, behaviour-change table, dual-board setup checklist, and subagent dispatch template live in [`references/gauntlet-reference.md`](references/gauntlet-reference.md). Load when setting up boards (step 3) or dispatching analysis (step 5).
 
 ### When to stop the gauntlet
 
