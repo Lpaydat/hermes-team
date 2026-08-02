@@ -145,3 +145,11 @@ Stop when remaining gaps are **infrastructure-blocked** — they need a real pro
 - All routing paths tested (small + medium/large)
 - No validation failures
 - Schema enforcement is the enforcement mechanism (not body text)
+
+## Choosing the right building block
+
+A workflow can use three orchestration systems. Which one depends on how much you know at design time.
+
+See [`references/building-blocks.md`](references/building-blocks.md) for the full decision tree and verified API details for all three: declarative workflow engine (static), kanban_chains (parallel fan-out), loop_engine (dynamic iteration).
+
+The short version: static routing → JSON template. Dynamic fan-out → profile calls kanban_chains inside a template-dispatched card. Dynamic iteration → profile calls loop_engine inside a template-dispatched card.
