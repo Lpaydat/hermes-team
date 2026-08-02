@@ -76,16 +76,21 @@ def main():
     parser.add_argument("--board", required=True)
     args = parser.parse_args()
 
+    # A/B test isolation: skip boards ending in '-a' (cron handles those)
+    if args.board.endswith("-a"):
+        print(json.dumps({"should_test": "false", "commit_sha": "", "reason": "A/B test: cron handles board A"}))
+        return
+
     projects = load_active_projects()
     project_dir = projects.get(args.board)
 
     if not project_dir:
-        print(json.dumps({"should_test": False, "commit_sha": "", "reason": "no project for board"}))
+        print(json.dumps({"should_test": "false", "commit_sha": "", "reason": "no project for board"}))
         return
 
     current_sha = get_head_sha(project_dir)
     if not current_sha:
-        print(json.dumps({"should_test": False, "commit_sha": "", "reason": "no git repo"}))
+        print(json.dumps({"should_test": "false", "commit_sha": "", "reason": "no git repo"}))
         return
 
     # Load state
@@ -102,12 +107,12 @@ def main():
         state[args.board] = current_sha
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         STATE_FILE.write_text(json.dumps(state, indent=2))
-        print(json.dumps({"should_test": False, "commit_sha": current_sha, "reason": "first run — seeded"}))
+        print(json.dumps({"should_test": "false", "commit_sha": current_sha, "reason": "first run — seeded"}))
         return
 
     # No change
     if last_sha == current_sha:
-        print(json.dumps({"should_test": False, "commit_sha": current_sha, "reason": "no change"}))
+        print(json.dumps({"should_test": "false", "commit_sha": current_sha, "reason": "no change"}))
         return
 
     # Check for code files
@@ -120,9 +125,9 @@ def main():
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
     if code_changed:
-        print(json.dumps({"should_test": True, "commit_sha": current_sha}))
+        print(json.dumps({"should_test": "true", "commit_sha": current_sha}))
     else:
-        print(json.dumps({"should_test": False, "commit_sha": current_sha, "reason": "docs/specs only"}))
+        print(json.dumps({"should_test": "false", "commit_sha": current_sha, "reason": "docs/specs only"}))
 
 
 if __name__ == "__main__":

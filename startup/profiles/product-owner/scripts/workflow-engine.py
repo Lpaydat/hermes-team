@@ -506,8 +506,13 @@ def phase_qa_trigger(board, project_dir):
     Both signals together eliminate false positives (PO spec commits without
     a verifier card, or verifier cards without a merge).
     Dedup via idempotency key qa-after-<sha>.
+
+    A/B test isolation: skip boards ending in '-b' (handled by engine only).
     """
     actions = []
+    # A/B test isolation: skip boards ending in '-b' (engine handles those)
+    if board.endswith("-b"):
+        return actions
     db = board_db_path(board)
     if not db.exists():
         return actions
@@ -679,12 +684,11 @@ def main():
         except Exception as e:
             all_actions.append(f"scanner ERROR [{name}]: {e}")
 
-        # QA trigger — replaced by qa-test.json engine template
-        # (command node check-merge does the two-signal git check)
-        # try:
-        #     all_actions.extend(phase_qa_trigger(board, path))
-        # except Exception as e:
-        #     all_actions.append(f"qa-trigger ERROR [{name}]: {e}")
+        # QA trigger — A/B test: old cron handles board A, engine handles board B
+        try:
+            all_actions.extend(phase_qa_trigger(board, path))
+        except Exception as e:
+            all_actions.append(f"qa-trigger ERROR [{name}]: {e}")
 
     if all_actions:
         log(f"{len(all_actions)} action(s):")
