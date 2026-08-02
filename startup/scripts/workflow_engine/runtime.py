@@ -20,7 +20,8 @@ import subprocess
 import threading
 import uuid
 
-from .model import Workflow, Node, Edge, resolve_template, evaluate_condition, strip_template_var
+from .model import (Workflow, Node, Edge, resolve_template, evaluate_condition,
+                    strip_template_var, bfs_reachable, compute_exit_nodes)
 from .store import TemplateStore
 from .kanban_adapter import (
     create_card,
@@ -1638,23 +1639,13 @@ class Engine:
 
     def _reachable_nodes(self, wf: Workflow, state_nodes: dict[str, dict],
                          ctx: dict) -> set[str]:
-        """BFS from all dispatched/done nodes following ALL edges (regardless
-        of condition). Any node NOT visited is structurally unreachable."""
-        # Seed: only nodes that are done or running (dispatched).
-        # Per DESIGN §Reachability: "BFS from all dispatched/done nodes."
+        """BFS from dispatched/done nodes following ALL edges. Uses shared helper."""
+        node_ids = {n.id for n in wf.nodes}
         seeds = {n.id for n in wf.nodes
                  if node_phase(n, state_nodes.get(n.id, {})) in (PHASE_DONE, PHASE_RUNNING)}
-        visited: set[str] = set(seeds)
-        queue = list(seeds)
         edges = wf.edges or [Edge(from_node=d, to_node=n.id)
                              for n in wf.nodes for d in n.depends_on]
-        while queue:
-            cur = queue.pop()
-            for e in edges:
-                if e.from_node == cur and e.to_node not in visited:
-                    visited.add(e.to_node)
-                    queue.append(e.to_node)
-        return visited
+        return bfs_reachable(edges, seeds, node_ids)
 
     def _read_instance_status(self, instance_id: str) -> str:
         """Read a workflow instance's status column (fresh, not cached)."""

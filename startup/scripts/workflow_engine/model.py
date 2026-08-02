@@ -78,6 +78,25 @@ class Edge:
 _ITERATION_RE = re.compile(r"\$\{.*iteration.*\}\s*[<>=]")
 
 
+def bfs_reachable(edges, seed_ids, all_node_ids):
+    """Forward BFS from seed nodes following all edges. Returns reachable set."""
+    visited = set(seed_ids)
+    queue = list(seed_ids)
+    while queue:
+        cur = queue.pop(0)
+        for e in edges:
+            if e.from_node == cur and e.to_node not in visited and e.to_node in all_node_ids:
+                visited.add(e.to_node)
+                queue.append(e.to_node)
+    return visited
+
+
+def compute_exit_nodes(nodes, edges):
+    """Nodes with no outgoing edges."""
+    has_outgoing = {e.from_node for e in edges}
+    return [n for n in nodes if n.id not in has_outgoing]
+
+
 def tarjan_scc(nodes: list[str], edges: list[tuple[str, str]]) -> list[set[str]]:
     """Compute strongly-connected components via Tarjan's algorithm.
 
@@ -263,17 +282,8 @@ def _validate_template_graph(
         seeds = [n.id for n in nodes
                  if n.id not in has_incoming and not n.depends_on]
 
-    # BFS forward over explicit edges.
-    reachable: set[str] = set()
-    queue = list(seeds)
-    while queue:
-        cur = queue.pop()
-        if cur in reachable:
-            continue
-        reachable.add(cur)
-        for e in edges:
-            if e.from_node == cur and e.to_node not in reachable:
-                queue.append(e.to_node)
+    # BFS forward over explicit edges using shared helper.
+    reachable = bfs_reachable(edges, seeds, node_ids)
 
     unreachable = node_ids - reachable
     if unreachable:
