@@ -511,7 +511,7 @@ def phase_qa_trigger(board, project_dir):
     """
     actions = []
     # A/B test isolation: skip boards ending in '-b' (engine handles those)
-    if board.endswith("-b") or board.endswith("-c"):
+    if board.endswith("-b") or board.endswith("-c") or board.endswith("-d"):
         return actions
     db = board_db_path(board)
     if not db.exists():
