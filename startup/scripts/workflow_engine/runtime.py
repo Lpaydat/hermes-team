@@ -1446,113 +1446,134 @@ class Engine:
                           ns: dict, ctx: dict) -> tuple[bool, str, str]:
         """Dispatch a node by type, recording the result into the state blob.
 
-        Reuses the legacy dispatch methods (which still write to node_states for
-        back-compat) but mirrors their effects into the blob. Returns
-        (ok, detail, action_message). The action_message is '' when there's
-        nothing to report (e.g. dedup-adopted an existing card).
+        Writes dispatch results directly to the blob via
+        _update_blob_after_dispatch (no legacy mirror). Returns
+        (ok, detail, action_message).
         """
         board = inst.board
 
         # foreach command: synchronous, inline.
         if node.foreach and node.type == "command":
             ok, msg = self._run_foreach_command(inst, node, ctx)
-            self._mirror_legacy_to_blob(inst, node, ns)
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
             return ok, msg, (f"DONE node {node.id} (foreach command: {msg}) on {board}" if ok else f"FAILED foreach command node {node.id} on {board}: {msg}")
 
         # foreach subworkflow: N child instances.
         if node.foreach and node.type == "subworkflow":
             ok, msg = self._dispatch_foreach_subworkflow(inst, node, ctx, ns)
-            self._mirror_legacy_to_blob(inst, node, ns)
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
             return ok, msg, (f"DISPATCHED node {node.id} (foreach subworkflow: {msg}) on {board}" if ok else f"FAILED foreach subworkflow node {node.id} on {board}: {msg}")
 
         # foreach task: N cards.
         if node.foreach:
-            ok, msg = self._dispatch_foreach_node(inst, node, ctx)
-            self._mirror_legacy_to_blob(inst, node, ns)
+            ok, msg = self._dispatch_foreach_node(inst, node, ctx, ns)
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
             return ok, msg, (f"DISPATCHED node {node.id} (foreach: {msg} cards) on {board}" if ok else f"FAILED to dispatch foreach node {node.id} on {board}: {msg}")
 
         # subworkflow (single child).
         if node.type == "subworkflow":
             ok, msg = self._dispatch_subworkflow_node(inst, node, ctx, ns)
-            self._mirror_legacy_to_blob(inst, node, ns)
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
             return ok, msg, (f"DISPATCHED node {node.id} (subworkflow: {node.workflow_ref}) on {board} → child {msg}" if ok else f"FAILED to dispatch subworkflow node {node.id} on {board}: {msg}")
 
         # command: synchronous.
         if node.type == "command":
             ok, msg = self._run_command_node(inst, node, ctx)
-            self._mirror_legacy_to_blob(inst, node, ns)
-            return ok, msg, (f"DONE node {node.id} (command) on {board}: {msg[:80]}" if ok else f"FAILED node {node.id} (command) on {board}: {msg[:80]}")
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
+            return ok, msg, (f"DONE node {node.id} (command: {msg[:80]}) on {board}" if ok else f"FAILED node {node.id} (command) on {board}: {msg[:80]}")
 
         # wait: poll condition.
         if node.type == "wait":
             ok, msg = self._check_wait_node(inst, node, ctx)
-            self._mirror_legacy_to_blob(inst, node, ns)
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
             if ok:
                 return ok, msg, f"DONE node {node.id} (wait resolved: {msg[:60]}) on {board}"
             return ok, msg, ""  # silently waiting
 
         # task (template/delegate/chain): single card.
         ok, msg = self._dispatch_node(inst, node, ctx, ns)
-        self._mirror_legacy_to_blob(inst, node, ns)
+        self._update_blob_after_dispatch(inst, node, ns, ok, msg)
         return ok, msg, (f"DISPATCHED node {node.id} on {board} → card {msg}" if ok else f"FAILED to dispatch node {node.id} on {board}: {msg}")
 
-    def _mirror_legacy_to_blob(self, inst: WorkflowInstance, node: Node, ns: dict):
-        """Copy the just-written node_states row back into the blob entry.
+    def _update_blob_after_dispatch(self, inst: WorkflowInstance, node: Node,
+                                    ns: dict, ok: bool, msg: str):
+        """Write dispatch results directly to the state blob.
 
-        The legacy dispatch methods write to the ``node_states`` DB table (via
-        ``update_node_state``) but do NOT update ``inst.node_states`` in memory.
-        So we re-read the row from the DB — that's where the real post-dispatch
-        state lives — and mirror it into the blob.
+        Replaces the old _mirror_legacy_to_blob which re-read from node_states.
+        Sets blob fields based on node type and dispatch result.
         """
-        legacy = self._load_one_node_state(inst.instance_id, node.id)
-        if legacy is None:
-            return
-        card_id, status, output = legacy
-        iteration = ns.get("iteration", 0)
-        ns["iteration"] = iteration
-
-        if card_id and not ns.get("card_id"):
-            ns["card_id"] = card_id
-
-        # foreach task: card ids live in the output under _foreach_cards.
-        if node.foreach and node.type == "task":
-            cards = (output or {}).get("_foreach_cards") or []
-            if cards:
-                ns["cards"] = cards
-                statuses = []
-                for cid in cards:
-                    card = get_card(inst.board, cid) if inst.board else None
-                    statuses.append(card.status if card else "")
-                ns["card_statuses"] = statuses
-        # foreach subworkflow: child ids in output under _foreach_instances.
-        if node.type == "subworkflow" and node.foreach:
-            child_ids = (output or {}).get("_foreach_instances") or []
-            if child_ids:
-                ns["child_instance_ids"] = child_ids
-        elif node.type == "subworkflow":
-            child_id = (output or {}).get("_child_instance")
-            if child_id:
-                ns["child_instance_id"] = child_id
-        # command/wait: mirror the done flag + output.
-        if node.type in ("command", "wait"):
-            if status == "done":
+        # wait node: ok=False means "still waiting" (not failed).
+        # Only set done when the condition resolves.
+        if node.type == "wait":
+            if ok:
                 ns["done"] = True
-            if output:
-                ns["output"] = dict(output)
-        # task single card: mirror card_status from board.
-        if (not node.foreach) and node.type == "task" and card_id:
-            card = get_card(inst.board, card_id) if inst.board else None
+                legacy = self._load_one_node_state(inst.instance_id, node.id)
+                if legacy:
+                    _, _, output = legacy
+                    if output:
+                        ns["output"] = dict(output)
+            # else: still waiting — don't set done or failed
+            return
+
+        # Transient dispatch failure (card creation error, etc.):
+        # don't mark as failed — stay pending for retry on next tick.
+        if not ok:
+            return
+        if node.type in ("command", "wait"):
+            ns["done"] = True
+            # Read the output from node_states (command runners write there).
+            legacy = self._load_one_node_state(inst.instance_id, node.id)
+            if legacy:
+                _, _, output = legacy
+                if output:
+                    ns["output"] = dict(output)
+            return
+
+        # foreach task: msg is the card count. Read card IDs from the
+        # node_states table (the foreach dispatcher writes them there).
+        if node.foreach and node.type == "task":
+            # Read card IDs from the legacy output (_foreach_cards field).
+            legacy = self._load_one_node_state(inst.instance_id, node.id)
+            if legacy:
+                _, _, output = legacy
+                cards = (output or {}).get("_foreach_cards") or []
+                if cards:
+                    ns["cards"] = cards
+                    statuses = []
+                    for cid in cards:
+                        card = get_card(inst.board, cid) if inst.board else None
+                        statuses.append(card.status if card else "")
+                    ns["card_statuses"] = statuses
+            return
+
+        # foreach subworkflow: msg is child count.
+        if node.foreach and node.type == "subworkflow":
+            legacy = self._load_one_node_state(inst.instance_id, node.id)
+            if legacy:
+                _, _, output = legacy
+                child_ids = (output or {}).get("_foreach_instances") or []
+                if child_ids:
+                    ns["child_instance_ids"] = child_ids
+            return
+
+        # single subworkflow: msg is the child instance ID.
+        if node.type == "subworkflow":
+            legacy = self._load_one_node_state(inst.instance_id, node.id)
+            if legacy:
+                _, _, output = legacy
+                child_id = (output or {}).get("_child_instance")
+                if child_id:
+                    ns["child_instance_id"] = child_id
+            elif msg:
+                ns["child_instance_id"] = msg
+            return
+
+        # task (single card): msg is the card_id.
+        if node.type == "task" and msg:
+            ns["card_id"] = msg
+            card = get_card(inst.board, msg) if inst.board else None
             if card:
                 ns["card_status"] = card.status
-        # Propagate failed/skipped.
-        if status == "failed":
-            ns["failed"] = True
-        if status == "skipped":
-            ns["skipped"] = True
-        # task single card output: adopt when done.
-        if output and node.type == "task" and not node.foreach:
-            if status == "done":
-                ns["output"] = dict(output)
 
     def _load_one_node_state(self, instance_id: str, node_id: str) -> tuple[str | None, str, dict] | None:
         """Read a single node_states row from the DB. Returns (card_id, status, output)."""
