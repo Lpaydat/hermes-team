@@ -219,6 +219,23 @@
         }
       },
       "depends_on": ["qa-functional", "qa-journeys", "qa-security", "qa-explore"]
+    },
+    {
+      "id": "route-bug",
+      "profile": "qa",
+      "body_template": "## Route findings to fixers\n\n**Merge commit:** ${nodes.check-merge.output.commit_sha}\n\nYou have findings from QA testing. Your bug-handoff skill (loaded automatically) tells you how to route each one:\n\n- Critical → debugger card (`[bug]` prefix), block on fix\n- Important/Minor/Note → tech-lead card (`[fix]` prefix), ship with follow-up\n\nFor each finding, create a kanban card on this board with the finding detail and reproduction steps in the body.\n\nComplete this card with metadata:\n```\n{routed: true, debugger_cards: <count>, tech_lead_cards: <count>}\n```",
+      "title_template": "[qa] Route findings: ${nodes.check-merge.output.commit_sha}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["routed"],
+          "properties": {
+            "routed": {"type": "boolean"},
+            "debugger_cards": {"type": "integer"},
+            "tech_lead_cards": {"type": "integer"}
+          }
+        }
+      }
     }
   ],
   "edges": [
@@ -233,6 +250,8 @@
     {"from": "qa-functional", "to": "qa-verdict"},
     {"from": "qa-journeys", "to": "qa-verdict"},
     {"from": "qa-security", "to": "qa-verdict"},
-    {"from": "qa-explore", "to": "qa-verdict"}
+    {"from": "qa-explore", "to": "qa-verdict"},
+    {"from": "qa-quick", "to": "route-bug", "condition": "${nodes.qa-quick.output.verdict} == 'FAIL'"},
+    {"from": "qa-verdict", "to": "route-bug", "condition": "${nodes.qa-verdict.output.verdict} == 'FAIL'"}
   ]
 }
