@@ -253,6 +253,19 @@ def activation_rule_satisfied(
     Sources that are skipped/failed are treated as terminal-but-not-firing.
     """
     incoming = _incoming_edges(wf, node_id)
+
+    # Back-edge handling: if the ONLY incoming edges are back-edges from nodes
+    # that haven't completed yet (iteration 0), treat this as an entry node.
+    # Back-edges can't fire until the source completes at least once — so on
+    # the first iteration they shouldn't block dispatch.
+    if incoming and all(e.is_back_edge for e in incoming):
+        sources_run = any(
+            _phase_of(wf, e.from_node, state_nodes) in (PHASE_DONE, PHASE_RUNNING, PHASE_FAILED)
+            for e in incoming
+        )
+        if not sources_run:
+            incoming = []  # treat as entry node on first iteration
+
     if not incoming:
         # Entry node. In the implicit-edge model, an entry node may still carry
         # a self-gating ``condition`` (e.g. only run when a trigger flag is set).
@@ -1292,7 +1305,7 @@ class Engine:
             return
 
         # Compute the reset set from a SNAPSHOT (don't mutate during compute).
-        reset_targets: set[str] = set()
+        reset_targets: dict[str, str] = {}  # node_id → source_node_id (for clearing)
         for edge in back_edges:
             from_phase = _phase_of(wf, edge.from_node, state_nodes, ctx)
             if from_phase != PHASE_DONE:
@@ -1301,10 +1314,10 @@ class Engine:
                 continue
             to_phase = _phase_of(wf, edge.to_node, state_nodes, ctx)
             if to_phase in (PHASE_DONE, PHASE_FAILED):
-                reset_targets.add(edge.to_node)
+                reset_targets[edge.to_node] = edge.from_node
 
         # Apply resets.
-        for node_id in reset_targets:
+        for node_id, source_id in reset_targets.items():
             ns = state_nodes.get(node_id, {})
             iteration = ns.get("iteration", 0)
             # Enforce an explicit max_iterations cap if the edge declares one.
@@ -1330,6 +1343,19 @@ class Engine:
             ns.pop("failed", None)
             ns.pop("skipped", None)
             # Keep `output` pointing at last-known-good (don't wipe).
+
+            # Also clear the SOURCE node's done state and output so the
+            # back-edge doesn't re-fire with stale output on the next tick.
+            # The source needs to re-run (it's part of the same cycle).
+            source_ns = state_nodes.get(source_id, {})
+            source_ns.pop("done", None)
+            source_ns.pop("failed", None)
+            source_ns.pop("skipped", None)
+            source_ns["card_id"] = None
+            source_ns["card_status"] = ""
+            source_ns["output"] = {}  # clear stale output (e.g., FAIL verdict)
+            # Bump source iteration so its idempotency key changes → fresh card
+            source_ns["iteration"] = source_ns.get("iteration", 0) + 1
 
     @staticmethod
     def _back_edge_cap(wf: Workflow, to_node_id: str) -> int | None:

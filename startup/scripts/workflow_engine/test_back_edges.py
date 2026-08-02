@@ -79,15 +79,20 @@ def test_tarjan_scc_disconnected_components():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_annotate_back_edges_cycle_marked():
-    """A cyclic edge within an SCC is marked is_back_edge=True."""
+    """In a 2-node cycle, only the cycle-CLOSING edge is marked is_back_edge.
+
+    DFS visits 'build' first, then 'review'. Edge build→review is a forward
+    (tree) edge — not a back-edge. Edge review→build closes the cycle — it IS
+    a back-edge.
+    """
     nodes = [_node("build"), _node("review")]
     edges = [
         Edge(from_node="build", to_node="review"),
         Edge(from_node="review", to_node="build"),
     ]
     annotate_back_edges(edges, nodes)
-    assert edges[0].is_back_edge is True   # build→review (in cycle)
-    assert edges[1].is_back_edge is True   # review→build (in cycle)
+    assert edges[0].is_back_edge is False  # build→review (forward edge)
+    assert edges[1].is_back_edge is True   # review→build (back-edge)
 
 
 def test_annotate_back_edges_dag_none_marked():
@@ -99,7 +104,7 @@ def test_annotate_back_edges_dag_none_marked():
 
 
 def test_annotate_back_edges_exit_edge_not_marked():
-    """An edge leaving the SCC (review→ship) is NOT a back-edge."""
+    """An edge leaving the cycle (review→ship) is NOT a back-edge."""
     nodes = [_node("build"), _node("review"), _node("ship")]
     edges = [
         Edge(from_node="build", to_node="review"),
@@ -107,8 +112,8 @@ def test_annotate_back_edges_exit_edge_not_marked():
         Edge(from_node="review", to_node="ship"),
     ]
     annotate_back_edges(edges, nodes)
-    assert edges[0].is_back_edge is True   # build→review
-    assert edges[1].is_back_edge is True   # review→build
+    assert edges[0].is_back_edge is False  # build→review (forward)
+    assert edges[1].is_back_edge is True   # review→build (back-edge)
     assert edges[2].is_back_edge is False  # review→ship (exits cycle)
 
 
@@ -150,12 +155,12 @@ def _cyclic_template(entry_nodes=None, exit_condition=None,
 
 
 def test_cyclic_template_back_edges_detected():
-    """A known-cyclic template: both cycle edges flagged, exit edge not."""
+    """A known-cyclic template: only cycle-CLOSING edge flagged, exit edge not."""
     wf = Workflow.from_dict(_cyclic_template(
         entry_nodes=["build"], exit_condition="done"))
     be = {e.from_node + "->" + e.to_node: e.is_back_edge for e in wf.edges}
-    assert be["build->review"] is True
-    assert be["review->build"] is True
+    assert be["build->review"] is False  # forward edge
+    assert be["review->build"] is True   # back-edge (closes cycle)
     assert be["review->ship"] is False
     assert wf.declared_entry_nodes == ["build"]
     assert wf.exit_condition == "done"
@@ -166,7 +171,7 @@ def test_cyclic_template_with_iteration_condition_accepted():
     wf = Workflow.from_dict(_cyclic_template(
         entry_nodes=["build"], exit_condition="done", cap_via="condition"))
     for e in wf.edges:
-        if e.from_node == "build" and e.to_node == "review":
+        if e.from_node == "review" and e.to_node == "build":
             assert e.is_back_edge is True
             assert e.condition is not None
 
@@ -216,10 +221,10 @@ def test_cycle_without_iteration_cap_rejected():
 
 
 def test_cycle_with_max_iterations_accepted():
-    """max_iterations on both cycle edges satisfies the termination gate."""
+    """max_iterations on the back-edge satisfies the termination gate."""
     wf = Workflow.from_dict(_cyclic_template(
         entry_nodes=["build"], exit_condition="done", cap_via="max_iterations"))
-    assert sum(1 for e in wf.edges if e.is_back_edge) == 2
+    assert sum(1 for e in wf.edges if e.is_back_edge) == 1  # only review→build
 
 
 # ═══════════════════════════════════════════════════════════════════════════
