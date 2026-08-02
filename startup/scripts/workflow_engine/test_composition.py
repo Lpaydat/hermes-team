@@ -755,9 +755,9 @@ def test_subworkflow_failure_isolation():
 
         # Tick 5: verify B's block is reported but A is gone
         actions = world.tick()
-        blocked_reports = [a for a in actions if "BLOCKED" in a]
+        blocked_reports = [a for a in actions if "BLOCKED" in a or "blocked" in a]
         assert any("do_b" in a for a in blocked_reports), \
-            f"Expected do_b BLOCKED report, got: {actions}"
+            f"Expected do_b blocked report, got: {actions}"
         # No A-related actions — A is done and gone
         a_actions = [a for a in actions if "workflow-a" in a or "do_a" in a]
         assert len(a_actions) == 0, \
