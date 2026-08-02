@@ -1,0 +1,81 @@
+{
+  "id": "dev-dispatch",
+  "name": "Dev Dispatch — route completed spec to the right builder",
+  "description": "When a spec card completes, route it to the right profile: bugs to debugger, research to scout, ops to ops, architecture to architect, everything else to tech-lead. Replaces the old cron-based dispatch.",
+  "trigger": {
+    "source": "card_completed",
+    "condition": {
+      "assignee": "product-owner",
+      "status": "done",
+      "title_prefix": "[spec]"
+    }
+  },
+  "nodes": [
+    {
+      "id": "entry",
+      "profile": "product-owner",
+      "type": "command",
+      "command": "echo '{\"status\": \"routing\"}'",
+      "body_template": "noop — routing junction"
+    },
+    {
+      "id": "route-bug",
+      "profile": "debugger",
+      "body_template": "## Bug to investigate\n\nSpec: ${trigger.card_id}\nTitle: ${trigger.title}\n\nInvestigate the root cause. File a fix card for the developer with your findings.\n\nComplete this card with metadata {verdict: \"root-caused\", fix_card: \"<id>\"} when done.",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["root-caused", "cannot-reproduce"]}
+          }
+        }
+      }
+    },
+    {
+      "id": "route-scout",
+      "profile": "scout",
+      "body_template": "## Research task\n\nSpec: ${trigger.card_id}\nTitle: ${trigger.title}\n\nInvestigate this question against high-trust primary sources. Record your findings.\n\nComplete this card with metadata {verdict: \"done\", summary: \"<one-line>\"} when done.",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["done"]}
+          }
+        }
+      }
+    },
+    {
+      "id": "route-ops",
+      "profile": "ops",
+      "body_template": "## Ops task\n\nSpec: ${trigger.card_id}\nTitle: ${trigger.title}\n\nExecute this operational task.\n\nComplete this card with metadata {verdict: \"done\"} when done."
+    },
+    {
+      "id": "route-architect",
+      "profile": "architect",
+      "body_template": "## Architecture decision needed\n\nSpec: ${trigger.card_id}\nTitle: ${trigger.title}\n\nAnswer in gate posture: weigh alternatives before deciding. Record the decision as an ADR.\n\nComplete this card with metadata {verdict: \"decided\", adr: \"ADR-NNN\"} when done.",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["decided", "needs-more-info"]}
+          }
+        }
+      }
+    },
+    {
+      "id": "route-tech-lead",
+      "profile": "tech-lead",
+      "body_template": "## Your task\n\nSpec card: ${trigger.card_id}\nTitle: ${trigger.title}\n\nRead the spec card body for full requirements. Execute your loops-engineering doctrine. Create dev + verifier cards via kanban_delegate. Complete this card when the work is merged."
+    }
+  ],
+  "edges": [
+    {"from": "entry", "to": "route-bug", "condition": "${trigger.type} == 'bug'"},
+    {"from": "entry", "to": "route-scout", "condition": "${trigger.type} == 'research'"},
+    {"from": "entry", "to": "route-ops", "condition": "${trigger.type} == 'ops'"},
+    {"from": "entry", "to": "route-architect", "condition": "${trigger.type} == 'architecture'"},
+    {"from": "entry", "to": "route-tech-lead", "condition": "${trigger.type} != 'bug' AND ${trigger.type} != 'research' AND ${trigger.type} != 'ops' AND ${trigger.type} != 'architecture'"}
+  ]
+}
