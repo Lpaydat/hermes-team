@@ -186,6 +186,21 @@ class FakeWorld:
         conn.close()
         return count
 
+    def state_snapshot(self, instance_id: str = None) -> dict:
+        """Read the state blob for an instance (or the first active one).
+
+        Returns the nodes dict from the state blob — replaces direct
+        node_states SQL queries. Mirrors FakeWorld.state_snapshot in
+        test_engine.py.
+        """
+        if instance_id is None:
+            instances = self.engine.state.load_active_instances()
+            if not instances:
+                return {}
+            instance_id = instances[0].instance_id
+        loaded = self.engine.state.load_state(instance_id)
+        return loaded.get("state", {})
+
     def cleanup(self):
         import workflow_engine.kanban_adapter as ka
         import workflow_engine.runtime as rt
@@ -1084,14 +1099,10 @@ def test_df_integration_output_persists_in_state_db():
         world.complete_card(src_card, metadata={"path": "/tmp/x.md", "count": 7})
         world.tick()
 
-        # Read the state DB directly
-        conn = sqlite3.connect(str(world.state_db_path))
-        row = conn.execute(
-            "SELECT output FROM node_states WHERE node_id = 'src'"
-        ).fetchone()
-        conn.close()
-        output = json.loads(row[0]) if row else {}
-        assert output.get("path") == "/tmp/x.md", f"State DB should persist output, got: {output}"
+        # Read the node output from the state blob (T5: node state lives in
+        # workflow_instances.state, not the legacy node_states table).
+        output = world.state_snapshot().get("src", {}).get("output", {})
+        assert output.get("path") == "/tmp/x.md", f"State blob should persist output, got: {output}"
         assert output.get("count") == 7
     finally:
         world.cleanup()
@@ -1237,15 +1248,10 @@ def test_df_integration_output_mutation_between_ticks():
         assert body_after == "version=v1", \
             f"Sink body is immutable after dispatch (captured v1), got: {body_after}"
 
-        # The state DB also retains the v1 snapshot (not updated post-done)
-        conn = sqlite3.connect(str(world.state_db_path))
-        row = conn.execute(
-            "SELECT output FROM node_states WHERE node_id = 'src'"
-        ).fetchone()
-        conn.close()
-        output = json.loads(row[0]) if row else {}
+        # The state blob also retains the v1 snapshot (not updated post-done).
+        output = world.state_snapshot().get("src", {}).get("output", {})
         assert output.get("version") == "v1", \
-            f"State DB should retain v1 snapshot (not re-read post-done), got: {output}"
+            f"State blob should retain v1 snapshot (not re-read post-done), got: {output}"
     finally:
         world.cleanup()
     print("OK: test_df_integration_output_mutation_between_ticks")

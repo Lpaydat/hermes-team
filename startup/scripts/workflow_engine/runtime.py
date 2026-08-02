@@ -20,7 +20,8 @@ import subprocess
 import threading
 import uuid
 
-from .model import Workflow, Node, resolve_template, evaluate_condition, strip_template_var
+from .model import (Workflow, Node, Edge, resolve_template, evaluate_condition,
+                    strip_template_var, bfs_reachable, compute_exit_nodes)
 from .store import TemplateStore
 from .kanban_adapter import (
     create_card,
@@ -40,6 +41,53 @@ LOCK_FILE = Path.home() / ".hermes-teams/startup/kanban/workflow-engine.lock"
 TRIGGER_LOOKBACK_SECS = 3600  # 1 hour
 
 
+def _extract_parent_workflow(idempotency_key: str) -> str | None:
+    """Deterministically parse the parent workflow ID from an engine card's
+    idempotency key.
+
+    Engine-created cards carry an idempotency key of the shape:
+
+        wf:<instance_id>[:<suffix>...]
+
+    where ``<instance_id>`` is ``wf_<timestamp>_<workflow.id>_<uuid8>`` and
+    ``<workflow.id>`` may itself contain hyphens (but never underscores —
+    enforced by ``Workflow.from_dict``). The optional ``:<suffix>...`` tail
+    encodes foreach/chain/sw iteration indices and is ignored here.
+
+    Returns the parent workflow ID, or ``None`` when the key is not an engine
+    card (does not start with ``wf:wf_``) or is malformed.
+
+    This replaces the prior heuristic that guessed the workflow ID chunk via
+    "first chunk longer than 3 chars, non-digit" — which misclassified short
+    workflow IDs (≤3 chars) and crashed on degenerate shapes.
+    """
+    if not idempotency_key or not idempotency_key.startswith("wf:"):
+        return None
+    parts = idempotency_key.split(":")
+    if len(parts) < 2:
+        return None
+    instance_part = parts[1]
+    # Engine instance IDs always start with "wf_"; anything else is not an
+    # engine card we recognise.
+    if not instance_part.startswith("wf_"):
+        return None
+    inst_chunks = instance_part.split("_")
+    # Shape: ["wf", <timestamp>, <wf.id chunks...>, <uuid8>]
+    # Need at least: wf + timestamp + 1 id chunk + uuid  →  >= 4 chunks.
+    if len(inst_chunks) < 4:
+        return None
+    # Rejoin everything between the timestamp (index 1) and the uuid (last),
+    # preserving hyphenated workflow IDs intact.
+    return "_".join(inst_chunks[2:-1])
+
+
+# DEPRECATED — T4 state-blob migration (bead hermes-teams-qxb5).
+# NodeStatus is being replaced by a derived node_phase() value computed from the
+# card's actual status on the board (the ground truth) rather than a monotonic
+# local flag. This class is retained as a backwards-compat shim for one release
+# cycle so existing test modules and call sites keep importing it without
+# modification. Do NOT add new usages; new code should read phase from the
+# board. Scheduled for removal in T5's contract phase.
 class NodeStatus(str, Enum):
     PENDING = "pending"
     DISPATCHED = "dispatched"
@@ -83,6 +131,191 @@ class WorkflowInstance:
         return ctx
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# T5: Stateless tick — derived node phase + activation rule (pure functions).
+# These replace the monotonic NodeStatus with a value DERIVED from the state
+# blob every tick. See DESIGN-stateless-graph.md §Derived Node Phase, §Activation
+# Rule. Kept module-level so they are unit-testable with no Engine instance.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Node phases (the derived replacement for NodeStatus).
+PHASE_PENDING = "pending"
+PHASE_RUNNING = "running"
+PHASE_DONE = "done"
+PHASE_FAILED = "failed"
+PHASE_SKIPPED = "skipped"
+_TERMINAL_PHASES = frozenset({PHASE_DONE, PHASE_FAILED, PHASE_SKIPPED})
+
+
+def node_phase(node: Node, node_state: dict) -> str:
+    """Derive a node's phase purely from its state-blob entry. Never persisted.
+
+    Returns one of: ``'pending' | 'running' | 'done' | 'failed' | 'skipped'``.
+
+    Terminal flags (``skipped`` / ``failed``) written by pass 3 are checked
+    FIRST — they override any card/child state. Handles all node types:
+    task, command, wait, subworkflow, and the foreach variants.
+
+    This is the core of the stateless model: a task card flipping done→todo on
+    the board naturally transitions the node from ``done`` back to ``running``
+    / ``pending`` as the graph walk re-evaluates. No frozen states.
+    """
+    # Terminal flags written by pass 3 (skip propagation, validation failure).
+    # MUST be checked first — they override card/child state.
+    if node_state.get("skipped"):
+        return PHASE_SKIPPED
+    if node_state.get("failed"):
+        return PHASE_FAILED
+
+    # command/wait: check the explicit ``done`` flag set when they complete.
+    if node_state.get("done"):
+        return PHASE_DONE
+    if node.type in ("command", "wait"):
+        return PHASE_PENDING
+
+    # subworkflow (single child or foreach-subworkflow): check child completion.
+    if node.type == "subworkflow" or (node.foreach and node.type == "subworkflow"):
+        if node_state.get("done"):
+            return PHASE_DONE
+        if node_state.get("child_instance_id") or node_state.get("child_instance_ids"):
+            return PHASE_RUNNING
+        return PHASE_PENDING
+
+    # foreach task (N cards): check ALL card statuses.
+    if node.foreach and node.type == "task":
+        statuses = node_state.get("card_statuses", [])
+        if statuses and all(s in ("done", "archived") for s in statuses):
+            return PHASE_DONE
+        if node_state.get("cards"):
+            return PHASE_RUNNING
+        return PHASE_PENDING
+
+    # task (single card): phase follows the card's actual board status.
+    card_status = node_state.get("card_status", "")
+    if card_status in ("done", "archived"):
+        return PHASE_DONE
+    if card_status == "blocked":
+        return PHASE_RUNNING  # blocked is a form of in-flight
+    if card_status in ("todo", "ready", "running"):
+        return PHASE_RUNNING
+    if node_state.get("card_id"):
+        return PHASE_RUNNING
+
+    # No card yet — not yet dispatched.
+    return PHASE_PENDING
+
+
+def _incoming_edges(wf: Workflow, node_id: str) -> list[Edge]:
+    """All edges pointing TO node_id. Falls back to implicit depends_on edges
+    when the template has no explicit edges."""
+    if wf.edges:
+        return [e for e in wf.edges if e.to_node == node_id]
+    # Implicit edges from depends_on (unconditional) + node.condition (conditional).
+    target = wf.get_node(node_id)
+    cond = target.condition if target else None
+    implicit: list[Edge] = []
+    if target:
+        for dep in target.depends_on:
+            implicit.append(Edge(from_node=dep, to_node=node_id,
+                                 condition=cond))  # condition attaches to the edge
+    return implicit
+
+
+def _phase_of(wf: Workflow, node_id: str, state_nodes: dict[str, dict],
+              ctx: dict | None = None) -> str:
+    """node_phase() wrapper that tolerates an unknown/removed source node.
+
+    A source that no longer exists in the template (stale state, template edit)
+    derives to ``skipped`` — it can never fire, so it counts as terminal-but-
+    not-firing for the activation + dead-branch rules.
+    """
+    node = wf.get_node(node_id)
+    if node is None:
+        return PHASE_SKIPPED
+    return node_phase(node, state_nodes.get(node_id, {}))
+
+
+def activation_rule_satisfied(
+    wf: Workflow, node_id: str, state_nodes: dict[str, dict], ctx: dict
+) -> bool:
+    """Port of runtime.py:796-863 (AND/OR edge semantics) for the stateless model.
+
+    A node N is dispatchable when, over its set of incoming edges:
+      Let U = unconditional incoming edges (no condition)
+      Let C = conditional incoming edges (has condition)
+
+      U_sat = every e in U has source phase == 'done'   (AND semantics)
+      C_sat = some e in C has source phase == 'done'
+              AND evaluate(e.condition, ctx) is True    (OR semantics)
+
+      Dispatchable iff U_sat AND (C_sat OR C is empty)
+
+    If both U and C are empty → entry node, always dispatchable.
+    Sources that are skipped/failed are treated as terminal-but-not-firing.
+    """
+    incoming = _incoming_edges(wf, node_id)
+
+    # Back-edge handling: if the ONLY incoming edges are back-edges from nodes
+    # that haven't completed yet (iteration 0), treat this as an entry node.
+    # Back-edges can't fire until the source completes at least once — so on
+    # the first iteration they shouldn't block dispatch.
+    if incoming and all(e.is_back_edge for e in incoming):
+        sources_run = any(
+            _phase_of(wf, e.from_node, state_nodes) in (PHASE_DONE, PHASE_RUNNING, PHASE_FAILED)
+            for e in incoming
+        )
+        if not sources_run:
+            incoming = []  # treat as entry node on first iteration
+
+    if not incoming:
+        # Entry node. In the implicit-edge model, an entry node may still carry
+        # a self-gating ``condition`` (e.g. only run when a trigger flag is set).
+        # The legacy engine evaluated node.condition for dep-less nodes too, so
+        # we preserve that: a false condition → not dispatchable (and the dead-
+        # branch rule will skip it once no source can ever satisfy it).
+        node = wf.get_node(node_id)
+        if node and node.condition and not evaluate_condition(node.condition, ctx):
+            return False
+        return True  # entry node, no condition or condition passes
+
+    unconditional = [e for e in incoming if not e.condition]
+    conditional = [e for e in incoming if e.condition]
+
+    # U_sat: every unconditional source must be done. Skipped/failed sources
+    # don't satisfy the dependency (they didn't produce output).
+    u_sat = True
+    for edge in unconditional:
+        if _phase_of(wf, edge.from_node, state_nodes, ctx) != PHASE_DONE:
+            u_sat = False
+            break
+
+    # C_sat: at least one conditional source done AND its condition passes.
+    c_sat = False
+    for edge in conditional:
+        if _phase_of(wf, edge.from_node, state_nodes, ctx) == PHASE_DONE:
+            if edge.condition and evaluate_condition(edge.condition, ctx):
+                c_sat = True
+                break
+
+    return u_sat and (c_sat or not conditional)
+
+
+def all_incoming_terminal_and_none_fired(
+    wf: Workflow, node_id: str, state_nodes: dict[str, dict], ctx: dict
+) -> bool:
+    """Dead-branch detection: every incoming source is terminal (done/failed/
+    skipped) but none activated this node. Returns True → the node should be
+    SKIPPED so skip propagation continues downstream."""
+    incoming = _incoming_edges(wf, node_id)
+    if not incoming:
+        return False  # entry node — never skipped
+    for edge in incoming:
+        if _phase_of(wf, edge.from_node, state_nodes, ctx) not in _TERMINAL_PHASES:
+            return False  # something still pending/running
+    # All sources terminal but none fired → dead branch.
+    return True
+
+
 def _db_connect(db_path: Path) -> sqlite3.Connection:
     """Connect with WAL mode and busy timeout for concurrent access."""
     conn = sqlite3.connect(str(db_path), timeout=30.0)
@@ -116,7 +349,12 @@ class StateDB:
                 created_at INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
                 completed_at INTEGER,
-                node_ids TEXT NOT NULL DEFAULT '[]'
+                node_ids TEXT NOT NULL DEFAULT '[]',
+                -- T4 state-blob migration (expand phase): denormalized JSON
+                -- snapshot of node states. Old code path still uses the
+                -- node_states table; new code path (T5) reads this blob.
+                state TEXT NOT NULL DEFAULT '{}',
+                version INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS node_states (
@@ -167,6 +405,11 @@ class StateDB:
         for col, ddl in [
             ("completed_at", "ALTER TABLE workflow_instances ADD COLUMN completed_at INTEGER"),
             ("node_ids", "ALTER TABLE workflow_instances ADD COLUMN node_ids TEXT NOT NULL DEFAULT '[]'"),
+            # T4 state-blob migration (expand phase). Existing instances are
+            # backfilled to '{}' by the default; active instances get real
+            # blobs via backfill_state_blob() / migrate_to_state_blob.py.
+            ("state", "ALTER TABLE workflow_instances ADD COLUMN state TEXT NOT NULL DEFAULT '{}'"),
+            ("version", "ALTER TABLE workflow_instances ADD COLUMN version INTEGER NOT NULL DEFAULT 0"),
         ]:
             try:
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(workflow_instances)").fetchall()}
@@ -366,6 +609,182 @@ class StateDB:
         conn.close()
         return instances
 
+    # ─── T4 state-blob helpers (scaffolding for T5) ───────────────────────
+    # These are NOT called by the tick loop yet. The old node_states code path
+    # remains the source of truth until T5's contract phase swaps over. These
+    # helpers exist now so the migration can backfill the blob and so T5 can
+    # adopt them without touching StateDB's schema again.
+
+    def load_state(self, instance_id: str) -> dict:
+        """Read the state-blob and its version for an instance.
+
+        Returns a dict with two keys:
+          - ``state``: the parsed JSON blob (``{}`` if the instance has no blob
+            yet, e.g. before backfill).
+          - ``version``: the optimistic-concurrency version counter.
+        Returns ``{"state": {}, "version": 0}`` if the instance does not exist.
+        """
+        self._ensure_schema()
+        conn = _db_connect(self.db_path)
+        try:
+            row = conn.execute(
+                "SELECT state, version FROM workflow_instances WHERE instance_id = ?",
+                (instance_id,),
+            ).fetchone()
+        except sqlite3.OperationalError as e:
+            log.warning("load_state failed: %s", e)
+            conn.close()
+            return {"state": {}, "version": 0}
+        conn.close()
+        if row is None:
+            return {"state": {}, "version": 0}
+        raw_state = row["state"] if "state" in row.keys() else "{}"
+        version = row["version"] if "version" in row.keys() else 0
+        try:
+            state = json.loads(raw_state) if raw_state else {}
+        except (json.JSONDecodeError, TypeError):
+            log.warning("load_state: corrupt state blob for %s, returning {}", instance_id)
+            state = {}
+        return {"state": state, "version": version or 0}
+
+    def save_state(self, instance_id: str, state_dict: dict, expected_version: int) -> bool:
+        """Optimistically write the state blob, bumping the version counter.
+
+        Uses ``expected_version`` for optimistic concurrency: the UPDATE only
+        succeeds if the row's current ``version`` equals ``expected_version``.
+        Returns ``True`` on success (exactly one row updated), ``False`` on a
+        version conflict or if the instance does not exist. Callers that get
+        ``False`` should re-``load_state``, merge, and retry.
+        """
+        self._ensure_schema()
+        blob = json.dumps(state_dict)
+        conn = _db_connect(self.db_path)
+        try:
+            cur = conn.execute(
+                """UPDATE workflow_instances
+                   SET state = ?, version = version + 1
+                   WHERE instance_id = ? AND version = ?""",
+                (blob, instance_id, expected_version),
+            )
+            conn.commit()
+            # rowcount == 1 means version matched and the row was updated;
+            # rowcount == 0 means either the version conflicted or the
+            # instance does not exist — either way the caller must retry.
+            return cur.rowcount == 1
+        except sqlite3.OperationalError as e:
+            log.warning("save_state failed: %s", e)
+            return False
+        finally:
+            conn.close()
+
+    def backfill_state_blob(self) -> dict:
+        """One-time migration: populate ``state`` blobs from ``node_states``.
+
+        For each active workflow instance, read its ``node_states`` rows and
+        construct a JSON blob of the form::
+
+            {
+              node_id: {
+                "card_id": <str|null>,
+                "card_status": <status looked up from the board, or None>,
+                "output": <parsed output dict>,
+                "iteration": 0,
+                "_legacy_status": <the old node_states.status value>,
+              },
+              ...
+            }
+
+        then UPDATE the instance row with the blob (version stays at 0). The
+        ``node_states`` table is left intact so old code keeps working.
+
+        This is idempotent: running it twice rewrites the same blobs. Returns a
+        stats dict ``{"migrated": N, "skipped": N, "errors": N}``.
+        """
+        self._ensure_schema()
+        # Local import to avoid a hard dependency cycle at module load — the
+        # board lookup is only needed during migration, not on the hot path.
+        from .kanban_adapter import get_card
+
+        migrated = 0
+        skipped = 0
+        errors = 0
+
+        conn = _db_connect(self.db_path)
+        try:
+            instances = conn.execute(
+                "SELECT instance_id, board FROM workflow_instances WHERE status = 'active'"
+            ).fetchall()
+            for inst in instances:
+                instance_id = inst["instance_id"]
+                board = inst["board"]
+                try:
+                    ns_rows = conn.execute(
+                        "SELECT node_id, status, card_id, output "
+                        "FROM node_states WHERE instance_id = ?",
+                        (instance_id,),
+                    ).fetchall()
+                except sqlite3.OperationalError as e:
+                    log.warning("backfill: cannot read node_states for %s: %s", instance_id, e)
+                    errors += 1
+                    continue
+
+                if not ns_rows:
+                    skipped += 1
+                    continue
+
+                blob: dict[str, dict] = {}
+                for ns_row in ns_rows:
+                    node_id = ns_row["node_id"]
+                    card_id = ns_row["card_id"]
+                    # Parse the stored output defensively — a corrupt row must
+                    # not abort the whole migration.
+                    try:
+                        output = json.loads(ns_row["output"]) if ns_row["output"] else {}
+                    except (json.JSONDecodeError, TypeError):
+                        log.warning(
+                            "backfill: corrupt output for %s/%s, using {}",
+                            instance_id, node_id,
+                        )
+                        output = {}
+
+                    # card_status is looked up from the board (ground truth).
+                    card_status = None
+                    if card_id:
+                        try:
+                            card = get_card(board, card_id)
+                            card_status = card.status if card else None
+                        except Exception as e:
+                            log.warning(
+                                "backfill: card lookup failed for %s/%s: %s",
+                                instance_id, node_id, e,
+                            )
+
+                    blob[node_id] = {
+                        "card_id": card_id,
+                        "card_status": card_status,
+                        "output": output,
+                        "iteration": 0,
+                        "_legacy_status": ns_row["status"],
+                    }
+
+                conn.execute(
+                    "UPDATE workflow_instances SET state = ? WHERE instance_id = ?",
+                    (json.dumps(blob), instance_id),
+                )
+                migrated += 1
+            conn.commit()
+        except sqlite3.OperationalError as e:
+            log.error("backfill_state_blob failed: %s", e)
+            errors += 1
+        finally:
+            conn.close()
+
+        log.info(
+            "backfill_state_blob: migrated %d instance(s), skipped %d, errors %d",
+            migrated, skipped, errors,
+        )
+        return {"migrated": migrated, "skipped": skipped, "errors": errors}
+
     def update_node_state(self, instance_id: str, node_id: str, status: NodeStatus,
                           card_id: str | None = None, output: dict | None = None):
         self._ensure_schema()
@@ -554,9 +973,11 @@ class Engine:
                     f"{gc['trigger_watermark']} watermarks)"
                 )
 
-            # 1. Check completions on active instances
+            # 1. Advance active instances via the stateless 3-pass tick.
+            #    Instances created by the legacy path (pre-T5) are migrated on
+            #    first contact: their node_states rows are folded into the blob.
             for inst in self.state.load_active_instances():
-                actions += self._check_instance(inst)
+                actions += self._tick_instance(inst)
 
             # 2. Check triggers on all boards
             actions += self._check_triggers()
@@ -573,6 +994,755 @@ class Engine:
                     pass
                 lock_fd.close()
             self._tick_lock.release()
+
+    def _tick_instance(self, inst: WorkflowInstance) -> list[str]:
+        """T5 stateless tick: SYNC → RESET → ACTIVATE+DISPATCH (3 passes).
+
+        Replaces the monotonic node-status model (_check_instance). Reads the
+        instance's state blob via load_state, walks the graph template against
+        it, and persists incrementally via save_state (optimistic versioning).
+
+        The 8 dispatch shapes are reused from the legacy methods — they now
+        record their results (card_id / outputs / done flags) into the blob
+        instead of the node_states table.
+        """
+        actions: list[str] = []
+
+        # ZOMBIE GUARD — preserved (reads completed_at DB column).
+        if inst.completed_at is not None:
+            actions.append(
+                f"SKIP zombie instance {inst.instance_id}: previously completed "
+                f"at {inst.completed_at}, will not re-dispatch (reactivate detected)"
+            )
+            self.state.complete_instance(inst.instance_id)
+            return actions
+
+        # DELETED BOARD GUARD — preserved.
+        if inst.board and not board_db_path(inst.board).exists():
+            actions.append(
+                f"WARNING instance {inst.instance_id}: board '{inst.board}' not "
+                f"found (missing) — marking instance complete to stop zombie cycling"
+            )
+            self.state.complete_instance(inst.instance_id)
+            return actions
+
+        wf = self.store.load(inst.workflow_id)
+        if not wf:
+            actions.append(f"SKIP instance {inst.instance_id}: template {inst.workflow_id} not found")
+            return actions
+
+        # Load the state blob (with optimistic version). Legacy instances
+        # (created pre-T5) have an empty blob — fold their node_states in.
+        blob_holder = self.state.load_state(inst.instance_id)
+        state_nodes: dict[str, dict] = blob_holder["state"]
+        version = blob_holder["version"]
+        if not state_nodes:
+            state_nodes = self._migrate_legacy_node_states(inst, wf)
+            # Persist the migrated blob so subsequent ticks skip this step.
+            if self.state.save_state(inst.instance_id, state_nodes, version):
+                version += 1
+
+        # Ensure every template node has a state entry (lazily created).
+        for node in wf.nodes:
+            state_nodes.setdefault(node.id, {})
+
+        # ─── PASS 1: SYNC (read board truth into state) ──────────────────
+        actions += self._sync_pass(inst, wf, state_nodes)
+        # Persist any sync mutations (card_status / output reads).
+        version, ok = self._persist(inst.instance_id, state_nodes, version)
+        if not ok:
+            return actions  # version conflict — abort tick
+
+        # ─── PASS 2: RESET (handle back-edges) ───────────────────────────
+        ctx = self._build_ctx(inst, state_nodes)
+        self._reset_pass(inst, wf, state_nodes, ctx)
+        version, ok = self._persist(inst.instance_id, state_nodes, version)
+        if not ok:
+            return actions  # version conflict — abort tick
+
+        # ─── PASS 3: ACTIVATE + DISPATCH ─────────────────────────────────
+        # Rebuild ctx after resets so dispatch sees the post-reset state.
+        ctx = self._build_ctx(inst, state_nodes)
+        actions += self._activate_dispatch_pass(inst, wf, state_nodes, ctx, version)
+
+        # ─── Completion check (after pass 3) ─────────────────────────────
+        if self._check_completion(inst, wf, state_nodes):
+            self.state.complete_instance(inst.instance_id)
+            actions.append(f"WORKFLOW COMPLETE: {inst.workflow_id} ({inst.instance_id})")
+            self.state.log_event("INFO", "workflow_completed",
+                f"Workflow {inst.workflow_id} completed",
+                instance_id=inst.instance_id, workflow_id=inst.workflow_id, board=inst.board)
+
+        # Log all actions from this tick.
+        self._log_actions(actions, inst)
+        return actions
+
+    # ── helpers for the stateless tick ───────────────────────────────────
+
+    def _migrate_legacy_node_states(self, inst: WorkflowInstance, wf: Workflow) -> dict[str, dict]:
+        """Fold a legacy instance's node_states rows into a state blob.
+
+        One-time migration when a pre-T5 instance is first seen by the new
+        tick. Maps (card_id, status, output) → blob shape. ``card_status`` is
+        read from the board when possible (the ground truth).
+        """
+        blob: dict[str, dict] = {}
+        for node in wf.nodes:
+            ns = inst.node_states.get(node.id)
+            if ns is None:
+                blob[node.id] = {}
+                continue
+            card_status = ""
+            if ns.card_id:
+                try:
+                    card = get_card(inst.board, ns.card_id) if inst.board else None
+                    card_status = card.status if card else ""
+                except Exception:
+                    card_status = ""
+            entry: dict = {
+                "card_id": ns.card_id,
+                "card_status": card_status,
+                "output": dict(ns.output or {}),
+                "iteration": 0,
+            }
+            # Translate the legacy monotonic status into the derived model.
+            if ns.status == NodeStatus.DONE:
+                entry["card_status"] = entry["card_status"] or "done"
+            elif ns.status == NodeStatus.FAILED:
+                entry["failed"] = True
+            elif ns.status == NodeStatus.SKIPPED:
+                entry["skipped"] = True
+            blob[node.id] = entry
+        return blob
+
+    def _build_ctx(self, inst: WorkflowInstance, state_nodes: dict[str, dict]) -> dict:
+        """Build the variable context from trigger_context + node outputs in the blob."""
+        ctx: dict = {}
+        for k, v in inst.trigger_context.items():
+            ctx[f"trigger.{k}"] = v
+        for node_id, ns in state_nodes.items():
+            output = ns.get("output") or {}
+            if isinstance(output, dict):
+                for k, v in output.items():
+                    ctx[f"nodes.{node_id}.output.{k}"] = v
+            # Expose the node's iteration counter so back-edge conditions can
+            # gate on it (e.g. "${nodes.build.iteration} < 3"). Iteration 0 is
+            # the first run; it resets/bumps on each back-edge reset.
+            ctx[f"nodes.{node_id}.iteration"] = ns.get("iteration", 0)
+        return ctx
+
+    @staticmethod
+    def _iter_suffix(iteration: int) -> str:
+        """The idempotency-key fragment for a node's iteration.
+
+        Iteration 0 (the first run) emits an EMPTY suffix so the key stays
+        backwards-compatible with existing in-flight DAG instances
+        (``wf:<inst>:<node>`` unchanged). Iteration 1+ emits ``:iter<N>``
+        which must precede any item-specific suffix (foreach index, chain
+        child, subworkflow child) per DESIGN §Idempotency.
+        """
+        return f":iter{iteration}" if iteration and iteration > 0 else ""
+
+    def _persist(self, instance_id: str, state_nodes: dict[str, dict],
+                 version: int) -> tuple[int, bool]:
+        """Incremental optimistic save. Returns (new_version, success).
+        On conflict returns (same_version, False) — caller should abort."""
+        if self.state.save_state(instance_id, state_nodes, version):
+            return version + 1, True
+        return version, False
+
+    def _sync_pass(self, inst: WorkflowInstance, wf: Workflow,
+                   state_nodes: dict[str, dict]) -> list[str]:
+        """PASS 1 SYNC: read board truth into state. No decisions, no dispatch.
+
+        For each task node with a card_id, read the card from the board and
+        update card_status. When a card is done/archived AND its output hasn't
+        been read yet, read + validate the metadata. Foreach/subworkflow nodes
+        sync their child statuses here too.
+        """
+        actions: list[str] = []
+        valid_ids = {n.id for n in wf.nodes}
+
+        # Prune stale nodes (template edited to remove a node).
+        for nid in list(state_nodes.keys()):
+            if nid not in valid_ids:
+                log.warning("Pruning stale node '%s' from instance %s state", nid, inst.instance_id)
+                del state_nodes[nid]
+
+        for node in wf.nodes:
+            ns = state_nodes.get(node.id, {})
+            if ns.get("skipped") or ns.get("failed"):
+                continue  # terminal flag set by pass 3 — don't re-sync
+
+            # foreach task: sync ALL card statuses, aggregate when all done.
+            if node.foreach and node.type == "task":
+                self._sync_foreach_task(inst, node, ns)
+                continue
+
+            # foreach subworkflow: sync child statuses.
+            if node.foreach and node.type == "subworkflow":
+                self._sync_foreach_subworkflow(inst, node, ns)
+                continue
+
+            # single subworkflow: sync child completion + output mapping.
+            if node.type == "subworkflow":
+                self._sync_subworkflow(inst, node, ns)
+                continue
+
+            # command/wait: synchronous, no board race — skip sync.
+            if node.type in ("command", "wait"):
+                continue
+
+            # task (single card): read card status from board.
+            card_id = ns.get("card_id")
+            if not card_id or not inst.board:
+                continue
+            card = get_card(inst.board, card_id)
+            if not card:
+                actions.append(f"WARNING node {node.id}: card {card_id} not found on board (dangling)")
+                continue
+            prev_status = ns.get("card_status")
+            ns["card_status"] = card.status
+
+            # When the card reaches done/archived, read + validate output once.
+            if card.status in ("done", "archived") and not ns.get("output"):
+                meta = get_card_metadata(inst.board, card_id)
+                output = meta.get("metadata", {})
+                if node.output and node.output.schema:
+                    valid, err = validate_output(inst.board, card_id, node.output.schema)
+                    if not valid:
+                        log.warning("VALIDATION FAILED node %s (card %s): %s", node.id, card_id, err)
+                        ns["failed"] = True
+                        ns["output"] = {"_validation_error": err}
+                        actions.append(f"VALIDATION FAILED node {node.id} (card {card_id}) on {inst.board}: {err}")
+                        continue
+                ns["output"] = output
+                # Preserve the legacy "DONE node X" action string so external
+                # observers (tests, event-log consumers) see identical output.
+                actions.append(f"DONE node {node.id} (card {card_id}) on {inst.board}")
+            elif prev_status != card.status:
+                actions.append(f"SYNC node {node.id} card {card_id}: {prev_status}→{card.status}")
+        return actions
+
+    def _sync_foreach_task(self, inst: WorkflowInstance, node: Node, ns: dict):
+        """Sync all foreach card statuses from the board; aggregate when all done."""
+        card_ids = ns.get("cards", []) or []
+        if not card_ids:
+            return
+        statuses: list[str] = []
+        results: list[dict] = []
+        for cid in card_ids:
+            card = get_card(inst.board, cid) if inst.board else None
+            statuses.append(card.status if card else "")
+            if card and card.status in ("done", "archived"):
+                meta = get_card_metadata(inst.board, cid) if inst.board else {}
+                results.append(meta.get("metadata", {}))
+        ns["card_statuses"] = statuses
+        if statuses and all(s in ("done", "archived") for s in statuses):
+            # All done — store the aggregate output once.
+            if not ns.get("output") or ns.get("output", {}).get("results") != results:
+                ns["output"] = {"cards": card_ids, "results": results}
+
+    def _sync_subworkflow(self, inst: WorkflowInstance, node: Node, ns: dict):
+        """Sync a single subworkflow child's completion into the node state.
+
+        Reads the child instance's status + mapped outputs from the child's
+        state blob (cross-instance read, DESIGN §Cross-Instance Reads).
+        """
+        child_id = ns.get("child_instance_id")
+        if not child_id or ns.get("done"):
+            return
+        child_status = self._read_instance_status(child_id)
+        if child_status != "completed":
+            return
+        mapped = self._map_child_outputs(inst, node, child_id)
+        # Hard output validation against the parent node's output schema.
+        if node.output and node.output.schema:
+            valid, err = validate_against_schema(mapped, node.output.schema)
+            if not valid:
+                log.warning("VALIDATION FAILED subworkflow node %s: %s", node.id, err)
+                ns["failed"] = True
+                ns["output"] = mapped
+                ns["done"] = False
+                return
+        ns["done"] = True
+        ns["outputs"] = mapped
+        ns["output"] = mapped
+
+    def _sync_foreach_subworkflow(self, inst: WorkflowInstance, node: Node, ns: dict):
+        """Sync all foreach-subworkflow child statuses; aggregate when all done."""
+        child_ids = ns.get("child_instance_ids", []) or []
+        if not child_ids:
+            return
+        results: list[dict] = []
+        all_done = True
+        for cid in child_ids:
+            child_status = self._read_instance_status(cid)
+            if child_status != "completed":
+                all_done = False
+                break
+            child_outputs = self._read_child_outputs(cid)
+            results.append({"instance_id": cid, "outputs": child_outputs})
+        if all_done:
+            ns["done"] = True
+            ns["results"] = results
+            ns["output"] = {"child_instance_ids": child_ids, "results": results}
+
+    def _reset_pass(self, inst: WorkflowInstance, wf: Workflow,
+                    state_nodes: dict[str, dict], ctx: dict):
+        """PASS 2 RESET: compute back-edge resets from a SNAPSHOT, then apply.
+
+        A back-edge (from, to) triggers a reset of `to` when:
+          - node_phase(from) == 'done'
+          - the back-edge condition evaluates true (or has no condition)
+          - node_phase(to) is terminal (done/failed)
+        Reset = archive current state to iterations[], bump iteration, clear
+        card_id/card_status (keep last-known-good output).
+        """
+        if not wf.edges:
+            return  # no explicit edges → no back-edges
+        back_edges = [e for e in wf.edges if e.is_back_edge]
+        if not back_edges:
+            return
+
+        # Compute the reset set from a SNAPSHOT (don't mutate during compute).
+        reset_targets: dict[str, str] = {}  # node_id → source_node_id (for clearing)
+        for edge in back_edges:
+            from_phase = _phase_of(wf, edge.from_node, state_nodes, ctx)
+            if from_phase != PHASE_DONE:
+                continue
+            if edge.condition and not evaluate_condition(edge.condition, ctx):
+                continue
+            to_phase = _phase_of(wf, edge.to_node, state_nodes, ctx)
+            if to_phase in (PHASE_DONE, PHASE_FAILED):
+                reset_targets[edge.to_node] = edge.from_node
+
+        # Apply resets.
+        for node_id, source_id in reset_targets.items():
+            ns = state_nodes.get(node_id, {})
+            iteration = ns.get("iteration", 0)
+            # Enforce an explicit max_iterations cap if the edge declares one.
+            cap = self._back_edge_cap(wf, node_id)
+            if cap is not None and iteration >= cap:
+                continue  # cap reached — don't reset again
+            # Archive current state to the iterations[] audit trail (cap 10).
+            iterations = ns.get("iterations", [])
+            iterations.append({
+                "iteration": iteration,
+                "card_id": ns.get("card_id"),
+                "card_status": ns.get("card_status"),
+                "output": ns.get("output"),
+            })
+            if len(iterations) > 10:
+                iterations = iterations[-10:]
+            ns["iterations"] = iterations
+            ns["card_id"] = None
+            ns["card_status"] = ""
+            ns["iteration"] = iteration + 1
+            # Clear terminal flags so the node becomes dispatchable again.
+            ns.pop("done", None)
+            ns.pop("failed", None)
+            ns.pop("skipped", None)
+            # Keep `output` pointing at last-known-good (don't wipe).
+
+            # Also clear the SOURCE node's done state and output so the
+            # back-edge doesn't re-fire with stale output on the next tick.
+            # The source needs to re-run (it's part of the same cycle).
+            source_ns = state_nodes.get(source_id, {})
+            source_ns.pop("done", None)
+            source_ns.pop("failed", None)
+            source_ns.pop("skipped", None)
+            source_ns["card_id"] = None
+            source_ns["card_status"] = ""
+            source_ns["output"] = {}  # clear stale output (e.g., FAIL verdict)
+            # Bump source iteration so its idempotency key changes → fresh card
+            source_ns["iteration"] = source_ns.get("iteration", 0) + 1
+
+    @staticmethod
+    def _back_edge_cap(wf: Workflow, to_node_id: str) -> int | None:
+        """The max_iterations cap on the back-edge pointing at to_node_id, if any."""
+        for e in wf.edges:
+            if e.is_back_edge and e.to_node == to_node_id and e.max_iterations is not None:
+                return e.max_iterations
+        return None
+
+    def _activate_dispatch_pass(self, inst: WorkflowInstance, wf: Workflow,
+                                state_nodes: dict[str, dict], ctx: dict,
+                                version: int) -> list[str]:
+        """PASS 3: walk the graph, evaluate activation, dispatch pending nodes.
+
+        For each node:
+          phase = node_phase(...)
+          terminal/running → skip
+          pending → check activation rule; if not satisfied, maybe mark skipped
+                    (dead branch); if satisfied, validate inputs then dispatch.
+        State is persisted AFTER each dispatch (incremental).
+        """
+        actions: list[str] = []
+        cur_version = version
+
+        for node in wf.nodes:
+            ns = state_nodes.setdefault(node.id, {})
+            phase = node_phase(node, ns)
+
+            if phase in _TERMINAL_PHASES or phase == PHASE_RUNNING:
+                continue
+
+            # phase == pending → check if it should dispatch.
+            if not activation_rule_satisfied(wf, node.id, state_nodes, ctx):
+                if all_incoming_terminal_and_none_fired(wf, node.id, state_nodes, ctx):
+                    ns["skipped"] = True
+                    actions.append(f"SKIPPED node {node.id} on {inst.board} (dead branch)")
+                    cur_version, _ok = self._persist(inst.instance_id, state_nodes, cur_version)
+                    ctx = self._build_ctx(inst, state_nodes)  # propagate skip
+                    continue
+                # Entry node with a false condition: leave pending (may dispatch
+                # later when conditions change). Removed P7 self-skip scope creep.
+                continue
+
+            # Input schema validation (fail fast).
+            missing = self._check_required_inputs(node, ctx)
+            if missing:
+                log.warning("INPUT VALIDATION FAILED node %s on %s: missing %s",
+                            node.id, inst.board, missing)
+                ns["failed"] = True
+                ns["output"] = {"_validation_error": f"missing required inputs: {missing}"}
+                actions.append(f"INPUT VALIDATION FAILED node {node.id} on {inst.board}: missing {missing}")
+                cur_version, _ok = self._persist(inst.instance_id, state_nodes, cur_version)
+                ctx = self._build_ctx(inst, state_nodes)
+                continue
+
+            # Dispatch by type (9 shapes) — records into the blob.
+            ok, msg, action = self._dispatch_by_type(inst, node, ns, ctx)
+            if action:
+                actions.append(action)
+            cur_version, _ok = self._persist(inst.instance_id, state_nodes, cur_version)
+            if not _ok:
+                log.warning("version conflict during dispatch — aborting tick for %s", inst.instance_id)
+                break
+            # Rebuild ctx so a synchronous command/wait output is visible to
+            # the next node evaluated in the same pass.
+            if ok and node.type in ("command", "wait"):
+                ctx = self._build_ctx(inst, state_nodes)
+        return actions
+
+    @staticmethod
+    def _check_required_inputs(node: Node, ctx: dict) -> list[str]:
+        """Return the list of required input fields that can't be resolved from ctx."""
+        if not node.input or not node.input.schema:
+            return []
+        missing: list[str] = []
+        for req_var in node.input.schema.get("required", []):
+            source_expr = node.input.sources.get(req_var, "")
+            if source_expr:
+                source_key = strip_template_var(source_expr)
+                if source_key not in ctx:
+                    missing.append(req_var)
+            elif req_var not in ctx and f"trigger.{req_var}" not in ctx:
+                missing.append(req_var)
+        return missing
+
+    def _dispatch_by_type(self, inst: WorkflowInstance, node: Node,
+                          ns: dict, ctx: dict) -> tuple[bool, str, str]:
+        """Dispatch a node by type, recording the result into the state blob.
+
+        Writes dispatch results directly to the blob via
+        _update_blob_after_dispatch (no legacy mirror). Returns
+        (ok, detail, action_message).
+        """
+        board = inst.board
+
+        # foreach command: synchronous, inline.
+        if node.foreach and node.type == "command":
+            ok, msg = self._run_foreach_command(inst, node, ctx)
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
+            return ok, msg, (f"DONE node {node.id} (foreach command: {msg}) on {board}" if ok else f"FAILED foreach command node {node.id} on {board}: {msg}")
+
+        # foreach subworkflow: N child instances.
+        if node.foreach and node.type == "subworkflow":
+            ok, msg = self._dispatch_foreach_subworkflow(inst, node, ctx, ns)
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
+            return ok, msg, (f"DISPATCHED node {node.id} (foreach subworkflow: {msg}) on {board}" if ok else f"FAILED foreach subworkflow node {node.id} on {board}: {msg}")
+
+        # foreach task: N cards.
+        if node.foreach:
+            ok, msg = self._dispatch_foreach_node(inst, node, ctx, ns)
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
+            return ok, msg, (f"DISPATCHED node {node.id} (foreach: {msg} cards) on {board}" if ok else f"FAILED to dispatch foreach node {node.id} on {board}: {msg}")
+
+        # subworkflow (single child).
+        if node.type == "subworkflow":
+            ok, msg = self._dispatch_subworkflow_node(inst, node, ctx, ns)
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
+            return ok, msg, (f"DISPATCHED node {node.id} (subworkflow: {node.workflow_ref}) on {board} → child {msg}" if ok else f"FAILED to dispatch subworkflow node {node.id} on {board}: {msg}")
+
+        # command: synchronous.
+        if node.type == "command":
+            ok, msg = self._run_command_node(inst, node, ctx)
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
+            return ok, msg, (f"DONE node {node.id} (command: {msg[:80]}) on {board}" if ok else f"FAILED node {node.id} (command) on {board}: {msg[:80]}")
+
+        # wait: poll condition.
+        if node.type == "wait":
+            ok, msg = self._check_wait_node(inst, node, ctx)
+            self._update_blob_after_dispatch(inst, node, ns, ok, msg)
+            if ok:
+                return ok, msg, f"DONE node {node.id} (wait resolved: {msg[:60]}) on {board}"
+            return ok, msg, ""  # silently waiting
+
+        # task (template/delegate/chain): single card.
+        ok, msg = self._dispatch_node(inst, node, ctx, ns)
+        self._update_blob_after_dispatch(inst, node, ns, ok, msg)
+        return ok, msg, (f"DISPATCHED node {node.id} on {board} → card {msg}" if ok else f"FAILED to dispatch node {node.id} on {board}: {msg}")
+
+    def _update_blob_after_dispatch(self, inst: WorkflowInstance, node: Node,
+                                    ns: dict, ok: bool, msg: str):
+        """Write dispatch results directly to the state blob.
+
+        Replaces the old _mirror_legacy_to_blob which re-read from node_states.
+        Sets blob fields based on node type and dispatch result.
+        """
+        # wait node: ok=False means "still waiting" (not failed).
+        # Only set done when the condition resolves.
+        if node.type == "wait":
+            if ok:
+                ns["done"] = True
+                legacy = self._load_one_node_state(inst.instance_id, node.id)
+                if legacy:
+                    _, _, output = legacy
+                    if output:
+                        ns["output"] = dict(output)
+            # else: still waiting — don't set done or failed
+            return
+
+        # Transient dispatch failure (card creation error, etc.):
+        # don't mark as failed — stay pending for retry on next tick.
+        if not ok:
+            return
+        if node.type in ("command", "wait"):
+            ns["done"] = True
+            # Read the output from node_states (command runners write there).
+            legacy = self._load_one_node_state(inst.instance_id, node.id)
+            if legacy:
+                _, _, output = legacy
+                if output:
+                    ns["output"] = dict(output)
+            return
+
+        # foreach task: msg is the card count. Read card IDs from the
+        # node_states table (the foreach dispatcher writes them there).
+        if node.foreach and node.type == "task":
+            # Read card IDs from the legacy output (_foreach_cards field).
+            legacy = self._load_one_node_state(inst.instance_id, node.id)
+            if legacy:
+                _, _, output = legacy
+                cards = (output or {}).get("_foreach_cards") or []
+                if cards:
+                    ns["cards"] = cards
+                    statuses = []
+                    for cid in cards:
+                        card = get_card(inst.board, cid) if inst.board else None
+                        statuses.append(card.status if card else "")
+                    ns["card_statuses"] = statuses
+            return
+
+        # foreach subworkflow: msg is child count.
+        if node.foreach and node.type == "subworkflow":
+            legacy = self._load_one_node_state(inst.instance_id, node.id)
+            if legacy:
+                _, _, output = legacy
+                child_ids = (output or {}).get("_foreach_instances") or []
+                if child_ids:
+                    ns["child_instance_ids"] = child_ids
+            return
+
+        # single subworkflow: msg is the child instance ID.
+        if node.type == "subworkflow":
+            legacy = self._load_one_node_state(inst.instance_id, node.id)
+            if legacy:
+                _, _, output = legacy
+                child_id = (output or {}).get("_child_instance")
+                if child_id:
+                    ns["child_instance_id"] = child_id
+            elif msg:
+                ns["child_instance_id"] = msg
+            return
+
+        # task (single card): msg is the card_id.
+        if node.type == "task" and msg:
+            ns["card_id"] = msg
+            card = get_card(inst.board, msg) if inst.board else None
+            if card:
+                ns["card_status"] = card.status
+
+    def _load_one_node_state(self, instance_id: str, node_id: str) -> tuple[str | None, str, dict] | None:
+        """Read a single node_states row from the DB. Returns (card_id, status, output)."""
+        conn = _db_connect(self.state.db_path)
+        try:
+            row = conn.execute(
+                "SELECT card_id, status, output FROM node_states WHERE instance_id = ? AND node_id = ?",
+                (instance_id, node_id),
+            ).fetchone()
+            if row is None:
+                return None
+            try:
+                output = json.loads(row["output"]) if row["output"] else {}
+            except (json.JSONDecodeError, TypeError):
+                output = {}
+            return row["card_id"], row["status"], output
+        except sqlite3.OperationalError:
+            return None
+        finally:
+            conn.close()
+
+    def _check_completion(self, inst: WorkflowInstance, wf: Workflow,
+                          state_nodes: dict[str, dict]) -> bool:
+        """Completion fence: re-read board truth for exit nodes, then check
+        that all reachable exit nodes are terminal. See DESIGN §Completion."""
+        if not wf.nodes:
+            return False
+
+        ctx = self._build_ctx(inst, state_nodes)
+        # Exit nodes = nodes that nothing else depends on (no outgoing edges).
+        # For explicit edges: a node with no edge.from_node. For implicit edges:
+        # a node that no other node lists in its depends_on.
+        has_explicit = bool(wf.edges)
+        if has_explicit:
+            has_outgoing = {e.from_node for e in wf.edges}
+            exit_nodes = [n for n in wf.nodes if n.id not in has_outgoing]
+        else:
+            depended_on = {dep for n in wf.nodes for dep in n.depends_on}
+            exit_nodes = [n for n in wf.nodes if n.id not in depended_on]
+
+        # If the graph has no exit nodes, it can't meaningfully complete.
+        # (Self-deps, pure cycles, etc. — load-time validation catches most,
+        # but implicit-edge templates can sneak through.)
+        if not exit_nodes:
+            return False
+
+        # Completion fence: re-read board truth for each exit node.
+        for exit_node in exit_nodes:
+            ns = state_nodes.get(exit_node.id, {})
+            if exit_node.foreach and exit_node.type == "task":
+                for cid in ns.get("cards", []):
+                    card = get_card(inst.board, cid) if inst.board else None
+                    if not card or card.status not in ("done", "archived"):
+                        return False
+            elif exit_node.type == "subworkflow" or (exit_node.foreach and exit_node.type == "subworkflow"):
+                child_ids = ns.get("child_instance_ids") or ([ns["child_instance_id"]] if ns.get("child_instance_id") else [])
+                for cid in child_ids:
+                    if self._read_instance_status(cid) != "completed":
+                        return False
+            elif ns.get("card_id") and exit_node.type == "task":
+                card = get_card(inst.board, ns["card_id"]) if inst.board else None
+                if not card or card.status not in ("done", "archived"):
+                    return False
+
+        # All exit nodes must be terminal.
+        for exit_node in exit_nodes:
+            phase = node_phase(exit_node, state_nodes.get(exit_node.id, {}))
+            if phase not in _TERMINAL_PHASES:
+                return False
+
+        # If there are no exit nodes AND no terminal nodes yet, the graph is a
+        # pure cycle (or all-pending) — it must not complete. This catches the
+        # Reachability: ignore structurally disconnected components.
+        # Load-time validation already rejects templates with no exit nodes
+        # (unless explicit exit_condition), so the pure-cycle case is impossible.
+        reachable = self._reachable_nodes(wf, state_nodes, ctx)
+        for node in wf.nodes:
+            if node.id not in reachable:
+                continue  # orphan subgraph — doesn't block completion
+            phase = node_phase(node, state_nodes.get(node.id, {}))
+            if phase not in _TERMINAL_PHASES:
+                return False
+        return True
+
+    def _reachable_nodes(self, wf: Workflow, state_nodes: dict[str, dict],
+                         ctx: dict) -> set[str]:
+        """BFS from dispatched/done nodes following ALL edges. Uses shared helper."""
+        node_ids = {n.id for n in wf.nodes}
+        seeds = {n.id for n in wf.nodes
+                 if node_phase(n, state_nodes.get(n.id, {})) in (PHASE_DONE, PHASE_RUNNING)}
+        edges = wf.edges or [Edge(from_node=d, to_node=n.id)
+                             for n in wf.nodes for d in n.depends_on]
+        return bfs_reachable(edges, seeds, node_ids)
+
+    def _read_instance_status(self, instance_id: str) -> str:
+        """Read a workflow instance's status column (fresh, not cached)."""
+        conn = _db_connect(self.state.db_path)
+        try:
+            row = conn.execute(
+                "SELECT status FROM workflow_instances WHERE instance_id = ?",
+                (instance_id,),
+            ).fetchone()
+            return row["status"] if row else ""
+        except sqlite3.OperationalError:
+            return ""
+        finally:
+            conn.close()
+
+    def _read_child_outputs(self, child_instance_id: str) -> dict:
+        """Read a child instance's node outputs from its state blob.
+
+        DESIGN §Cross-Instance Reads: couple through the instance row, not the
+        node_states side table. Returns a flat ``nodes.<id>.output.<k>`` map.
+        """
+        holder = self.state.load_state(child_instance_id)
+        child_nodes = holder["state"]
+        outputs: dict = {}
+        for node_id, node_state in child_nodes.items():
+            output = node_state.get("output", {})
+            if isinstance(output, dict):
+                for k, v in output.items():
+                    outputs[f"nodes.{node_id}.output.{k}"] = v
+        return outputs
+
+    def _map_child_outputs(self, inst: WorkflowInstance, node: Node,
+                           child_instance_id: str) -> dict:
+        """5-step child completion: read outputs → map via output_mapping.
+
+        Preserved from the legacy _check_subworkflow_completion. Reads from the
+        child's state blob instead of node_states.
+        """
+        child_outputs = self._read_child_outputs(child_instance_id)
+        mapped: dict = {"_child_instance": child_instance_id}
+        if node.output_mapping:
+            for parent_key, child_expr in node.output_mapping.items():
+                if (isinstance(child_expr, str) and child_expr.startswith("${")
+                        and child_expr.endswith("}")):
+                    child_var = strip_template_var(child_expr)
+                    mapped[parent_key] = child_outputs.get(child_var, "")
+                else:
+                    mapped[parent_key] = child_expr
+        else:
+            # No mapping — flatten all child outputs (strip nodes.X.output.).
+            for k, v in child_outputs.items():
+                if ".output." in k:
+                    mapped[k.split(".output.", 1)[1]] = v
+        return mapped
+
+    def _log_actions(self, actions: list[str], inst: WorkflowInstance):
+        """Log each action string to the engine_events table."""
+        for action in actions:
+            level = "INFO"
+            event_type = "action"
+            if "COMPLETE" in action:
+                event_type = "workflow_completed"
+            elif "FAILED" in action:
+                level = "ERROR"
+                event_type = "node_failed"
+            elif "DISPATCHED" in action:
+                event_type = "node_dispatched"
+            elif "DONE" in action:
+                event_type = "node_done"
+            elif "SKIPPED" in action:
+                event_type = "node_skipped"
+            elif "STARTED" in action:
+                event_type = "trigger_fired"
+            self.state.log_event(level, event_type, action,
+                                 instance_id=inst.instance_id,
+                                 workflow_id=inst.workflow_id, board=inst.board)
 
     def _check_instance(self, inst: WorkflowInstance) -> list[str]:
         """Check a single workflow instance: advance nodes, handle completions."""
@@ -929,7 +2099,7 @@ class Engine:
             elif node.foreach and node.type == "subworkflow":
                 # Foreach subworkflow: spawn one child workflow instance per item.
                 # Each item runs independently through the child workflow — no barrier.
-                ok, msg = self._dispatch_foreach_subworkflow(inst, node, ctx)
+                ok, msg = self._dispatch_foreach_subworkflow(inst, node, ctx)  # legacy path, no ns
                 if ok:
                     actions.append(f"DISPATCHED node {node.id} (foreach subworkflow: {msg}) on {inst.board}")
                 else:
@@ -943,7 +2113,7 @@ class Engine:
                     actions.append(f"FAILED to dispatch foreach node {node.id} on {inst.board}: {msg}")
             elif node.type == "subworkflow":
                 # Subworkflow node: start child workflow, block until it completes.
-                ok, msg = self._dispatch_subworkflow_node(inst, node, ctx)
+                ok, msg = self._dispatch_subworkflow_node(inst, node, ctx)  # legacy path, no ns
                 if ok:
                     actions.append(f"DISPATCHED node {node.id} (subworkflow: {node.workflow_ref}) on {inst.board} → child {msg}")
                 else:
@@ -1030,7 +2200,8 @@ class Engine:
 
         return actions
 
-    def _dispatch_node(self, inst: WorkflowInstance, node: Node, ctx: dict) -> tuple[bool, str]:
+    def _dispatch_node(self, inst: WorkflowInstance, node: Node, ctx: dict,
+                       ns: dict | None = None) -> tuple[bool, str]:
         """Create a kanban card for a node. Idempotent via find_cards_by_idempotency_key.
 
         Branches on node.card_mode:
@@ -1040,9 +2211,14 @@ class Engine:
           - "chain": create a parent card + N child cards with parent-child links.
             The node body_template may contain a JSON list of child specs; each
             child card links to the parent via --parent.
+
+        ``ns`` is the node's state-blob entry; its ``iteration`` field feeds the
+        iteration-aware idempotency key (DESIGN §Idempotency). ``None`` (legacy
+        call path) is treated as iteration 0 → backwards-compatible key.
         """
         body = resolve_template(node.body_template or "", ctx)
-        idem_key = f"wf:{inst.instance_id}:{node.id}"
+        iter_suf = self._iter_suffix((ns or {}).get("iteration", 0))
+        idem_key = f"wf:{inst.instance_id}:{node.id}{iter_suf}"
 
         # Check if already created (prevents double dispatch)
         existing = find_cards_by_idempotency_key(inst.board, idem_key)
@@ -1416,7 +2592,8 @@ class Engine:
         )
         return True, parent_card_id
 
-    def _dispatch_foreach_subworkflow(self, inst: WorkflowInstance, node: Node, ctx: dict) -> tuple[bool, str]:
+    def _dispatch_foreach_subworkflow(self, inst: WorkflowInstance, node: Node, ctx: dict,
+                                      ns: dict | None = None) -> tuple[bool, str]:
         """Foreach subworkflow: spawn one child workflow instance per item.
 
         Each item gets its own independent workflow instance. When item A's
@@ -1438,10 +2615,14 @@ class Engine:
                 inst.instance_id, node.id, NodeStatus.DONE, None,
                 {"_foreach_instances": [], "results": []},
             )
-            ns = inst.node_states.get(node.id)
-            if ns:
-                ns.status = NodeStatus.DONE
-                ns.output = {"_foreach_instances": [], "results": []}
+            legacy_ns = inst.node_states.get(node.id)
+            if legacy_ns:
+                legacy_ns.status = NodeStatus.DONE
+                legacy_ns.output = {"_foreach_instances": [], "results": []}
+            # Mirror to state blob so node_phase sees it as done
+            if ns is not None:
+                ns["done"] = True
+                ns["output"] = {"_foreach_instances": [], "results": []}
             return True, "0"
 
         child_wf_id = node.workflow_ref
@@ -1474,7 +2655,7 @@ class Engine:
             child_context.setdefault("parent_node", node.id)
 
             # Idempotency: check if child already started
-            idem_key = f"wf:{inst.instance_id}:{node.id}:sw:{idx}"
+            idem_key = f"wf:{inst.instance_id}:{node.id}{self._iter_suffix((ns or {}).get('iteration', 0))}:sw:{idx}"
             existing = find_cards_by_idempotency_key(inst.board, idem_key)
             if existing:
                 # Child was tracked via idempotency key — find its instance
@@ -1510,7 +2691,8 @@ class Engine:
             ns.output = output
         return True, f"{len(child_instance_ids)} instances"
 
-    def _dispatch_foreach_node(self, inst: WorkflowInstance, node: Node, ctx: dict) -> tuple[bool, str]:
+    def _dispatch_foreach_node(self, inst: WorkflowInstance, node: Node, ctx: dict,
+                               ns: dict | None = None) -> tuple[bool, str]:
         """Dispatch a foreach node: resolve the list, create one card per item.
 
         The node's `foreach` field is a template variable like
@@ -1546,6 +2728,7 @@ class Engine:
             return True, "0"
 
         workspace = f"dir:{inst.project_dir}" if inst.project_dir else None
+        iter_suf = self._iter_suffix((ns or {}).get("iteration", 0)) if ns else ""
         card_ids: list[str] = []
 
         for idx, item in enumerate(items):
@@ -1555,7 +2738,7 @@ class Engine:
             item_ctx["item_index"] = idx
             body = resolve_template(node.body_template or "", item_ctx)
 
-            idem_key = f"wf:{inst.instance_id}:{node.id}:{idx}"
+            idem_key = f"wf:{inst.instance_id}:{node.id}{iter_suf}:{idx}"
 
             # Check if already created (idempotency across ticks)
             existing = find_cards_by_idempotency_key(inst.board, idem_key)
@@ -1604,7 +2787,8 @@ class Engine:
             ns.output = output
         return True, str(len(card_ids))
 
-    def _dispatch_subworkflow_node(self, inst: WorkflowInstance, node: Node, ctx: dict) -> tuple[bool, str]:
+    def _dispatch_subworkflow_node(self, inst: WorkflowInstance, node: Node, ctx: dict,
+                                   ns: dict | None = None) -> tuple[bool, str]:
         """Dispatch a subworkflow node: start a child workflow instance.
 
         The child runs independently (its own nodes dispatch on subsequent ticks).
@@ -1631,7 +2815,21 @@ class Engine:
         child_context.setdefault("parent_instance", inst.instance_id)
         child_context.setdefault("parent_node", node.id)
 
-        # Check if child already started (idempotency)
+        # Idempotency: iteration-aware key for subworkflow dedup
+        iter_suf = self._iter_suffix((ns or {}).get("iteration", 0))
+        idem_key = f"wf:{inst.instance_id}:{node.id}{iter_suf}"
+        existing = find_cards_by_idempotency_key(inst.board, idem_key)
+        if existing:
+            meta = get_card_metadata(inst.board, existing[0].id)
+            if meta and meta.get("metadata", {}).get("_child_instance"):
+                child_id = meta["metadata"]["_child_instance"]
+                self.state.update_node_state(
+                    inst.instance_id, node.id, NodeStatus.DISPATCHED, existing[0].id,
+                    {"_child_instance": child_id},
+                )
+                return True, child_id
+
+        # Check if child already started (legacy idempotency via node_states)
         existing_child = inst.node_states.get(node.id, NodeState("", "")).output.get("_child_instance")
         if existing_child and self._is_instance_active(existing_child):
             return True, existing_child
@@ -1780,24 +2978,26 @@ class Engine:
                         # Exception: if the card's workflow_id differs from the trigger's
                         # workflow_id AND the parent workflow has NO explicit edges, allow
                         # the trigger (backward compat for trigger-based composition).
-                        if card.idempotency_key and card.idempotency_key.startswith("wf:"):
-                            idem_parts = card.idempotency_key.split(":")
-                            if len(idem_parts) >= 2:
-                                instance_part = idem_parts[1]
-                                # Same-workflow self-trigger: always block
-                                if f"_{wf.id}_" in instance_part:
-                                    continue
-                                # Cross-workflow: block if the card's parent workflow
-                                # uses explicit edges (handles routing internally)
-                                parent_wf_id = None
-                                for chunk in instance_part.split("_"):
-                                    if chunk not in ("wf", "") and not chunk.isdigit() and len(chunk) > 3:
-                                        parent_wf_id = chunk
-                                        break
-                                if parent_wf_id:
-                                    parent_wf = self.store.load(parent_wf_id)
-                                    if parent_wf and parent_wf.edges:
-                                        continue  # parent has explicit edges — skip
+                        # Self-trigger / cross-workflow suppression.
+                        #
+                        # Engine-created cards (idempotency_key starts with
+                        # "wf:") are routed by the engine itself. We parse the
+                        # parent workflow ID deterministically (see
+                        # _extract_parent_workflow) and apply two rules:
+                        #   1. Same-workflow self-trigger → always block
+                        #      (prevents infinite trigger loops).
+                        #   2. Cross-workflow → block only when the parent
+                        #      workflow uses explicit edges (it handles the
+                        #      routing internally); otherwise allow, for
+                        #      backward-compat trigger-based composition.
+                        if card.idempotency_key:
+                            parent_wf_id = _extract_parent_workflow(card.idempotency_key)
+                            if parent_wf_id is not None:
+                                if parent_wf_id == wf.id:
+                                    continue  # same-workflow self-trigger
+                                parent_wf = self.store.load(parent_wf_id)
+                                if parent_wf and parent_wf.edges:
+                                    continue  # parent routes internally — skip
                         if self._matches_trigger(card, wf.trigger.condition):
                             trig_key = f"trig:{wf.id}:{card.id}"
 
@@ -1894,7 +3094,13 @@ class Engine:
                 continue
             conn.close()
 
-            trigger_ctx = {"bead_id": bead_id, "trigger_source": "bead_ready"}
+            trigger_ctx = {
+                "bead_id": bead_id,
+                "trigger_source": "bead_ready",
+                "title": bead.get("title", ""),
+                "description": bead.get("description", ""),
+                "labels": bead.get("labels", []),
+            }
             instance_id = self._create_instance(
                 wf, board="", project_dir=project_dir,
                 trigger_context=trigger_ctx,
@@ -1982,6 +3188,7 @@ class Engine:
             "card_id": trigger_card.id,
             "board": board,
             "assignee": trigger_card.assignee,
+            "title": trigger_card.title or "",
             **meta,
         }
 

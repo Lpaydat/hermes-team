@@ -204,9 +204,23 @@ def test_parent_completes_when_all_children_done():
     world.tick()  # child B's work completes
     actions = world.tick()  # parent detects all children done, completes
 
-    # NOW parent should complete
-    assert any("DONE" in a and "spawn" in a for a in actions), \
-        f"Parent should complete after all children done: {actions}"
+    # In the stateless engine the spawn node's completion is detected silently
+    # in the SYNC pass (all child instances → completed sets ns['done']=True),
+    # so verify spawn reached 'done' via the state snapshot rather than a
+    # dedicated "DONE spawn" action. The parent instance may already be
+    # completed by this tick, so read its blob directly by workflow_id.
+    conn = sqlite3.connect(str(world.state_db_path))
+    parent_row = conn.execute(
+        "SELECT instance_id FROM workflow_instances WHERE workflow_id = 'parent' "
+        "ORDER BY rowid DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+    parent_snapshot = {}
+    if parent_row:
+        parent_snapshot = world.engine.state.load_state(parent_row[0]).get("state", {})
+    spawn_state = parent_snapshot.get("spawn", {})
+    assert spawn_state.get("done") is True, \
+        f"Parent spawn node should be done after all children complete, got: {spawn_state}"
     assert any("WORKFLOW COMPLETE" in a for a in actions), \
         f"Parent workflow should complete: {actions}"
 

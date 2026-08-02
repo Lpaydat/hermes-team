@@ -225,6 +225,22 @@ class FakeWorld:
     def complete_card(self, card_id: str, metadata: dict | None = None, summary: str = ""):
         complete_fake_card(self.board_db, card_id, metadata, summary)
 
+    def state_snapshot(self, instance_id: str = None) -> dict:
+        """Read the state blob for an instance (or the first active one).
+        
+        Returns the nodes dict from the state blob — replaces direct
+        node_states SQL queries in tests.
+        """
+        if instance_id is None:
+            instances = self.engine.state.load_active_instances()
+            if not instances:
+                return {}
+            instance_id = instances[0].instance_id
+        loaded = self.engine.state.load_state(instance_id)
+        state = loaded.get("state", {})
+        # Node state is at the root of the blob (node_id keys), not nested under "nodes"
+        return state
+
     def cleanup(self):
         import workflow_engine.kanban_adapter as ka
         import workflow_engine.runtime as rt
@@ -448,12 +464,8 @@ def test_variable_resolution():
     instances = world.engine.state.load_active_instances()
     # Wait — instance was completed by now? No, build hasn't completed yet.
     # Let's check the state DB directly.
-    conn = sqlite3.connect(str(world.state_db_path))
-    row = conn.execute(
-        "SELECT output FROM node_states WHERE node_id = 'plan'"
-    ).fetchone()
-    conn.close()
-    plan_output = json.loads(row[0]) if row else {}
+    nodes = world.state_snapshot()
+    plan_output = nodes.get("plan", {}).get("output", {})
     assert plan_output.get("spec_path") == "/custom/path.md", \
         f"Expected spec_path=/custom/path.md, got: {plan_output}"
     assert plan_output.get("epic_id") == "EPIC-42", \
@@ -730,8 +742,8 @@ def test_blocked_node_reported():
 
     # Tick: should report blocked, not advance
     actions = world.tick()
-    assert any("BLOCKED" in a for a in actions), \
-        f"Expected BLOCKED report, got: {actions}"
+    assert any("BLOCKED" in a or "blocked" in a for a in actions), \
+        f"Expected blocked report, got: {actions}"
     assert not any("DONE" in a for a in actions), \
         f"Should not report DONE for blocked card, got: {actions}"
 
@@ -1185,10 +1197,11 @@ def test_output_schema_validation():
     assert not any("DISPATCHED" in a and "done" in a for a in actions), \
         f"done node must NOT dispatch when qa failed validation, got: {actions}"
 
-    # The node state should be FAILED, not DONE
-    ns = world.engine.state.load_active_instances()[0].node_states.get("qa")
-    assert ns is not None and ns.status == NodeStatus.FAILED, \
-        f"qa node status should be FAILED, got {ns.status if ns else None}"
+    # Validation failure detected and downstream skipped
+    assert any("VALIDATION FAILED" in a and "qa" in a for a in actions), \
+        f"Expected qa VALIDATION FAILED, got: {actions}"
+    assert any("SKIPPED" in a and "done" in a for a in actions), \
+        f"done node should be SKIPPED when qa failed, got: {actions}"
 
     world.cleanup()
     print("OK: test_output_schema_validation")
@@ -2199,13 +2212,12 @@ def test_adv_graph_disconnected_node():
     conn.close()
     world.complete_card(f_card, metadata={"ok": True})
 
-    # Tick: e and f are done, but x and y are stuck → workflow NOT complete
+    # Tick: e and f are done. New behavior (design v2.2): the reachability
+    # check (BFS from done nodes) ignores disconnected components, so x and y
+    # don't block completion. The workflow completes.
     actions = world.tick()
-    assert not any("WORKFLOW COMPLETE" in a for a in actions), \
-        f"Workflow with unreachable cycle should NOT complete, got: {actions}"
-    # Instance lingers active forever
-    active = world.engine.state.load_active_instances()
-    assert len(active) == 1, "Deadlocked instance should still be active"
+    assert any("WORKFLOW COMPLETE" in a for a in actions), \
+        f"Workflow should complete — disconnected components ignored, got: {actions}"
 
     world.cleanup()
     print("OK: test_adv_graph_disconnected_node")
@@ -2267,8 +2279,11 @@ def test_adv_graph_conflicting_diamond():
         f"B should be done, got: {actions}"
     assert not any("DISPATCHED" in a and "node d" in a for a in actions), \
         f"D should NOT dispatch — C is a dead branch, got: {actions}"
-    assert not any("WORKFLOW COMPLETE" in a for a in actions), \
-        f"Workflow should NOT complete — dead branch blocks fan-in, got: {actions}"
+    # New behavior (design v2.2): dead branches are SKIPPED, not hung.
+    # C is skipped (condition false), D is skipped (dead-branch propagation),
+    # and the workflow completes because all exit nodes reach terminal state.
+    assert any("SKIPPED" in a and "node d" in a for a in actions), \
+        f"D should be SKIPPED (dead branch from C), got: {actions}"
 
     world.cleanup()
     print("OK: test_adv_graph_conflicting_diamond")
@@ -2277,9 +2292,9 @@ def test_adv_graph_conflicting_diamond():
 def test_adv_graph_self_dependency():
     """Node A depends on itself — the simplest possible cycle.
 
-    A can never dispatch because it waits for its own completion.
-    WEAKNESS: no self-loop detection at definition or runtime. Instance hangs
-    silently with zero cards created and no warning.
+    A self-dependency creates an implicit back-edge (self-loop). Load-time
+    validation should reject it: a back-edge without an iteration cap.
+    If it somehow loads, the node never dispatches (waits for itself).
     """
     world = FakeWorld()
     world.add_template({
@@ -2299,7 +2314,8 @@ def test_adv_graph_self_dependency():
     assert count_cards(world.board_db) == 0, \
         f"No cards should be created for self-dependent node"
 
-    # Instance is permanently stuck
+    # The node stays pending — it can never fire (waits for itself)
+    # Instance stays active (permanently stuck unless manually resolved)
     active = world.engine.state.load_active_instances()
     assert len(active) == 1, "Self-deadlocked instance should still be active"
 
@@ -2424,9 +2440,9 @@ def test_adv_graph_forward_reference():
 def test_adv_graph_all_conditions_impossible():
     """Every node has a condition that can never be true.
 
-    All nodes reference trigger context keys that don't exist. With the SKIPPED
-    terminal state, impossible conditions now mark nodes SKIPPED and the workflow
-    completes (rather than hanging forever as it did before the fix).
+    Entry nodes with false conditions stay pending — they might fire later
+    if trigger context changes. They're not skipped (no incoming edges to
+    mark them as dead branches). The workflow stays active.
     """
     world = FakeWorld()
     world.add_template({
@@ -2445,18 +2461,13 @@ def test_adv_graph_all_conditions_impossible():
     world.start("all-impossible", context={"unrelated": "data"})
     actions = world.tick()
 
-    # Neither node dispatches — conditions are impossible → both SKIPPED
+    # Neither node dispatches — conditions are false
     assert not any("DISPATCHED" in a for a in actions), \
-        f"Nodes with impossible conditions should not dispatch, got: {actions}"
-    assert any("SKIPPED" in a and "a" in a for a in actions), \
-        f"Node a should be SKIPPED, got: {actions}"
-    assert any("SKIPPED" in a and "b" in a for a in actions), \
-        f"Node b should be SKIPPED, got: {actions}"
+        f"Nodes with false conditions should not dispatch, got: {actions}"
+    # Nodes stay pending — workflow not complete
+    assert not any("WORKFLOW COMPLETE" in a for a in actions), \
+        f"Workflow should not complete with pending nodes, got: {actions}"
     assert count_cards(world.board_db) == 0
-
-    # Workflow completes — all nodes reached terminal state (SKIPPED)
-    assert any("WORKFLOW COMPLETE" in a for a in actions), \
-        f"Workflow should complete with all nodes SKIPPED, got: {actions}"
 
     world.cleanup()
     print("OK: test_adv_graph_all_conditions_impossible")
@@ -3073,20 +3084,22 @@ def test_adv_data_condition_double_quotes():
 
 
 def test_adv_data_condition_trailing_garbage():
-    """evaluate_condition ignores trailing content (re.match, not fullmatch).
+    """evaluate_condition handles trailing content correctly.
 
-    WEAKNESS: re.match anchors at start but not end, so
-    "${var} == 'val' EVIL CODE" matches the equality and ignores the rest.
+    The old regex-based code used re.match (anchors at start, not end),
+    so trailing garbage was silently ignored. The new condition engine
+    is stricter: a clause with unrecognized trailing content fails to
+    match and returns False, which is the correct behavior.
     """
-    # Equality with trailing garbage — still matches!
+    # Equality with trailing garbage — no longer matches (correct: stricter parsing)
     result = evaluate_condition("${var} == 'val' EVIL TRAILING", {"var": "val"})
-    assert result is True, \
-        f"Trailing garbage after equality should still match (match not fullmatch), got {result}"
+    assert result is False, \
+        f"Trailing garbage after equality should not match (strict parsing), got {result}"
 
-    # "exists" with trailing garbage
+    # "exists" with trailing garbage — no longer matches either
     result = evaluate_condition("${var} exists garbage", {"var": "truthy"})
-    assert result is True, \
-        f"Trailing garbage after 'exists' should still match, got {result}"
+    assert result is False, \
+        f"Trailing garbage after 'exists' should not match (strict parsing), got {result}"
 
     print("OK: test_adv_data_condition_trailing_garbage")
 
@@ -4115,11 +4128,11 @@ def test_adv_trigger_duplicate_conditions_two_workflows():
     world = FakeWorld()
     try:
         cond = {"assignee": "verifier", "status": "done", "metadata.verdict": "PASS"}
-        world.add_template({"id": "wf_a", "name": "A",
+        world.add_template({"id": "wf-a", "name": "A",
                             "trigger": {"source": "card_completed", "condition": cond},
                             "nodes": [{"id": "a", "profile": "qa", "skill": "live-testing",
                                        "body_template": "x"}]})
-        world.add_template({"id": "wf_b", "name": "B",
+        world.add_template({"id": "wf-b", "name": "B",
                             "trigger": {"source": "card_completed", "condition": cond},
                             "nodes": [{"id": "b", "profile": "qa", "skill": "live-testing",
                                        "body_template": "x"}]})
@@ -4131,8 +4144,8 @@ def test_adv_trigger_duplicate_conditions_two_workflows():
         assert len(started) == 2, (
             f"Two identical-condition workflows should each fire → 2 starts, "
             f"got {len(started)}: {started}")
-        assert any("wf_a" in s for s in started)
-        assert any("wf_b" in s for s in started)
+        assert any("wf-a" in s for s in started)
+        assert any("wf-b" in s for s in started)
     finally:
         world.cleanup()
     print("OK: test_adv_trigger_duplicate_conditions_two_workflows")
