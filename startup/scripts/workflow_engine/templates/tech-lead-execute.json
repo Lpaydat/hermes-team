@@ -191,12 +191,12 @@
       "from": "verify",
       "to": "fix",
       "condition": "${nodes.verify.output.verdict} == 'FAIL'",
-      "max_iterations": 3
+      "max_iterations": 10
     },
     {
       "from": "fix",
       "to": "re-verify",
-      "max_iterations": 3
+      "max_iterations": 10
     },
     {
       "from": "re-verify",
@@ -207,7 +207,7 @@
       "from": "re-verify",
       "to": "fix",
       "condition": "${nodes.re-verify.output.verdict} == 'FAIL'",
-      "max_iterations": 3
+      "max_iterations": 10
     }
   ]
 }
