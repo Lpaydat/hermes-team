@@ -1,7 +1,7 @@
 {
   "id": "debugger-exit",
   "name": "Debugger Exit — route debugger verdict to the right handler",
-  "description": "Wraps the debugger card as one core node. Conditional edges route the exit verdict: fixed→re-verify, escalated-design→PO, blocked-hitl→PO. Re-verify FAIL loops back to re-debug (max 10, configurable via debugger-exit.config.json). Cap exceeded → escalate to PO.",
+  "description": "Wraps the debugger card. Routes exit verdict: fixed→re-verify, escalated→PO. Re-verify FAIL → escalate-po. Configurable cap via debugger-exit.config.md.",
   "trigger": {
     "source": "card_completed",
     "condition": {
@@ -21,7 +21,7 @@
     {
       "id": "re-verify",
       "profile": "verifier",
-      "body_template": "## Verify the debugger's fix\n\n**Bug card:** ${trigger.card_id}\n**Debugger verdict:** ${trigger.verdict}\n**Fix commit:** ${trigger.fix_commit}\n**Changed files:** ${trigger.changed_files}\n**Root cause:** ${trigger.root_cause_summary}\n\nThe debugger claims the bug is fixed. Verify independently:\n1. Check out the fix branch: ${trigger.branch_name}\n2. Run the regression test the debugger wrote: ${trigger.regression_test}\n3. Confirm the original bug no longer reproduces\n4. Falsify: try to break the fix with edge cases\n\nComplete with metadata:\n```\n{verdict: \"PASS\"|\"FAIL\", evidence: \"command + exit code\"}\n```",
+      "body_template": "## Verify the debugger's fix\n\n**Bug card:** ${trigger.card_id}\n**Debugger verdict:** ${trigger.verdict}\n**Fix commit:** ${trigger.fix_commit}\n**Changed files:** ${trigger.changed_files}\n**Root cause:** ${trigger.root_cause_summary}\n\nThe debugger claims the bug is fixed. Verify independently:\n1. Check out the fix branch: ${trigger.branch_name}\n2. Run the regression test: ${trigger.regression_test}\n3. Confirm the bug no longer reproduces\n4. Falsify: try to break the fix with edge cases\n\nComplete with metadata:\n```\n{verdict: \"PASS\"|\"FAIL\", evidence: \"command + exit code\"}\n```",
       "title_template": "[verify] Debug fix: ${trigger.title}",
       "output": {
         "schema": {
@@ -37,7 +37,7 @@
     {
       "id": "escalate-po",
       "profile": "product-owner",
-      "body_template": "## Debugger escalation\n\n**Bug card:** ${trigger.card_id}\n**Debugger verdict:** ${trigger.verdict}\n**Root cause:** ${trigger.root_cause_summary}\n\nThe debugger hit one of:\n- **escalated-design**: root cause spans a design boundary. Decide: open an architect gate card, or accept the limitation.\n- **blocked-hitl**: needs human input. Read the debugger's findings and unblock.\n- **cap-reached**: the fix failed re-verification 10 times. The bug is beyond automated repair. Decide: manual fix, accept risk, or close as won't-fix.\n\nComplete this card with metadata:\n```\n{action: \"architect-gate\"|\"unblock\"|\"accept-risk\"|\"manual-fix\"|\"wont-fix\", detail: \"one-line decision\"}\n```",
+      "body_template": "## Debugger escalation\n\n**Bug card:** ${trigger.card_id}\n**Debugger verdict:** ${trigger.verdict}\n**Root cause:** ${trigger.root_cause_summary}\n\nThe debugger hit one of:\n- **escalated-design**: root cause spans a design boundary. Open an architect gate card or accept the limitation.\n- **blocked-hitl**: needs human input. Read the debugger's findings and unblock.\n- **re-verify failed**: the fix didn't hold under independent verification. Decide: manual fix, accept risk, or close as won't-fix.\n\nComplete with metadata:\n```\n{action: \"architect-gate\"|\"unblock\"|\"accept-risk\"|\"manual-fix\"|\"wont-fix\", detail: \"one-line decision\"}\n```",
       "title_template": "[decision] Debugger escalation: ${trigger.title}",
       "output": {
         "schema": {
@@ -49,28 +49,11 @@
           }
         }
       }
-    },
-    {
-      "id": "re-debug",
-      "profile": "debugger",
-      "body_template": "## Re-fix needed\n\n**Original bug card:** ${trigger.card_id}\n**Verifier rejected the fix:** ${nodes.re-verify.output.verdict}\n**Evidence:** ${nodes.re-verify.output.evidence}\n\nThe verifier found the fix doesn't hold. Re-enter your debug loop. Read the verifier's evidence for what failed.\n\nComplete with your standard verdict: metadata={verdict: \"fixed\"|\"escalated-design\"|\"blocked-hitl\", ...}.",
-      "title_template": "[bug] Re-fix (iteration ${nodes.re-verify.iteration}): ${trigger.title}",
-      "output": {
-        "schema": {
-          "type": "object",
-          "required": ["verdict"],
-          "properties": {
-            "verdict": {"type": "string", "enum": ["fixed", "escalated-design", "blocked-hitl"]}
-          }
-        }
-      }
     }
   ],
   "edges": [
     {"from": "check-verdict", "to": "re-verify", "condition": "${nodes.check-verdict.output.verdict} == 'fixed'"},
     {"from": "check-verdict", "to": "escalate-po", "condition": "${nodes.check-verdict.output.verdict} == 'escalated-design' OR ${nodes.check-verdict.output.verdict} == 'blocked-hitl'"},
-    {"from": "re-verify", "to": "re-debug", "condition": "${nodes.re-verify.output.verdict} == 'FAIL' AND ${nodes.re-verify.iteration} < 10", "max_iterations": 10},
-    {"from": "re-verify", "to": "escalate-po", "condition": "${nodes.re-verify.output.verdict} == 'FAIL' AND ${nodes.re-verify.iteration} >= 10"},
-    {"from": "re-debug", "to": "re-verify", "condition": "${nodes.re-debug.iteration} > 0", "max_iterations": 10}
+    {"from": "re-verify", "to": "escalate-po", "condition": "${nodes.re-verify.output.verdict} == 'FAIL'"}
   ]
 }

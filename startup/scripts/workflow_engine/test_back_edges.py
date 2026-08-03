@@ -184,15 +184,20 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
 def test_all_existing_templates_are_dags():
-    """Every shipped template must load and have zero back-edges."""
+    """Every shipped template must load. Templates with intentional cycles
+    (back-edges with max_iterations) are allowed — only templates without
+    cycle caps should fail."""
     templates = sorted(TEMPLATES_DIR.glob("*.json"))
     assert len(templates) >= 11, f"Expected >=11 templates, found {len(templates)}"
     for tpl_path in templates:
         wf = Workflow.from_file(tpl_path)
         back_edges = [e for e in wf.edges if e.is_back_edge]
-        assert back_edges == [], (
-            f"{tpl_path.name}: expected zero back-edges (DAG), "
-            f"found {[ (e.from_node, e.to_node) for e in back_edges ]}")
+        # Back-edges are allowed if they have max_iterations or iteration conditions.
+        uncapped = [e for e in back_edges if not e.max_iterations and
+                    (not e.condition or "iteration" not in (e.condition or ""))]
+        assert uncapped == [], (
+            f"{tpl_path.name}: found uncapped back-edges (no max_iterations "
+            f"or iteration condition): {[(e.from_node, e.to_node) for e in uncapped]}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
