@@ -51,6 +51,41 @@
       "depends_on": ["plan"]
     },
     {
+      "id": "fix",
+      "profile": "developer",
+      "skill": "",
+      "body_template": "## Fix findings from overall verification\n\n**Spec card:** ${trigger.card_id}\n**Findings:** ${nodes.verify.output.findings_count} finding(s) from integration verification\n\nThe overall verifier found issues with the integrated work. Read the verifier's findings comment on the verify card (${nodes.verify.output.verdict}) for details.\n\nFix ALL findings. Commit on the same branch. Run the full test suite to confirm.\n\n**Completion metadata:**\n```\n{fixed: true, findings_fixed: N, tests_pass: N}\n```",
+      "title_template": "[fix] Integration findings: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["fixed"],
+          "properties": {
+            "fixed": {"type": "boolean"},
+            "findings_fixed": {"type": "integer"},
+            "tests_pass": {"type": "integer"}
+          }
+        }
+      }
+    },
+    {
+      "id": "re-verify",
+      "profile": "verifier",
+      "skill": "adversarial-review",
+      "body_template": "## Re-verify after integration fix\n\n**Spec card:** ${trigger.card_id}\n**Fix card:** ${nodes.fix.output.findings_fixed} findings fixed\n\nRe-run the overall verification on the fixed code. Same standards as the first verify.\n\nLoad your `adversarial-review` skill.\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"ESCALATE\", findings_count: N}\n```",
+      "title_template": "[re-verify] Integration: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL", "ESCALATE"]},
+            "findings_count": {"type": "integer"}
+          }
+        }
+      }
+    },
+    {
       "id": "close",
       "profile": "tech-lead",
       "skill": "loops-engineering",
@@ -67,12 +102,15 @@
             "escalate_reason": {"type": "string"}
           }
         }
-      },
-      "depends_on": ["verify"]
+      }
     }
   ],
   "edges": [
     {"from": "plan", "to": "verify", "condition": "${nodes.plan.output.plan_complete} exists"},
-    {"from": "verify", "to": "close"}
+    {"from": "verify", "to": "close", "condition": "${nodes.verify.output.verdict} == 'PASS' OR ${nodes.verify.output.verdict} == 'ESCALATE'"},
+    {"from": "verify", "to": "fix", "condition": "${nodes.verify.output.verdict} == 'FAIL'", "max_iterations": 3},
+    {"from": "fix", "to": "re-verify", "max_iterations": 3},
+    {"from": "re-verify", "to": "close", "condition": "${nodes.re-verify.output.verdict} == 'PASS' OR ${nodes.re-verify.output.verdict} == 'ESCALATE'"},
+    {"from": "re-verify", "to": "fix", "condition": "${nodes.re-verify.output.verdict} == 'FAIL'", "max_iterations": 3}
   ]
 }
