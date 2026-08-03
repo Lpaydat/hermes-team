@@ -72,7 +72,7 @@
     }
   ],
   "edges": [
-    {"from": "plan", "to": "verify", "condition": "${nodes.plan.output.plan_complete} == True"},
+    {"from": "plan", "to": "verify", "condition": "${nodes.plan.output.plan_complete} exists"},
     {"from": "verify", "to": "close"}
   ]
 }
