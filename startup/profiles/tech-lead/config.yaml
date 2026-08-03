@@ -55,6 +55,7 @@ known_plugin_toolsets:
 plugins:
   enabled:
   - kanban_chains
+  - loop_engine
   - skill_enforcer
   disabled: []
   entries:
