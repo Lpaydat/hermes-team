@@ -21,13 +21,18 @@
     {
       "id": "route-bug",
       "profile": "debugger",
-      "body_template": "## Bug to investigate\n\nSpec: ${trigger.card_id}\nTitle: ${trigger.title}\n\nInvestigate the root cause. File a fix card for the developer with your findings.\n\nComplete this card with metadata {verdict: \"root-caused\", fix_card: \"<id>\"} when done.",
+      "body_template": "## Bug to investigate\n\nSpec: ${trigger.card_id}\nTitle: ${trigger.title}\n\nInvestigate the root cause. Run your debug-loop (reproduce → fix → converge).\n\nComplete this card with metadata:\n```\n{verdict: \"fixed\"|\"escalated-design\"|\"blocked-hitl\", fix_commit: \"<sha>\", branch_name: \"<branch>\", regression_test: \"<path>\", root_cause_summary: \"<one-line>\", changed_files: [\"...\"]}\n```",
       "output": {
         "schema": {
           "type": "object",
           "required": ["verdict"],
           "properties": {
-            "verdict": {"type": "string", "enum": ["root-caused", "cannot-reproduce"]}
+            "verdict": {"type": "string", "enum": ["fixed", "escalated-design", "blocked-hitl"]},
+            "fix_commit": {"type": "string"},
+            "branch_name": {"type": "string"},
+            "regression_test": {"type": "string"},
+            "root_cause_summary": {"type": "string"},
+            "changed_files": {"type": "array", "items": {"type": "string"}}
           }
         }
       }
