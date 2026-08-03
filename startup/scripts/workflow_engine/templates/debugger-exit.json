@@ -32,8 +32,7 @@
             "evidence": {"type": "string"}
           }
         }
-      },
-      "depends_on": ["check-verdict"]
+      }
     },
     {
       "id": "escalate-po",
@@ -49,8 +48,7 @@
             "detail": {"type": "string"}
           }
         }
-      },
-      "depends_on": ["check-verdict"]
+      }
     },
     {
       "id": "re-debug",
@@ -73,6 +71,6 @@
     {"from": "check-verdict", "to": "escalate-po", "condition": "${nodes.check-verdict.output.verdict} == 'escalated-design' OR ${nodes.check-verdict.output.verdict} == 'blocked-hitl'"},
     {"from": "re-verify", "to": "re-debug", "condition": "${nodes.re-verify.output.verdict} == 'FAIL' AND ${nodes.re-verify.iteration} < 10", "max_iterations": 10},
     {"from": "re-verify", "to": "escalate-po", "condition": "${nodes.re-verify.output.verdict} == 'FAIL' AND ${nodes.re-verify.iteration} >= 10"},
-    {"from": "re-debug", "to": "re-verify", "max_iterations": 10}
+    {"from": "re-debug", "to": "re-verify", "condition": "${nodes.re-debug.iteration} > 0", "max_iterations": 10}
   ]
 }
