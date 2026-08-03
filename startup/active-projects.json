@@ -1,12 +1,3 @@
 {
-  "active_projects": [
-    {
-      "board": "tl-gauntlet-a",
-      "repo": "/tmp/tl-test/repo-a"
-    },
-    {
-      "board": "tl-gauntlet-b",
-      "repo": "/tmp/tl-test/repo-b"
-    }
-  ]
+  "active_projects": []
 }
