@@ -1,0 +1,59 @@
+{
+  "id": "debugger-exit",
+  "name": "Debugger Exit — route debugger verdict to the right handler",
+  "description": "Wraps the debugger card. Routes exit verdict: fixed→re-verify, escalated→PO. Re-verify FAIL → escalate-po. Configurable cap via debugger-exit.config.md.",
+  "trigger": {
+    "source": "card_completed",
+    "condition": {
+      "assignee": "debugger",
+      "status": "done",
+      "title_prefix": "[bug]"
+    }
+  },
+  "nodes": [
+    {
+      "id": "check-verdict",
+      "profile": "product-owner",
+      "type": "command",
+      "command": "echo '{\"verdict\": \"${trigger.verdict}\"}'",
+      "body_template": "noop — extract verdict from trigger metadata"
+    },
+    {
+      "id": "re-verify",
+      "profile": "verifier",
+      "body_template": "## Verify the debugger's fix\n\n**Bug card:** ${trigger.card_id}\n**Debugger verdict:** ${trigger.verdict}\n**Fix commit:** ${trigger.fix_commit}\n**Changed files:** ${trigger.changed_files}\n**Root cause:** ${trigger.root_cause_summary}\n\nThe debugger claims the bug is fixed. Verify independently:\n1. Check out the fix branch: ${trigger.branch_name}\n2. Run the regression test: ${trigger.regression_test}\n3. Confirm the bug no longer reproduces\n4. Falsify: try to break the fix with edge cases\n\nComplete with metadata:\n```\n{verdict: \"PASS\"|\"FAIL\", evidence: \"command + exit code\"}\n```",
+      "title_template": "[verify] Debug fix: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+            "evidence": {"type": "string"}
+          }
+        }
+      }
+    },
+    {
+      "id": "escalate-po",
+      "profile": "product-owner",
+      "body_template": "## Debugger escalation\n\n**Bug card:** ${trigger.card_id}\n**Debugger verdict:** ${trigger.verdict}\n**Root cause:** ${trigger.root_cause_summary}\n\nThe debugger hit one of:\n- **escalated-design**: root cause spans a design boundary. Open an architect gate card or accept the limitation.\n- **blocked-hitl**: needs human input. Read the debugger's findings and unblock.\n- **re-verify failed**: the fix didn't hold under independent verification. Decide: manual fix, accept risk, or close as won't-fix.\n\nComplete with metadata:\n```\n{action: \"architect-gate\"|\"unblock\"|\"accept-risk\"|\"manual-fix\"|\"wont-fix\", detail: \"one-line decision\"}\n```",
+      "title_template": "[decision] Debugger escalation: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["action"],
+          "properties": {
+            "action": {"type": "string", "enum": ["architect-gate", "unblock", "accept-risk", "manual-fix", "wont-fix"]},
+            "detail": {"type": "string"}
+          }
+        }
+      }
+    }
+  ],
+  "edges": [
+    {"from": "check-verdict", "to": "re-verify", "condition": "${nodes.check-verdict.output.verdict} == 'fixed'"},
+    {"from": "check-verdict", "to": "escalate-po", "condition": "${nodes.check-verdict.output.verdict} == 'escalated-design' OR ${nodes.check-verdict.output.verdict} == 'blocked-hitl'"},
+    {"from": "re-verify", "to": "escalate-po", "condition": "${nodes.re-verify.output.verdict} == 'FAIL'"}
+  ]
+}

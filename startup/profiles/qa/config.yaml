@@ -95,3 +95,4 @@ kanban:
 skill_enforcer:
   mandatory:
   - live-testing
+  - bug-handoff
