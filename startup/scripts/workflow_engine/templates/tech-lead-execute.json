@@ -1,7 +1,7 @@
 {
   "id": "tech-lead-execute",
-  "name": "Tech-Lead Execute \u2014 plan, execute, verify, close",
-  "description": "Wraps the tech-lead card. plan (decompose spec + run loop_engine) \u2192 verify (overall adversarial-review) \u2192 close. The plan node calls loop_engine which handles dev\u2192verify iteration internally with advance/replan/escalate. No kanban_chains deadlock, no review-required blocking.",
+  "name": "Tech-Lead Execute — plan, execute, verify, close",
+  "description": "Wraps the tech-lead card. plan (decompose spec to tasks via to-tickets, dispatch via kanban_chains) → verify (adversarial-review on integrated work) → close. The plan node blocks on kanban_chains until all dev cards finish — verify fires at the correct time.",
   "trigger": {
     "source": "card_completed",
     "condition": {
@@ -15,25 +15,17 @@
       "id": "plan",
       "profile": "tech-lead",
       "skill": "loops-engineering",
-      "body_template": "## Implementation Planning\n\n**Spec card:** ${trigger.card_id}\n**Title:** ${trigger.title}\n\nYou are the tech-lead. The PO has already written the spec \u2014 DO NOT grill the user. Your job is implementation planning.\n\n### Phase 1: Discover\n\nRead the spec card body for full requirements. Read the codebase: AGENTS.md, existing tests, conventions, structure. Understand what exists today.\n\n### Phase 2: Plan (autonomous decomposition)\n\nLoad your `to-tickets` skill. Decompose the spec into atomic tasks. For each task:\n- Title (short, actionable)\n- Acceptance criteria (checklist of testable assertions)\n- Dependencies (which tasks must complete before this one)\n- Sizing (small/medium/large)\n\n### Phase 3: Execute via loop_engine (CRITICAL)\n\nCall `loop_engine` to execute ALL tasks. loop_engine handles:\n- Dev\u2192verifier iteration with advance/replan/escalate\n- Max iterations per phase\n- Auto-promotion when the work converges\n\nConfigure loop_engine with:\n- goal: the spec goal\n- phases: one phase per task (or group serial tasks into one phase)\n- Each phase: {execution: {assignee: developer, title, body: ACs+constraints}, verifier: {assignee: verifier, title, body: verify ACs}}\n- max_iterations: 3 per phase\n\nYour card auto-blocks until loop_engine converges. Do NOT call kanban_complete until loop_engine finishes.\n\nAfter loop_engine converges: read the verdict. If ALL phases converged \u2192 kanban_complete with plan metadata.\n\nNO human approval needed. NO beads. Fully autonomous.\n\n**Completion metadata:**\n```\n{plan_complete: true, task_count: N, sizing_summary: \"small:N medium:N large:N\"}\n```",
+      "body_template": "## Implementation Planning\n\n**Spec card:** ${trigger.card_id}\n**Title:** ${trigger.title}\n\nYou are the tech-lead. The PO has already written the spec — DO NOT grill the user. Your job is implementation planning.\n\n### Phase 1: Discover\n\nRead the spec card body for full requirements. Read the codebase: AGENTS.md, existing tests, conventions, structure. Understand what exists today.\n\n### Phase 2: Plan (autonomous decomposition)\n\nLoad your `to-tickets` skill. Decompose the spec into atomic tasks. For each task:\n- Title (short, actionable)\n- Acceptance criteria (checklist of testable assertions)\n- Dependencies (which tasks must complete before this one)\n- Sizing (small/medium/large)\n\n### Phase 3: Dispatch via kanban_chains (CRITICAL)\n\nCall `kanban_chains` to dispatch ALL tasks. This STRUCTURALLY BLOCKS your card until all dev cards reach done.\n\n- One chain per task (if tasks have serial dependencies, put them in the SAME chain as sequential steps)\n- Each chain step: {assignee: \"developer\", title: \"[task] <title>\", body: \"<acceptance criteria + constraints>\"}\n- Parallel chains for independent tasks\n- Your card auto-blocks. Do NOT call kanban_complete. Do NOT create cards via kanban_create.\n- The system will auto-promote you when ALL chains finish.\n\nAfter auto-promotion: read the verifier completion summaries. If ALL PASS → kanban_complete with the plan metadata. If any FAIL → check for fix chains created by the verifier. If any ESCALATE → read the escalation card, classify, and act.\n\nNO human approval needed. NO beads. Fully autonomous.\n\n**Completion metadata:**\n```\n{plan_complete: true, task_count: N, task_ids: [\"t_xxx\", ...], sizing_summary: \"small:N medium:N large:N\"}\n```",
       "title_template": "[tl] Plan: ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
-          "required": [
-            "plan_complete",
-            "task_count"
-          ],
+          "required": ["plan_complete", "task_count"],
           "properties": {
-            "plan_complete": {
-              "type": "boolean"
-            },
-            "task_count": {
-              "type": "integer"
-            },
-            "sizing_summary": {
-              "type": "string"
-            }
+            "plan_complete": {"type": "boolean"},
+            "task_count": {"type": "integer"},
+            "task_ids": {"type": "array", "items": {"type": "string"}},
+            "sizing_summary": {"type": "string"}
           }
         }
       }
@@ -42,85 +34,45 @@
       "id": "verify",
       "profile": "verifier",
       "skill": "adversarial-review",
-      "body_template": "## Overall Verification \u2014 integrated feature\n\n**Spec card:** ${trigger.card_id}\n**Tasks completed:** ${nodes.plan.output.task_count}\n\nThis is OVERALL verification \u2014 not per-task. All developer work is complete. Your job:\n\n1. **Integration check**: do all tasks work TOGETHER? No conflicts, no missing wiring.\n2. **Spec compliance**: does the complete implementation satisfy the ORIGINAL spec?\n3. **Acceptance criteria**: verify EVERY AC against the integrated code.\n4. **Code review**: run adversarial-review on the complete diff.\n5. **Edge cases**: falsify the integrated feature \u2014 try to break it.\n\nLoad your `adversarial-review` skill.\n\n**Verdict routing:**\n- PASS (zero findings): merge to main, complete with verdict=PASS\n- FAIL: create fix cards for developers, complete with verdict=FAIL\n- ESCALATE (iter >= 3 or spec gap): complete with verdict=ESCALATE\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"ESCALATE\", findings_count: N, acs_verified: N, acs_total: N}\n```",
+      "body_template": "## Overall Verification — integrated feature\n\n**Spec card:** ${trigger.card_id}\n**Tasks completed:** ${nodes.plan.output.task_count}\n\nThis is OVERALL verification — not per-task. All developer work is complete. Your job:\n\n1. **Integration check**: do all tasks work TOGETHER? No conflicts, no missing wiring.\n2. **Spec compliance**: does the complete implementation satisfy the ORIGINAL spec?\n3. **Acceptance criteria**: verify EVERY AC against the integrated code.\n4. **Code review**: run adversarial-review on the complete diff.\n5. **Edge cases**: falsify the integrated feature — try to break it.\n\nLoad your `adversarial-review` skill.\n\n**Verdict routing:**\n- PASS (zero findings): merge to main, complete with verdict=PASS\n- FAIL: create fix cards for developers, complete with verdict=FAIL\n- ESCALATE (iter >= 3 or spec gap): route via kanban_chains to tech-lead/product-owner\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"ESCALATE\", findings_count: N, acs_verified: N, acs_total: N}\n```",
       "title_template": "[verify] Integration: ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
-          "required": [
-            "verdict"
-          ],
+          "required": ["verdict"],
           "properties": {
-            "verdict": {
-              "type": "string",
-              "enum": [
-                "PASS",
-                "FAIL",
-                "ESCALATE"
-              ]
-            },
-            "findings_count": {
-              "type": "integer"
-            },
-            "acs_verified": {
-              "type": "integer"
-            },
-            "acs_total": {
-              "type": "integer"
-            }
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL", "ESCALATE"]},
+            "findings_count": {"type": "integer"},
+            "acs_verified": {"type": "integer"},
+            "acs_total": {"type": "integer"}
           }
         }
       },
-      "depends_on": [
-        "plan"
-      ]
+      "depends_on": ["plan"]
     },
     {
       "id": "close",
       "profile": "tech-lead",
       "skill": "loops-engineering",
-      "body_template": "## Close \u2014 wrap up\n\n**Spec card:** ${trigger.card_id}\n**Verdict:** ${nodes.verify.output.verdict}\n\n### If PASS:\n- Write journal entry\n- Run reflection\n- Complete with verdict=merged\n\n### If ESCALATE:\n- Read findings, classify, route\n- Complete with verdict=escalated\n\n**Completion metadata:**\n```\n{verdict: \"merged\"|\"escalated\", tasks_planned: N, tasks_completed: N, escalate_reason: \"\"}\n```",
+      "body_template": "## Close — wrap up\n\n**Spec card:** ${trigger.card_id}\n**Verdict:** ${nodes.verify.output.verdict}\n\n### If PASS:\n- Write journal entry\n- Run reflection\n- Complete with verdict=merged\n\n### If ESCALATE:\n- Read findings, classify, route\n- Complete with verdict=escalated\n\n**Completion metadata:**\n```\n{verdict: \"merged\"|\"escalated\", tasks_planned: N, tasks_completed: N, escalate_reason: \"\"}\n```",
       "title_template": "[tl] Close: ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
-          "required": [
-            "verdict"
-          ],
+          "required": ["verdict"],
           "properties": {
-            "verdict": {
-              "type": "string",
-              "enum": [
-                "merged",
-                "escalated"
-              ]
-            },
-            "tasks_planned": {
-              "type": "integer"
-            },
-            "tasks_completed": {
-              "type": "integer"
-            },
-            "escalate_reason": {
-              "type": "string"
-            }
+            "verdict": {"type": "string", "enum": ["merged", "escalated"]},
+            "tasks_planned": {"type": "integer"},
+            "tasks_completed": {"type": "integer"},
+            "escalate_reason": {"type": "string"}
           }
         }
       },
-      "depends_on": [
-        "verify"
-      ]
+      "depends_on": ["verify"]
     }
   ],
   "edges": [
-    {
-      "from": "plan",
-      "to": "verify",
-      "condition": "${nodes.plan.output.plan_complete} exists"
-    },
-    {
-      "from": "verify",
-      "to": "close"
-    }
+    {"from": "plan", "to": "verify", "condition": "${nodes.plan.output.plan_complete} exists"},
+    {"from": "verify", "to": "close"}
   ]
 }

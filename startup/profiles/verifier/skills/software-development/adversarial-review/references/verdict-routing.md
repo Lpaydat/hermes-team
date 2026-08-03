@@ -29,10 +29,27 @@ Any finding at any severity — including edge cases not covered by the acceptan
 
 Zero findings at any severity (Critical, Important, Minor, Note). Every acceptance criterion verified independently. Proceed to [merge-protocol.md](merge-protocol.md). After merging, `kanban_complete` with the review summary; the completion boundary closes the bead (kanban→beads writeback — you are the completion boundary).
 
-## ESCALATE — never loop
+## ESCALATE — never loop, route via kanban_chains
 
-Two escalation triggers, both route to tech-lead:
+Two escalation triggers, both route to tech-lead via `kanban_chains`:
 
-**Iteration cap**: `REVIEW-ITERATION ≥ 3` (count the header lines on the developer-card thread, or the review cards in the chain; iterations marked `fast-fail` don't count — run one full fan-out review before escalating). Block your own review card `needs_input` with a reason beginning `ESCALATE:` (you cannot block a foreign card — the ownership guard rejects it, and the developer card is already done). Because a blocked card never completes, the block **comment** is the durable verdict record: it MUST carry the verdict fields (`{verdict: ESCALATE, findings_count, iteration, ...}`) plus your session id. Create a tech-lead escalation card via `kanban_create` linking the chain root + all review cards. Tech-lead reads accumulated comments, then the trace ledger (trace-first), and re-contracts, switches harness, or abandons.
+**Iteration cap**: `REVIEW-ITERATION ≥ 3` (count the header lines on the developer-card thread, or the review cards in the chain; iterations marked `fast-fail` don't count — run one full fan-out review before escalating). Call `kanban_chains` to create an escalation card:
 
-**Spec gap**: code matches the contract but the contract is wrong. Block for tech-lead immediately. If it's contract-vs-INTENT (the bead itself promises the wrong thing), note that: tech-lead routes it to product-owner, who owns bead content. You never re-contract anyone, never amend a bead, never edit a contract.
+```
+kanban_chains(
+    goal="ESCALATE: iter-3 cap on <chain root>",
+    chains=[[
+        {
+            "assignee": "tech-lead",
+            "title": "[escalation] <one-line: what failed, how many times>",
+            "body": "ESCALATE: iter-3 cap reached. Verdict: {verdict: ESCALATE, findings_count: N, iteration: 3, acs_verified: N}. Chain root: <t_xxx>. Review cards: <t_yyy>, <t_zzz>. Findings detail: <pointer to REVIEW-ITERATION comments>. Worker session: <session_id>. Read accumulated comments, then the trace ledger (trace-first), and re-contract, switch harness, or abandon."
+        }
+    ]]
+)
+```
+
+This dependency-parks YOUR card (status=todo, kind=dependency). When the tech-lead handles the escalation and completes the escalation card, you auto-promote — then stamp the final verdict and `kanban_complete` your review card.
+
+**Do NOT use `kanban_block`.** A sticky block never auto-promotes (the dispatcher's `_has_sticky_block` check prevents it). This deadlocks any parent chain waiting on your card — `recompute_ready` only promotes when parents are `done` or `archived`, and a sticky-blocked card is neither.
+
+**Spec gap**: code matches the contract but the contract is wrong. Same pattern — call `kanban_chains` to route to tech-lead immediately. If it's contract-vs-INTENT (the spec itself promises the wrong thing), assign the escalation card to `product-owner` instead. You never re-contract anyone, never edit a contract.
