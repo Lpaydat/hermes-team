@@ -1,7 +1,7 @@
 {
   "id": "tech-lead-execute",
   "name": "Tech-Lead Execute — plan, execute, verify, close",
-  "description": "Wraps the tech-lead card. plan (decompose spec to tasks via to-tickets, dispatch via kanban_chains) → verify (adversarial-review on integrated work) → close. The plan node blocks on kanban_chains until all dev cards finish — verify fires at the correct time.",
+  "description": "Wraps the tech-lead card. plan (decompose spec via to-tickets, dispatch via kanban_chains) → verify (adversarial-review) → fix→re-verify loop → close. The plan node blocks on kanban_chains until all dev cards finish. verify FAIL routes to fix loop, not unconditional close.",
   "trigger": {
     "source": "card_completed",
     "condition": {
@@ -34,12 +34,12 @@
       "id": "verify",
       "profile": "verifier",
       "skill": "adversarial-review",
-      "body_template": "## Overall Verification — integrated feature\n\n**Spec card:** ${trigger.card_id}\n**Tasks completed:** ${nodes.plan.output.task_count}\n\nThis is OVERALL verification — not per-task. All developer work is complete. Your job:\n\n1. **Integration check**: do all tasks work TOGETHER? No conflicts, no missing wiring.\n2. **Spec compliance**: does the complete implementation satisfy the ORIGINAL spec?\n3. **Acceptance criteria**: verify EVERY AC against the integrated code.\n4. **Code review**: run adversarial-review on the complete diff.\n5. **Edge cases**: falsify the integrated feature — try to break it.\n\nLoad your `adversarial-review` skill.\n\n**Verdict routing:**\n- PASS (zero findings): merge to main, complete with verdict=PASS\n- FAIL: create fix cards for developers, complete with verdict=FAIL\n- ESCALATE (iter >= 3 or spec gap): route via kanban_chains to tech-lead/product-owner\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"ESCALATE\", findings_count: N, acs_verified: N, acs_total: N}\n```",
+      "body_template": "## Overall Verification — integrated feature\n\n**Spec card:** ${trigger.card_id}\n**Tasks completed:** ${nodes.plan.output.task_count}\n\nThis is OVERALL verification — not per-task. All developer work is complete. Your job:\n\n1. **Integration check**: do all tasks work TOGETHER? No conflicts, no missing wiring.\n2. **Spec compliance**: does the complete implementation satisfy the ORIGINAL spec?\n3. **Acceptance criteria**: verify EVERY AC against the integrated code.\n4. **Code review**: run adversarial-review on the complete diff.\n5. **Edge cases**: falsify the integrated feature — try to break it.\n\nLoad your `adversarial-review` skill.\n\n**Verdict:**\n- PASS (zero findings): merge to main, complete with verdict=PASS\n- FAIL (any findings): complete with verdict=FAIL and stamp findings in metadata. Do NOT create fix cards — the workflow template handles routing.\n- ESCALATE (spec gap): complete with verdict=ESCALATE\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"ESCALATE\", findings_count: N, acs_verified: N, acs_total: N}\n```",
       "title_template": "[verify] Integration: ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
-          "required": ["verdict"],
+          "required": ["verdict", "findings_count"],
           "properties": {
             "verdict": {"type": "string", "enum": ["PASS", "FAIL", "ESCALATE"]},
             "findings_count": {"type": "integer"},
@@ -54,12 +54,12 @@
       "id": "fix",
       "profile": "developer",
       "skill": "",
-      "body_template": "## Fix findings from overall verification\n\n**Spec card:** ${trigger.card_id}\n**Findings:** ${nodes.verify.output.findings_count} finding(s) from integration verification\n\nThe overall verifier found issues with the integrated work. Read the verifier's findings comment on the verify card (${nodes.verify.output.verdict}) for details.\n\nFix ALL findings. Commit on the same branch. Run the full test suite to confirm.\n\n**Completion metadata:**\n```\n{fixed: true, findings_fixed: N, tests_pass: N}\n```",
+      "body_template": "## Fix findings from overall verification\n\n**Spec card:** ${trigger.card_id}\n**Verify card:** check this board for the verify card with verdict=FAIL\n**Findings count:** ${nodes.verify.output.findings_count}\n\nThe overall verifier found issues with the integrated work. Read the verifier's findings on the verify card. Each finding has: ID, severity, file:line, title, and repro.\n\nFix ALL findings (Critical, Important, Minor). Commit on the same branch. Run the full test suite to confirm all tests pass.\n\nWrite a completion comment listing each finding ID and how it was addressed.\n\n**Completion metadata:**\n```\n{fixed: true, findings_fixed: N, tests_pass: N}\n```",
       "title_template": "[fix] Integration findings: ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
-          "required": ["fixed"],
+          "required": ["fixed", "findings_fixed"],
           "properties": {
             "fixed": {"type": "boolean"},
             "findings_fixed": {"type": "integer"},
@@ -72,12 +72,12 @@
       "id": "re-verify",
       "profile": "verifier",
       "skill": "adversarial-review",
-      "body_template": "## Re-verify after integration fix\n\n**Spec card:** ${trigger.card_id}\n**Fix card:** ${nodes.fix.output.findings_fixed} findings fixed\n\nRe-run the overall verification on the fixed code. Same standards as the first verify.\n\nLoad your `adversarial-review` skill.\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"ESCALATE\", findings_count: N}\n```",
+      "body_template": "## Re-verify after integration fix\n\n**Spec card:** ${trigger.card_id}\n**Fix card:** ${nodes.fix.output.findings_fixed} findings fixed\n\nRe-run the overall verification on the fixed code. Same standards as the first verify. Check that each previously-found finding is resolved. Also run a fresh-eyes pass — look for NEW issues introduced by the fix.\n\nLoad your `adversarial-review` skill.\n\n**Verdict:**\n- PASS (zero findings): merge to main, complete with verdict=PASS\n- FAIL: complete with verdict=FAIL and stamp findings in metadata\n- ESCALATE: complete with verdict=ESCALATE\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"ESCALATE\", findings_count: N}\n```",
       "title_template": "[re-verify] Integration: ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
-          "required": ["verdict"],
+          "required": ["verdict", "findings_count"],
           "properties": {
             "verdict": {"type": "string", "enum": ["PASS", "FAIL", "ESCALATE"]},
             "findings_count": {"type": "integer"}
@@ -89,7 +89,7 @@
       "id": "close",
       "profile": "tech-lead",
       "skill": "loops-engineering",
-      "body_template": "## Close — wrap up\n\n**Spec card:** ${trigger.card_id}\n**Verdict:** ${nodes.verify.output.verdict}\n\n### If PASS:\n- Write journal entry\n- Run reflection\n- Complete with verdict=merged\n\n### If ESCALATE:\n- Read findings, classify, route\n- Complete with verdict=escalated\n\n**Completion metadata:**\n```\n{verdict: \"merged\"|\"escalated\", tasks_planned: N, tasks_completed: N, escalate_reason: \"\"}\n```",
+      "body_template": "## Close — wrap up\n\n**Spec card:** ${trigger.card_id}\n**Plan:** ${nodes.plan.output.task_count} tasks planned\n\n### Determine the final verdict:\n\nRead the verify card verdict: ${nodes.verify.output.verdict}\nIf the fix→re-verify loop ran, read: ${nodes.re-verify.output.verdict}\n\n- If verify PASSED (no fix needed): write journal, reflection, complete with verdict=merged\n- If re-verify PASSED (fix loop succeeded): write journal noting findings fixed, complete with verdict=merged\n- If verify or re-verify ESCALATED: read findings, classify (defect-bug/contract-gap/harness/wrong-slice), route appropriately. Complete with verdict=escalated\n\n**Completion metadata:**\n```\n{verdict: \"merged\"|\"escalated\", tasks_planned: ${nodes.plan.output.task_count}, tasks_completed: ${nodes.plan.output.task_count}, escalate_reason: \"\"}\n```",
       "title_template": "[tl] Close: ${trigger.title}",
       "output": {
         "schema": {
