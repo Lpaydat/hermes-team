@@ -26,6 +26,16 @@ Large documentation pages (book TOCs, API reference indexes) bury the link you w
 
 You get an exact list of `href`s + labels; jump straight to the right one with `browser_navigate`. This beats visual scanning on any page with hundreds of links.
 
+**Beyond links — extract structured body text when the snapshot drops it.** The accessibility snapshot sometimes collapses nested content to bare markers (e.g. list items render as `[level=1]` with no text, losing the actual `<li>` content). When the snapshot shows the structure but not the text you need, walk the DOM directly:
+
+```js
+// browser_console, expression= — extract headings + paragraphs + list items as text
+const els = document.querySelectorAll('h2,h3,p,li');
+[...els].map(el => el.tagName + ': ' + el.textContent.trim().substring(0,300)).join('\n')
+```
+
+Or scope it to a section: `document.querySelector('article')?.querySelectorAll('h2,h3,p,li')`. This recovers list-item text, table cells, and nested structure that the snapshot flattened — the general case of "the snapshot shows empty nodes where content should be."
+
 ## 3. Paywalled / bot-blocked primary source → find the official mirror
 
 Canonical primary sources are often paywalled or behind bot detection:
@@ -147,3 +157,121 @@ Some modern doc sites (LangGraph `docs.langchain.com`, Next.js/Vite SPAs, Docusa
 3. **If the site has a `/llms.txt` or `/llms-full.txt` endpoint** (increasingly common — CrewAI docs expose this), curl THAT instead of the HTML. It returns the doc content as plain text designed for LLM consumption.
 
 This is distinct from §4 (404 / moved URL) and §10 (whole-site restructure): the URL is correct and returns 200, but the content is behind a JS render wall.
+
+## 14. Researching one author's framework → harvest sibling links from the foundational article
+
+When the research target is a *named expert's body of work* (their taxonomy, framework, or opus), the highest-leverage move is to find their **foundational article/post** and then batch-fetch everything it links to. A single well-chosen page is a link cluster that maps the whole framework:
+
+- **Article series** — an author's "Part 1" almost always links to Parts 2…N at the bottom ("Read Part 2", "Read Part 3"). Fetch Part 1, parse its sibling links, and pull all N in one parallel turn.
+- **Course lesson lists** — a DeepLearning.AI / Coursera course page lists every lesson title + duration, which doubles as the expert's own table of contents for the topic.
+- **"Recommended reading" / bibliography sections** — the author's own paper citations are a curated, authoritative reading list (better than any search engine's ranking for "what are the key papers on X").
+- **Author newsletter archives** — the `?s=<query>` or tag page on their blog lists their chronological take on a topic, often surfacing follow-ups that update the original framework.
+
+Treat the foundational page as a **link mine, not just a source**: extract every sibling/related href in one `browser_console` or snapshot pass, dedupe, then fire the fetches in a single batched turn. This turned a 5-source Andrew Ng agentic-patterns dig into two rounds (one to locate Part 1, one to pull Parts 2–5 + two course pages + the talk) instead of ten serial searches. It works precisely because the author has already done the decomposition work and linked their own subtopics — you just follow the edges.
+
+A close cousin: **the author's personal homepage** (`<name>.ai`, `<name>.github.io`, `<name>.com`) is often a hand-curated index of their entire body of work — talks, papers, blog posts, projects, all with direct links and dates. Fetch it with §8 curl+grep to harvest the full link list in one pass before deciding which sources to pull in depth. When researching a named person's framework, hit their homepage first — it's the link mine that §14 describes but at the top level, not just within one article.
+
+## 15. YouTube talk/podcast metadata via curl + embedded JSON
+
+Talks, keynotes, and podcast interviews are high-value primary sources for researching a person's views — they contain the author's own framing, chapter structure, slide links, and inline annotations that transcripts alone miss. The browser stack is overkill for extracting their metadata; `curl` + a small Python parse of the page's embedded JSON is faster and needs no API key.
+
+**What you can extract from a YouTube watch page:**
+- **Title** — `<title>...</title>` tag.
+- **Full description** — including chapter timestamps, slide/PDF links, the author's own "thoughts" annotations, and links to related resources. YouTube stores this in a `shortDescription` JSON field embedded in the page HTML.
+- **Chapter list** — the description text usually contains `00:00 Intro / 01:25 Next section / ...` which is the talk's own table of contents.
+
+**Pattern:**
+```sh
+curl -sL "https://www.youtube.com/watch?v=VIDEO_ID" -A "Mozilla/5.0" | python3 -c "
+import sys, re, json
+html = sys.stdin.read()
+# Title
+title = re.search(r'<title>(.*?)</title>', html)
+print('TITLE:', title.group(1) if title else 'N/A')
+# Description (embedded as JSON, needs proper unescaping)
+desc = re.search(r'\"shortDescription\":\"((?:[^\"\\\\]|\\\\.)*)\"', html)
+if desc:
+    text = json.loads('\"' + desc.group(1) + '\"')  # JSON-decode escapes
+    print(text)
+"
+```
+
+**Key details:**
+- The `shortDescription` value is JSON-escaped inside the page. Use `json.loads('"' + raw + '"')` to correctly unescape `\n`, `\"`, etc. — don't do naive string replacement.
+- The description often contains the author's slide PDF links (Google Drive), companion blog post links, and their own timestamped "thoughts" — these are primary sources in their own right. Harvest and fetch them.
+- **Chapter timestamps in the description ARE the talk's structure** — use them to decide which sections are relevant before attempting a full transcript.
+
+**Caption transcripts are harder.** The `youtube.com/api/timedtext` endpoint requires a signed `signature` parameter from the page, and bare requests return empty. If you need the full transcript, use the browser to load the page and extract the caption track URL from the `captionTracks` JSON, or fall back to third-party transcript services. In practice, the description + chapter list + any companion blog post usually give you enough to cite the talk's claims without the full transcript.
+
+**Batch video IDs** — when researching one author, their homepage or a YouTube playlist page lists all their video IDs. Harvest them (§2 `browser_console` on a playlist, or curl the playlist page), then batch-curl each watch page's metadata in one turn.
+
+## 16. GitHub raw files and API as primary source
+
+When the primary source is code, a repo README, a config file, or an agent-instruction file (e.g. a `program.md` that defines an agentic loop), GitHub serves these as plain text — no browser needed.
+
+**Raw file fetch** — `raw.githubusercontent.com` returns the file content directly:
+```sh
+curl -sL "https://raw.githubusercontent.com/<org>/<repo>/<branch>/<path>"
+# Try master first, then main — branches vary
+```
+This is how you read READMEs, CLAUDE.md/AGENTS.md files, prompt templates, Makefiles, CI configs — anything committed. No rate limits for public repos, no auth needed.
+
+**Discover an author's repos by topic** — the GitHub API lists repos sorted by recency or stars:
+```sh
+curl -sL "https://api.github.com/users/<user>/repos?per_page=100&sort=updated" \
+  | python3 -c "
+import sys, json
+repos = json.loads(sys.stdin.read())
+for r in repos:
+    name, desc, stars = r['name'], r.get('description','') or '', r['stargazers_count']
+    print(f'{name} ({stars}★): {desc}')
+"
+```
+Filter the output by keyword (e.g. `agent`, `llm`, `tool`) to find the repos relevant to your research question. Star counts signal which repos are the author's flagship work vs. experiments.
+
+**Pinned repos on the profile page** — `curl` the user's GitHub profile or `api.github.com/users/<user>/repos?sort=stars&per_page=10` to find their most prominent work fast. The top-starred repos are usually the ones that define their public framework.
+
+**When raw fetch 404s**, the default branch may be `main` not `master`, or the file may live in a subdirectory. Probe with the API: `api.github.com/repos/<org>/<repo>/contents/` lists the root directory; follow `path` into subdirs.
+
+## 17. Academic papers (arXiv) → PDF + pdftotext, not the HTML mirror
+
+arXiv is the dominant primary source for ML/CS/AI research. Its abstract pages (`arxiv.org/abs/<id>`) are clean and curl-friendly, but its full-text HTML mirror (`ar5iv.labs.arxiv.org`) is unreliable — it frequently renders as an empty stub page in headless browsers (zero headings, zero body text in the snapshot). Don't waste turns on ar5iv.
+
+**The reliable three-step workflow:**
+
+1. **Batch screen abstracts first.** When you have a list of candidate paper IDs (some of which will be wrong subjects — arXiv IDs are recycled across all categories), curl all the `/abs/` pages in one for-loop and extract title + abstract before committing to full-text downloads:
+
+```sh
+for id in 2405.15793 2404.05427 2310.06770; do
+  echo "===== arxiv:$id ====="
+  curl -sL --max-time 20 -A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' "https://arxiv.org/abs/$id" \
+    | sed 's/<[^>]*>/\n/g' | grep -iE '.' | sed '/^$/d' \
+    | grep -iA8 'Title:' | head -10
+done
+```
+
+This catches wrong-subject hits fast (you'll see "Ropes" or "Quantum teleportation" where you expected "Software engineering") before downloading megabytes of irrelevant PDFs.
+
+2. **Download the PDF + extract text with `pdftotext`.** arXiv PDFs (`arxiv.org/pdf/<id>`) are always available and contain the full paper including figures-as-text:
+
+```sh
+curl -sL --max-time 40 -A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' -o paper.pdf "https://arxiv.org/pdf/<id>"
+pdftotext paper.pdf paper.txt   # poppler-utils; usually pre-installed as /usr/bin/pdftotext
+```
+
+`pdftotext` preserves section structure well enough for `grep` to hit cleanly. Download multiple PDFs in one batched turn (parallel curls), then extract + grep in the next.
+
+3. **Grep the extracted text for specific claims.** Once you have `.txt` files, use targeted grep patterns to find the architecture/method/quote you need without reading the full paper:
+
+```sh
+# Find where the paper describes its architecture/method
+grep -niE 'workflow|architecture|loop|plan|phase|decompos' paper.txt | head -30
+# Extract a window around a hit for context
+sed -n '150,400p' paper.txt | grep -niE 'ACI|command|edit|loop' | head -30
+```
+
+**arXiv ID gotcha:** IDs are NOT subject-scoped — `2405.15793` (SWE-agent, SE) and `2405.11403` (MapCoder) coexist with `2405.07867` (phonon physics). Always verify the title in the abstract screen before assuming a guessed ID is the paper you want. When you have a title but not an ID, §12 (Wikipedia) or the author's homepage (§14) will give you the correct ID.
+
+**Versioned URLs:** `arxiv.org/abs/<id>` shows the latest version; `arxiv.org/abs/<id>v1` pins a version. `arxiv.org/pdf/<id>` (no version) serves the latest. For reproducibility, cite the specific version you fetched.
+
+**Related preprint servers** (Semantic Scholar, bioRxiv, SSRN) follow the same pattern: screen abstracts, then PDF + pdftotext.
