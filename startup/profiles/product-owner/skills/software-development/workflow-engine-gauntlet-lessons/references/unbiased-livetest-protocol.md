@@ -36,3 +36,19 @@ Run the pinned template against 5+ different spec types with NO implementation h
 - At least 3 of 5: workflow instance shows completed
 - Zero blocked cards (review-required fix working)
 - verify catches real bugs (not false PASS)
+
+## Round 6 results (5 unbiased tests)
+
+All 5 specs built and verified autonomously with zero hints:
+
+| # | Spec | Verify Path | Fix Iters | Close | Instance |
+|---|------|-------------|-----------|-------|----------|
+| 1 | Markdown to HTML CLI | PASS | 0 | merged | active (dead-branch) |
+| 2 | URL Shortener REST API | FAIL→fix→PASS | 2 | merged | completed |
+| 3 | CSV Deduplicator Tool | PASS | 0 | merged | active (dead-branch) |
+| 4 | Tic-Tac-Toe Game (minimax) | FAIL→fix→PASS | 1 | merged | completed |
+| 5 | String Validator Library | FAIL→fix→ESCALATE | 1+4 | merged | completed |
+
+**5/5 work complete. 3/5 instances auto-completed. 2/5 stuck on dead-branch-cycle (work IS done, close card ran).**
+
+Verify caught real bugs: CRLF injection (URL Shortener), production-mode missing db.create_all (Tic-Tac-Toe), test coverage gaps (String Validator). No false PASS results — production_mode_tested=True enforced via schema.

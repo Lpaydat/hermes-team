@@ -1,13 +1,13 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, or produces false PASS results. 19 lessons from 14+ gauntlet rounds across 5 templates. Round 6 unbiased livetest: 5 different spec types (CLI, REST API, game, data tool, validation library) — all decomposed and built autonomously with no hints. User iteration cap preference: 10 (not 3)."
+description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, or spawns duplicate instances. 26 lessons from 14+ gauntlet rounds across 5 templates, including a measured 5-board unbiased livetest. User iteration cap preference: 10 (not 3)."
 ---
 
 # Workflow Engine Gauntlet Lessons
 
 Hard-won findings from live gauntlet testing of tech-lead-execute, debugger-exit, qa-gate, and dev-dispatch templates. Each lesson cost a full pipeline run to discover.
 
-**See also:** `workflow-template-authoring` skill's `references/pitfalls.md` for the template-authoring-focused version of these lessons (condition grammar, schema enforcement, edge semantics).
+**See also:** `workflow-template-authoring` skill's `references/pitfalls.md` for the template-authoring-focused version of these lessons (condition grammar, schema enforcement, edge semantics). For measured, falsifiable evidence of lesson #17 (dead-branch leak) and the reusable SQL queries to reconstruct any template's graph path from `engine_events`, see `references/measured-evidence-dead-branch-leak.md`.
 
 ## The enforcement hierarchy (proven empirically)
 
@@ -175,6 +175,8 @@ Do NOT rely on the verifier self-blocking via `kanban_chains` inside its body �
 
 **Unbiased livetest protocol:** see `references/unbiased-livetest-protocol.md` — how to run 5+ different spec types with no implementation hints to verify template generalization.
 
+**Board postmortem analysis:** see `references/board-postmortem-analysis.md` — how to forensically score a COMPLETED livetest/gauntlet board: read kanban DB + delivered code, run tests, independently reproduce each reported bug (pre-fix) and verify the fix (post-fix, production mode). Includes the 5-dimension scorecard and the CRLF/control-char injection verification recipe.
+
 ### 14. kanban_chains `block_verified: false` — auto-block can fail silently
 
 **Symptom:** The calling profile (e.g. tech-lead plan card) calls `kanban_chains`, which creates the chains and attempts to auto-block the caller (step 5 of the blocking sequence). The returned `block_verified` field is `false` — the block did not take effect. The caller's card stays in `ready` instead of moving to `todo` (dependency-parked).
@@ -228,6 +230,8 @@ This worked — the card dependency-parked and auto-promoted correctly on 5 subs
 
 **Symptom:** Workflow instance stays `active` after all real work completes. verify=PASS, close=done, but fix and re-verify are stuck `pending`. The engine's `_check_completion` requires ALL reachable nodes to be terminal — and fix/re-verify are reachable via edges from verify and close.
 
+**Measured at scale (5-board unbiased livetest):** This defect is deterministic, not intermittent. 3/6 instances leaked; the correlation is 100% — every instance that took the verify→close shortcut (verify=PASS, fix/re-verify bypassed) leaked, every instance that ran the fix loop completed. Contrast: `qa-gate` on the same boards correctly emitted `node_skipped` for its 9 dead branches and all 9 qa-gate instances completed. Zero `node_skipped` events exist for `tech-lead-execute`. The dead-branch mechanism works in qa-gate; it is simply not invoked for the fix↔re-verify cycle in tech-lead-execute. Full measured evidence + reusable reconstruction queries: `references/measured-evidence-dead-branch-leak.md`.
+
 **Mechanism:** This is the same dead-branch-in-cycle problem from lesson #4, but specifically for the fix↔re-verify cycle in tech-lead-execute. When verify=PASS, the verify→fix conditional edge (FAIL) doesn't fire. But dead-branch skip can't propagate because:
 - fix has incoming from verify (conditional FAIL, didn't fire) AND re-verify (conditional FAIL, back-edge)
 - re-verify has incoming from fix (unconditional back-edge)
@@ -256,14 +260,222 @@ This worked — the card dependency-parked and auto-promoted correctly on 5 subs
 
 **When the user gives a specific fix direction, execute it exactly.** Don't reframe, don't propose alternatives, don't "improve" on it. If they say kanban_chains, use kanban_chains. If they say "read the source code," read the source code. The user's fix directions come from knowing the system — treat them as authoritative.
 
-**Symptom:** The close card body contains a hardcoded verdict string (e.g. `Verdict: FAIL`) that does not reflect the actual pipeline outcome. The worker must override it based on upstream evidence.
+### 20. Trigger-key race produces duplicate instances
 
-**Observed in tl-gauntlet-a round 3:** The close card (t_7ea54bd2) body carried `Verdict: FAIL`, but all upstream verifiers had PASS'd and the work was merged to master (1b7099b). The tech-lead correctly overrode the stale label and followed the PASS path.
+**Symptom:** A single spec card produces TWO workflow instances of the same template on the same board. Both run independently to completion (or both leak, if they hit lesson #17).
 
-**This is distinct from lesson #13** (verify FAIL→close false merge via unconditional edge). Lesson #13 is a graph-topology defect — close fires because the edge has no condition. This lesson is a **card-body template defect** — the verdict is hardcoded as a literal in the body text instead of being read from upstream verifier metadata.
+**Mechanism (measured):** The trigger_key is registered in `trigger_keys` AFTER the instance is created — not in the same transaction. If the dispatcher tick that fires the trigger runs between instance-creation and key-registration, the dedup check queries `trigger_keys`, finds nothing, and fires a second instance. In the measured case the first instance was created 44 seconds BEFORE its own trigger_key appeared in the table.
 
-**Root cause:** The close card body was written at template-design time with a placeholder verdict. Body text is IGNORED by the enforcement hierarchy (lesson #1), so the literal is never validated against runtime state.
+**Detection query:**
+```sql
+SELECT i.instance_id, datetime(i.created_at,'unixepoch') AS inst_created,
+       datetime(t.created_at,'unixepoch') AS key_created,
+       (t.created_at - i.created_at) AS key_lag_seconds
+FROM workflow_instances i
+JOIN trigger_keys t ON t.key LIKE '%' || json_extract(i.trigger_context,'$.card_id')
+WHERE t.created_at > i.created_at;
+-- key_lag_seconds > 0 means the instance predates its own dedup key
+```
 
-**FIX (template-side):** The close card body must NOT contain a verdict literal. Instead, it should instruct the worker to read the verdict from the upstream verifier terminal(s) via `kanban_show` or `task_runs.metadata`. The completion metadata should carry the resolved verdict, not echo a body literal.
+**FIX:** Register the trigger_key atomically with instance creation (same transaction / write key before creating instance). Until then, expect duplicate instances on the first board of a simultaneous multi-board trigger batch.
 
-**Generalization:** never hardcode runtime-decided values (verdicts, counts, SHAs, status) as literals in card body templates. They go stale and force manual reconciliation. Read them from the source at runtime.
+### 21. node_states not updated on re-dispatch within a loop
+
+**Symptom:** `node_states.card_id` and `node_states.output` reflect only the FIRST dispatch of a node, not the final one. In a fix loop that iterates twice, `fix` shows the iteration-1 card_id; the iteration-2 card_id appears only in `engine_events`.
+
+**Mechanism:** The engine writes `node_states` on first dispatch but does not overwrite `card_id`/`output` when the same node re-dispatches in a subsequent loop iteration. `output` was observed empty `{}` for ALL tech-lead nodes across a full 5-board run — verdict data lived only in `qa-gate` `trigger_context`, never in tech-lead node outputs.
+
+**Impact:** Low for execution correctness (the engine drives off `engine_events`), but `node_states` is NOT a faithful snapshot of final node state. Anyone auditing "which card did node X end on" or "what did node X output" must read `engine_events`, not `node_states`.
+
+**Implication for the T4/T5 state-blob migration:** the `state` JSON blob on `workflow_instances` (the denormalized snapshot) inherits this staleness if it is sourced from `node_states`. Verify the migration reads from the event log, not the stale per-node row.
+
+### 22. kanban_chains premature promotion — matrix-root parent-edge gap
+
+**Symptom:** A tech-lead plan card dispatches dev work via `kanban_chains`,
+then promotes prematurely — before the dev or verifier tasks have run. The
+plan card had `parents: []` (no parent edge to anything downstream), so
+`recompute_ready` saw no open blockers and promoted it immediately.
+
+**Observed in livetest-unbias-3 (CSV Deduplicator, unbiased livetest):**
+The plan card `t_9c8c4add` called `kanban_chains`, which created a matrix
+root + 2 dev chains + a verifier fan-in. But the auto-block linked the plan
+card as child of the terminal card(s), and the block step failed silently
+(same latent bug as lesson #14). The plan card ended up with no effective
+parent, promoted, and the dispatcher re-dispatched it while both dev tasks
+were still `running` and the verifier was still `todo`.
+
+**The worker self-corrected on re-dispatch (run 4):** It detected
+dev/verifier tasks still in-flight, manually linked itself as a child of
+the verifier card (`kanban_link(parent_id=verifier, child_id=plan_card)`),
+and re-blocked as `kind=dependency`. The verifier transitively depends on
+both dev tasks, so the plan card correctly dependency-parked and
+auto-promoted only after verify stamped PASS.
+
+**This is the same root cause as lesson #14** (`kanban_chains` block step
+unreliable), manifesting as a premature-promotion symptom rather than a
+`block_verified: false` return value.
+
+**Detection (for forensic analysis):** query `task_events` for the sequence:
+`dependency_wait` → `promoted` → `claimed` (re-dispatch) →
+`dependency_wait` with a reason mentioning "premature promotion" or "still
+running". If you see this pattern, the bug fired and the worker
+self-recovered.
+
+```sql
+SELECT task_id, run_id, kind, substr(payload, 1, 90)
+FROM task_events
+WHERE kind IN ('dependency_wait', 'promoted', 'claimed')
+  AND task_id = '<plan-card-id>'
+ORDER BY created_at;
+-- Look for: dependency_wait → promoted → claimed → dependency_wait(corrected)
+```
+
+**FIX (worker-side, proven on livetest-unbias-3):** After `kanban_chains`,
+don't just check `block_verified`. Verify the dependency structure is
+*actually correct* — the caller must be transitively blocked by every
+terminal card. If any terminal path is missing, manually `kanban_link` the
+caller to the terminal(s) and `kanban_block(kind="dependency")`. The
+tech-lead plan card body should carry this instruction explicitly.
+
+### 23. Verify swarm confirms "FIXED" without re-running the original failing input
+
+**Symptom:** A finding is filed, a fix card claims resolution, and the
+re-verify swarm (fresh-eyes + static + delta checks) all stamp "FIXED /
+PASS." But the original bug is still live in the code.
+
+**Observed in livetest-unbias-1 (md2html converter):** Finding F7 "Combined
+bold+italic mis-parsed" (`**bold and *italic***` →
+`<strong>bold and *italic</strong>*`). The fix card applied a regex priority
+trick (`***` > `**` > `*`). Three independent probe workers ALL confirmed
+"fix7 PASS" / "7/7 findings FIXED" / "0 regressed." None re-ran the EXACT
+original failing input. The fix only handled `***both***` (the easy symmetric
+case); mixed nesting (`**bold and *italic***`) was still broken — stray `*`,
+no `<em>` nesting.
+
+**Root cause — the confirmation bias of fix-verification swarms:** When a
+finding lists multiple example inputs, the re-verify tends to test the
+SIMPLEST or most SYMMETRIC case, not the original failing input from the
+evidence field. A symmetric case (`***x***`) passes with a regex-priority
+fix; the asymmetric original (`**a *b***`) does not. "I tested bold+italic"
+is not verifiable; "I ran `inline('**bold and *italic***')` and got X" is.
+
+**FIX (template-side):** The verify/re-verify node body MUST instruct: "For
+each FIXED finding, re-execute the EXACT repro command from the finding's
+`evidence` field verbatim. Do not substitute a simpler or symmetric example.
+Paste the command AND its output into the finding's `fix_verification`
+field." Without this, the swarm drifts to easy cases.
+
+**FIX (reviewer-side):** When auditing a "FIXED" claim, always re-run the
+original evidence input yourself. Symmetric/easy sub-cases passing is not
+proof the original is fixed. See `references/board-postmortem-analysis.md`
+section 5 for the technique.
+
+**Generalization:** this is distinct from lesson #15 (TESTING=True masks prod
+defects). #15 is about the execution ENVIRONMENT hiding a real bug. This
+lesson is about the verify swarm testing a DIFFERENT (easier) input than the
+one that originally failed. Both produce false PASS; the mechanisms differ.
+
+### 24. Missing feature never filed across all iterations (shared blind spot)
+
+**Symptom:** A standard feature required by the spec is absent from the code,
+absent from the test suite, and NEVER appears as a finding across all verify
+iterations. The pipeline stamps PASS on an incomplete deliverable.
+
+**Observed in livetest-unbias-1:** The spec said "code blocks." The merged
+code (`INLINE_RE` regex) had NO backtick branch — inline code (`` `printf` ``)
+passed through as literal backticks. No test covered it (`grep` for
+backtick/inline-code in the suite returned nothing). No verifier across 3
+iterations + 3-probe swarms ever filed it. The pipeline stamped "17/17 ACs
+PASS, merged."
+
+**Root cause:** When the spec term is ambiguous ("code blocks" could mean
+fenced-only or fenced+inline), verifiers anchor on whatever the code ALREADY
+implements. The code had fenced code blocks → verifiers checked fenced code
+blocks → marked the AC satisfied. Nobody asked "does standard Markdown
+include inline code, and does THIS code handle it?" The absence was invisible
+because nothing in the pipeline cross-checked the spec against a canonical
+feature list (e.g. CommonMark).
+
+**Contrast — parallel chain caught it:** A second dev chain in the SAME board
+implemented AND tested inline code (3 dedicated tests). But that chain's
+output was not selected as the merged artifact (lesson #25). The superior
+code existed and was verified; the pipeline ignored it.
+
+**FIX (template-side):** The verify node schema should include a
+`spec_coverage_matrix` field — an explicit map of every spec requirement →
+implemented (yes/no) → tested (yes/no). This forces the verifier to walk the
+spec line by line rather than checking what the code happens to do. Without
+the matrix, verifiers test what exists, not what's missing.
+
+**FIX (reviewer-side):** When auditing a PASS verdict, enumerate the
+standard feature set for the domain and probe each one against the code —
+especially features the spec mentions ambiguously. Absence-of-test is the
+tell: `grep` the suite for the feature; if zero hits, it's an unguarded gap.
+See `references/board-postmortem-analysis.md` section 6.
+
+### 25. Parallel dev chains: inferior artifact selected for merge
+
+**Symptom:** Two plan cards decompose the spec differently and each spawns a
+dev→verify chain. Both complete. The close card picks one as "merged" — but
+it's the WEAKER implementation, while the superior version sits ignored in
+another workspace.
+
+**Observed in livetest-unbias-1:** Chain A (3-task serial: skeleton → parser
+→ tests) produced 386 LOC with a CommonMark delimiter-stack emphasis parser,
+inline code support, and 37 tests. Chain B (1-task all-in-one) produced 236
+LOC with a regex-only emphasis parser (broken nesting, no inline code) and 14
+tests. The close card merged Chain B. Result: the merged artifact has 3
+confirmed functional bugs that the superior Chain A does not.
+
+**Root cause:** The close/integration step trusts the verify verdict ("PASS,
+0 findings") without comparing artifacts across parallel chains. When
+multiple chains run (common when two plan cards both execute — see lesson
+#22 on premature promotion / re-blocks), there's no mechanism to select the
+best output. The close card reads the terminal verifier of WHICHEVER chain
+it's wired to and stamps merged.
+
+**This compounds with lessons #23/#24:** Chain B's verifiers had the same
+blind spots (confirmed FIXED without original input, never noticed missing
+inline code). Chain B stamped a clean PASS because its verification was
+shallow, not because its code was correct. Selecting by "which chain has
+fewer findings" selects the chain with the WEAKEST verification, not the best
+code.
+
+**FIX (template-side):** When parallel chains exist, the close/integration
+node MUST compare: test counts, feature coverage, and LOC are cheap proxies.
+At minimum, the close card should list ALL dev-chain terminal artifacts and
+the reason for selecting one. Better: run a cross-chain integration verify
+that tests both outputs against the same AC matrix.
+
+**FIX (reviewer-side):** Always check for parallel chains in the dependency
+tree (multiple roots, or two plan cards). If they exist, compare their
+outputs before accepting the merge verdict. The "merged" artifact may be the
+wrong one. See `references/board-postmortem-analysis.md` section 7.
+
+### 26. "merged" verdict without a git commit (aspirational merge)
+
+**Symptom:** The close card stamps `verdict: "merged"` and references an
+artifact path in a task workspace, but the repo's master branch has only the
+initial commit. The code was never committed.
+
+**Observed in livetest-unbias-1:** `/tmp/livetest-unbias/repo-1/` git log
+showed only `d015795 initial` (README + requirements + .gitignore). The
+deliverable `md2html.py` lived only in `workspaces/t_140686de/`. The close
+metadata said `artifact: "md2html.py (t_140686de worktree)"` — a workspace
+path, not a commit SHA.
+
+**Expected for livetest boards** (ephemeral, testing the pipeline not the
+product). **A real defect for production pipelines** — if the close card says
+"merged" but nothing is in git, downstream consumers (CI, deployment, other
+agents) will find nothing.
+
+**Root cause:** The dev→verify→fix loop operates on workspace files. Nothing
+in the template graph enforces a `git commit` (or `git merge`) step before
+close. The verdict literal "merged" is set by the close card body, not
+derived from a git operation.
+
+**FIX (reviewer-side):** When a close card claims "merged," verify it:
+`git log --oneline` in the repo. If the deliverable isn't in a commit, the
+merge is aspirational. For livetest, note it. For production, it's a blocker.
+See `references/board-postmortem-analysis.md` section 8.
+

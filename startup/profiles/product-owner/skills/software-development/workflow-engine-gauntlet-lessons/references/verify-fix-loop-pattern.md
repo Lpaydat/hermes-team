@@ -58,7 +58,7 @@ The body should include: "test the application with TESTING=False (or production
 - **Round 4:** verify FAIL → fix → re-verify ESCALATE → close(escalated). WORKFLOW COMPLETE.
 - **Round 5:** verify PASS → close(merged, tasks_planned=2, tasks_completed=2). Instance required manual completion (dead-branch gap).
 - **Round 6:** verify FAIL (7 findings, production_mode_tested=True) → fix (7 fixed) → re-verify PASS → close(merged). WORKFLOW COMPLETE.
-- **Unbiased livetest (5 specs):** 4 of 5 work complete. Tic-Tac-Toe + String Validator instances completed. Markdown + CSV work done but instances stuck (dead-branch-cycle). URL Shortener still iterating. All 5 built autonomously with zero hints.
+- **Unbiased livetest (5 specs, NO hints):** ALL 5 work complete. Markdown CLI (PASS, merged), URL Shortener API (FAIL→fix→PASS, completed), CSV Deduplicator (PASS, merged), Tic-Tac-Toe game (FAIL→fix→PASS, completed), String Validator Library (FAIL→fix→ESCALATE→iter4, completed). 3/5 instances auto-completed, 2/5 stuck on dead-branch-cycle (work done). All 5 built autonomously from spec-only input.
 
 ### Iteration cap: user preference is 10
 
