@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, or crashes on ESCALATE verdicts."
+description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, or produces false PASS results. 19 lessons from 14+ gauntlet rounds across 5 templates. Round 6 unbiased livetest: 5 different spec types (CLI, REST API, game, data tool, validation library) — all decomposed and built autonomously with no hints. User iteration cap preference: 10 (not 3)."
 ---
 
 # Workflow Engine Gauntlet Lessons
@@ -173,6 +173,8 @@ Do NOT rely on the verifier self-blocking via `kanban_chains` inside its body �
 
 **The proven fix loop template pattern (verify→fix→re-verify→close):** see `references/verify-fix-loop-pattern.md` — includes the exact edge JSON, node schema requirements, and close body template that passed round 4/5 live testing.
 
+**Unbiased livetest protocol:** see `references/unbiased-livetest-protocol.md` — how to run 5+ different spec types with no implementation hints to verify template generalization.
+
 ### 14. kanban_chains `block_verified: false` — auto-block can fail silently
 
 **Symptom:** The calling profile (e.g. tech-lead plan card) calls `kanban_chains`, which creates the chains and attempts to auto-block the caller (step 5 of the blocking sequence). The returned `block_verified` field is `false` — the block did not take effect. The caller's card stays in `ready` instead of moving to `todo` (dependency-parked).
@@ -200,11 +202,13 @@ This worked — the card dependency-parked and auto-promoted correctly on 5 subs
 
 **This is a systematic blind spot, not a one-off.** Any defect that manifests only when `TESTING=False` (uncaught exceptions that Flask's testing mode swallows, missing initialization calls masked by test fixtures, error handlers that only fire in production) will be invisible to per-slice review if all probes run in test mode.
 
-**FIX (template-side):** Every per-slice verifier should run **at least one production-mode probe** (TESTING=False, fresh DB/config) in addition to the standard test-mode checks. This catches the defect class early (at the slice level) instead of deferring it to integration, saving 2+ iteration cycles.
+**FIX (template-side — PROVEN in round 6):** Add `production_mode_tested` as a **required boolean** in the verify node's output schema. The body must instruct: "test the application with TESTING=False. Boot the app in production mode and exercise EVERY endpoint — any 500 is a Critical finding." This is the same lesson as #1 (schema enforcement > body text): without the required field, the verifier sometimes skips production-mode testing and returns a false PASS.
 
 **FIX (reviewer-side):** When a finding is reported as "FIXED," independently re-probe in production mode. The terminal verifier on Slice 3 falsely reported an auth.py bug as "New-1 FIXED" — the tech-lead's prod-mode probe caught it was still a live 500 because the fix landed in `todos.py` but not the sibling `auth.py`.
 
 **Generalization:** when a fix lands in one module, audit sibling call paths for the same flaw — fix the class, not the site. The non-dict-JSON guard was added to `todos.py` but the identical code path in `auth.py` was missed.
+
+**Round 6 proof:** With `production_mode_tested` enforced via schema, verify consistently catches the production-mode Critical (7 findings including deployment bugs). Without it (round 5), verify returned a false PASS (0 findings) on the same buggy code.
 
 ### 16. Close-card hardcoded verdict literal (distinct from lesson #13)
 

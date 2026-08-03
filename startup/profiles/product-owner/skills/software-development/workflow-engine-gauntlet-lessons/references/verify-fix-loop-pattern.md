@@ -20,10 +20,10 @@ plan → verify ─┬─ PASS/ESCALATE → close
 "edges": [
   {"from": "plan", "to": "verify", "condition": "${nodes.plan.output.plan_complete} exists"},
   {"from": "verify", "to": "close", "condition": "${nodes.verify.output.verdict} == 'PASS' OR ${nodes.verify.output.verdict} == 'ESCALATE'"},
-  {"from": "verify", "to": "fix", "condition": "${nodes.verify.output.verdict} == 'FAIL'", "max_iterations": 3},
-  {"from": "fix", "to": "re-verify", "max_iterations": 3},
+  {"from": "verify", "to": "fix", "condition": "${nodes.verify.output.verdict} == 'FAIL'", "max_iterations": 10},
+  {"from": "fix", "to": "re-verify", "max_iterations": 10},
   {"from": "re-verify", "to": "close", "condition": "${nodes.re-verify.output.verdict} == 'PASS' OR ${nodes.re-verify.output.verdict} == 'ESCALATE'"},
-  {"from": "re-verify", "to": "fix", "condition": "${nodes.re-verify.output.verdict} == 'FAIL'", "max_iterations": 3}
+  {"from": "re-verify", "to": "fix", "condition": "${nodes.re-verify.output.verdict} == 'FAIL'", "max_iterations": 10}
 ]
 ```
 
@@ -57,6 +57,12 @@ The body should include: "test the application with TESTING=False (or production
 
 - **Round 4:** verify FAIL → fix → re-verify ESCALATE → close(escalated). WORKFLOW COMPLETE.
 - **Round 5:** verify PASS → close(merged, tasks_planned=2, tasks_completed=2). Instance required manual completion (dead-branch gap).
+- **Round 6:** verify FAIL (7 findings, production_mode_tested=True) → fix (7 fixed) → re-verify PASS → close(merged). WORKFLOW COMPLETE.
+- **Unbiased livetest (5 specs):** 4 of 5 work complete. Tic-Tac-Toe + String Validator instances completed. Markdown + CSV work done but instances stuck (dead-branch-cycle). URL Shortener still iterating. All 5 built autonomously with zero hints.
+
+### Iteration cap: user preference is 10
+
+User explicitly requested `max_iterations: 10` for fix→re-verify cycles. A cap of 3 stops the loop too early on complex bugs. Use 10 for all cycle edges.
 
 ### Close body template — don't hardcode verdicts
 
