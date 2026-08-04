@@ -1,40 +1,16 @@
 {
   "active_projects": [
     {
-      "board": "ab-decom-a1",
-      "repo": "/tmp/ab-decom/repo-a1"
-    },
-    {
       "board": "ab-decom-b1",
-      "repo": "/tmp/ab-decom/repo-b1"
-    },
-    {
-      "board": "ab-decom-c1",
-      "repo": "/tmp/ab-decom/repo-c1"
-    },
-    {
-      "board": "ab-decom-a2",
-      "repo": "/tmp/ab-decom/repo-a2"
+      "repo": "/tmp/ab-decom-v2/repo-1"
     },
     {
       "board": "ab-decom-b2",
-      "repo": "/tmp/ab-decom/repo-b2"
-    },
-    {
-      "board": "ab-decom-c2",
-      "repo": "/tmp/ab-decom/repo-c2"
-    },
-    {
-      "board": "ab-decom-a3",
-      "repo": "/tmp/ab-decom/repo-a3"
+      "repo": "/tmp/ab-decom-v2/repo-2"
     },
     {
       "board": "ab-decom-b3",
-      "repo": "/tmp/ab-decom/repo-b3"
-    },
-    {
-      "board": "ab-decom-c3",
-      "repo": "/tmp/ab-decom/repo-c3"
+      "repo": "/tmp/ab-decom-v2/repo-3"
     }
   ]
 }

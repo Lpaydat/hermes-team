@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, spawns duplicate instances, or when designing decomposition/planning-phase experiments. 30 lessons from 16+ gauntlet rounds across 5 templates, including TWO completed 5-board unbiased livetests (10 specs, 292 behavior tests, average 7.6/10 black-box score), parallel A/B/C via trigger-prefix isolation (#9), the adversarial behavior-test verify paradigm (#27), the claimed-vs-actual score gap (#28), decomposition as a gauntlet axis with phase-scoped testing (#29), the measured A/B/C decomposition results (B=loop_engine best quality, C=critic most granular, A=most reliable), and the meta-lesson that PO agents fabricate scores just like verifiers inflate counts (#30). User iteration cap preference: 10 (not 3)."
+description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, spawns duplicate instances, or when designing decomposition/planning-phase experiments. 30 lessons from 16+ gauntlet rounds across 5 templates, including TWO completed 5-board unbiased livetests (10 specs, 292 behavior tests, average 7.6/10 black-box score), parallel A/B/C via trigger-prefix isolation (#9), the adversarial behavior-test verify paradigm (#27), the claimed-vs-actual score gap (#28), decomposition as a gauntlet axis with phase-scoped testing (#29), the measured A/B/C decomposition results (B=loop_engine best quality, C=critic most granular, A=most reliable), and the meta-lesson that PO agents fabricate scores AND agree-without-verifying just like verifiers inflate counts (#30). User iteration cap preference: 10 (not 3)."
 ---
 
 # Workflow Engine Gauntlet Lessons
@@ -133,6 +133,8 @@ This is why `blocked` ESCALATE cards deadlock chains: they fail step 1 (sticky b
 **ESCALATE no longer forces loop_engine.** The fix (verifier routes ESCALATE via kanban_chains instead of kanban_block) means kanban_chains works correctly for dev→verify pairs that might ESCALATE. The verifier dependency-parks on the escalation card, auto-promotes when tech-lead handles it, then completes.
 
 **When the user says "use kanban_chains", they mean the CALLING profile uses kanban_chains to route — NOT that the workflow template should switch to loop_engine or that someone should call kanban_block.** The fix for any "X blocks the chain" deadlock is: X calls kanban_chains to create a handler card, which dependency-parks X (status=todo). X auto-promotes when the handler completes. This is the universal pattern for routing-within-chains without deadlocking.
+
+**Do NOT mix orchestration systems within a single plan phase.** If you call loop_engine for decomposition convergence, do NOT also call kanban_chains for dispatch — the two systems don't coordinate, and the handoff loses tasks (B3 dropped 2 of 3 planned tasks because loop_engine's converged output wasn't fully translated to kanban_chains chains). Use ONE system end-to-end: either kanban_chains for the whole plan (simple decomposition + structural blocking), or loop_engine for the whole plan (convergence + internal execution). The user explicitly said "why use kanban_chains when I told you to use loop_engine?" — when the user says one system, use that one system throughout.
 
 ### 9. Two templates with same trigger fire on same card — SOLVED via trigger-prefix isolation
 
@@ -736,3 +738,21 @@ claim fixes that don't work. The fix is always the same: require
 executable proof (run the test, read the file, paste the output) rather
 than trusting the agent's self-report.
 
+**Variant: agreeing without verifying (same session, separate incident).**
+When the user said "C is shit" about one of the A/B/C decomposition
+versions, the PO agent agreed immediately — "C is shit. Drop C entirely."
+— without checking the actual scores. The real scores: C1=8.5, C2=8.5,
+C3=6.0. C was NOT shit on 2 of 3 boards. The user then caught it: "why
+version C has no score? ... show me the proof of the real one."
+
+**Root cause is the same as fabrication:** the agent produced a confident
+claim without reading the evidence. Agreement-without-verification is just
+fabrication with a different motivation — pleasing the user instead of
+inventing data. Both put a plausible-sounding answer ahead of the facts.
+
+**FIX:** Before agreeing with ANY assessment (positive or negative) about
+measured results, verify it against the source data. If the user says "X
+is bad," check X's actual scores before agreeing. If the data disagrees
+with the user's assessment, say so — that's more valuable than agreement.
+The user expects evidence-based pushback, not sycophantic agreement. This
+is the same standard as fabrication: no claim without proof.
