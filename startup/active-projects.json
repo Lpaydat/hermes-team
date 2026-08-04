@@ -1,16 +1,24 @@
 {
   "active_projects": [
     {
-      "board": "ab-decom-b1",
-      "repo": "/tmp/ab-decom-v2/repo-1"
+      "board": "livetest-unbias-1",
+      "repo": "/tmp/livetest-unbias/repo-1"
     },
     {
-      "board": "ab-decom-b2",
-      "repo": "/tmp/ab-decom-v2/repo-2"
+      "board": "livetest-unbias-2",
+      "repo": "/tmp/livetest-unbias/repo-2"
     },
     {
-      "board": "ab-decom-b3",
-      "repo": "/tmp/ab-decom-v2/repo-3"
+      "board": "livetest-unbias-3",
+      "repo": "/tmp/livetest-unbias/repo-3"
+    },
+    {
+      "board": "livetest-unbias-4",
+      "repo": "/tmp/livetest-unbias/repo-4"
+    },
+    {
+      "board": "livetest-unbias-5",
+      "repo": "/tmp/livetest-unbias/repo-5"
     }
   ]
 }

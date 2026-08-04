@@ -8,7 +8,7 @@ loop_engine actually iterate?".
 
 This is a **planning audit**, distinct from the execution audit in §1–14. The
 six scoring dimensions below supersede the five execution dimensions when the
-user is asking about the plan, not the product. You can run both (execution +
+user is asking about the plan, not the product. You can run both (execution + 
 planning) on the same board — they grade different things.
 
 ### a. The six planning dimensions (score each 0–10 with cited evidence)
@@ -49,9 +49,9 @@ WHERE body LIKE '%<requirement-keyword>%' AND title LIKE '%[task]%';
 For templates that use a convergence loop (loop_engine, iterative refinement),
 dimension 6 asks: **did the loop earn its cost?** Three checks:
 
-1. **Did it iterate?** Find `decomposition_iterations: N` (or equivalent) in the
-   plan card's comments. `N=0` means no loop ran — score the dimension as N/A
-   (one-shot template, no convergence to evaluate).
+1. **Did it iterate?** Find `decomposition_iterations: N` (or equivalent) in
+   the plan card's comments. `N=0` means no loop ran — score the dimension as
+   N/A (one-shot template, no convergence to evaluate).
 2. **Did it change anything?** The convergence log records the initial coarse
    cut and each iteration's decisions (merge X, split Y, dissolve Z). Compare
    the initial task list to the final converged tree. A loop that ran 2
@@ -137,3 +137,212 @@ dispatch completed, Version B outperformed Version A in atomicity and AC
 specificity. The failure mode (B3) is a **dispatch-reliability bug**, not a
 convergence-loop failure. The loop works; the execution of its output is the
 weak link.
+
+## 16. loop_engine's `loop_state` blackboard — the authoritative convergence evidence
+
+For boards produced by the **loop_engine** iterative-convergence template
+(tech-lead decomposes spec into N phases → loop_engine runs each phase through
+a dev↔verify convergence loop → re-dispatches on FAIL up to max_iterations),
+there is a single best evidence source for the convergence story: the
+`loop_state` blackboard.
+
+### a. Where it lives
+
+The **root loop card** (assignee = the loop/profile name, e.g.
+`livetest-unbias-3`; title `Loop: <spec name>`) carries a series of
+`[swarm:blackboard]` comments with key `loop_state`. Each comment is written at
+a phase transition (phase advance or iteration replan) and is a full JSON
+snapshot of the loop's state machine.
+
+```sql
+-- Pull every loop_state snapshot, in chronological order:
+SELECT task_id, body FROM task_comments
+WHERE body LIKE '[swarm:blackboard]%loop_state%'
+ORDER BY id;
+```
+
+The JSON parses (strip the `[swarm:blackboard] {"key": "loop_state", "value": `
+prefix) to:
+
+```json
+{
+  "phase_index": 3,            // current phase (0-indexed)
+  "iteration_counter": 2,      // iteration within the current phase
+  "execution_card": "t_78afa558",   // the ACTIVE dev card
+  "verifier_card": "t_a6b46ee6",    // the ACTIVE verify card
+  "terminal_ids": ["t_a6b46ee6"],   // card(s) the loop is parked on
+  "max_iterations": 5,
+  "no_progress_streak": 1,
+  "phases": [                  // the FULL phase plan, each with contract + ACs
+    {"execution": {...}, "verifier": {...}, "max_iterations": 5},
+    ...
+  ]
+}
+```
+
+### b. What you can extract immediately
+
+From the `loop_state` snapshots alone — before reading any card bodies or
+running any code — you get:
+
+1. **Phase count + names.** `len(phases)` is the true decomposition; each
+   `phases[i].execution.title` is the dev task title.
+2. **Per-phase iteration counts.** The number of `loop_state` comments at a
+   given `phase_index` = how many iterations that phase took to converge. A
+   phase that needed 2+ iterations had a real defect found and fixed.
+3. **The dev↔verify card pairing for every phase.** `execution_card` and
+   `verifier_card` (and the replan comments' "Fresh cards: dev X → verifier Y"
+   notes) give you the exact card IDs to pull for each phase.
+4. **The convergence state.** `no_progress_streak`, `iteration_counter` vs
+   `max_iterations` tell you whether the loop converged, escalated, or hit the
+   cap.
+5. **The full contract + ACs per phase.** Each `phases[i].execution.body`
+   carries the contract and acceptance criteria — this is the source of truth
+   for what the dev was asked to build, even better than the plan card.
+
+### c. The convergence-trace query
+
+To reconstruct the entire phase-by-phase convergence story (which phase took
+how many iterations, which dev/verify cards, pass/fail), join `loop_state`
+comments with the replan/advance summary comments on the same root card:
+
+```sql
+-- Phase transitions (advance or replan) from the runner/tech-lead:
+SELECT body FROM task_comments
+WHERE task_id = '<root-loop-card-id>'
+  AND body NOT LIKE '[swarm:blackboard]'
+ORDER BY id;
+```
+
+These human-readable comments ("Phase 3 PASSED on iteration 2", "Phase 4
+replan (iteration 2/5)", with the finding the dev must fix) are the narrative
+complement to the `loop_state` JSON.
+
+### d. Worked example — livetest-unbias-3 (File Organizer Tool)
+
+Root loop card `t_f422e80a`. 5 phases, `max_iterations: 5` each.
+
+| Phase | Execution card(s) | Verifier card(s) | Iterations | Outcome |
+|-------|-------------------|-------------------|------------|---------|
+| 0 — Core categorization + move | t_6fd8c7ec | t_1b046c46 | 1 | PASS |
+| 1 — Collision handling | t_07fd3cdc | t_996ae996 | 1 | PASS |
+| 2 — Flags (dry-run/recursive/keep-empty) | t_db528461 → t_44723540 | t_01cf8cf9 → t_ff7d9992 | 2 | PASS (dry-run collision preview + recursive self-rename fixed) |
+| 3 — Summary + empty-dir cleanup | t_9d1877d4 → t_f12624bb | t_0091ccc6 → t_eb756ae6 | 2 | PASS (symlink-to-dir crash fixed) |
+| 4 — pytest test suite | t_65b7a26a → t_78afa558 | t_a3a9ec8a → t_a6b46ee6 | 2 | PASS (untested `_2` collision increment fixed) |
+
+**Reading the table:** 4 of 5 phases needed a replan (iteration 2) because the
+verifier found a real defect on iteration 1. Every defect was a genuine
+data-loss-class or crash-class bug (not a phantom finding). The loop converged
+within `max_iterations: 5` on every phase. This is the convergence-impact
+evidence for dimension 6 of the decomposition audit — the loop earned its cost.
+
+**Card-count decomposition (the ceremony-vs-substance split):**
+
+| Category | Card count | Examples |
+|----------|------------|----------|
+| Core dev+verify (real work) | ~16 | `[task]` + `[verify]` cards |
+| Probe swarm (3-way fan-out per failed iter) | ~16 | `[probe] fresh-eyes` / `static review` / `delta check` |
+| Matrix-root anchors (blackboard only) | ~7 | `verify t_...` root cards |
+| Wrapper / structural | ~7 | spec, plan, discover, loop root, fix cards, close |
+
+Total: 46 cards for a 122-line tool. The right-sizing score separates these:
+the **5-phase dev decomposition was correctly sized** (1 phase per coherent
+feature increment); the **3-way probe fan-out per failed iteration was the
+card-count driver** (verification ceremony, not over-decomposition). Score the
+decomposition on the 5-phase plan; note the verification topology as a separate
+cost observation.
+
+### e. Pitfall: loop_state comments are large (119KB+ on this board)
+
+Each `loop_state` snapshot re-serializes the *entire* `phases[]` array, so
+on a 5-phase board a single comment can be 20KB+ and the full set 100KB+.
+`sqlite3` CLI truncates large outputs. When pulling them, use
+`substr(body, 1, 4000)` for a structural overview, then pull specific comments
+by `id` range for the full JSON if you need to parse a particular phase's ACs.
+The human-readable advance/replan comments (§c) are small and sufficient for
+the convergence trace without parsing the big JSON.
+
+## 17. Library / codec audit — purity probe + scratch-copy recovery (worked example: livetest-unbias-5, Base64)
+
+Library/codec specs ("implement X from scratch, no stdlib") have two
+audit-critical patterns that game/CLI/REST boards do not. This section captures
+them via a worked example you can mirror for any codec (base64, json, csv,
+hashlib, urlencode).
+
+### a. The forbidden-import purity gate (verify it yourself, do not trust the verdict)
+
+A spec that says "pure-Python, do NOT `import base64`" makes purity a CRITICAL
+pass/fail dimension. A dev or verifier may self-report "pure-python confirmed"
+based on a stale or mis-scoped grep. Verify independently with two layered
+checks:
+
+```sh
+# 1. On-disk grep over the SUT package dir only (NOT the tests, NOT /tmp probes):
+grep -rn "import base64\|from base64" <board>/workspaces/.../b64/
+# exit 1 (no match) = CLEAN. exit 0 = LEAK.
+
+# 2. In-memory source scan (catches dynamic/exec'd imports the disk grep misses):
+python3 -c "import sys; sys.path.insert(0,'<sut-dir>'); import b64, inspect; \
+  src=inspect.getsource(b64); print('import base64' in src, 'from base64' in src)"
+# False False = CLEAN.
+```
+
+**Distinguish the oracle from the SUT.** The verifier's cross-check scripts and
+the integration test file will contain `import base64 as oracle` — that is
+CORRECT (the stdlib is allowed as a read-only oracle in tests). Trace every
+`import base64` hit to its file: if it lives in `b64/__init__.py` it's a real
+violation; if it lives in `/tmp/hermes-verify-*.py` or `test_*.py` it's a
+legitimate oracle. The reusable probe is `probe_purity()` in
+`scripts/library-breakit.py`.
+
+### b. Third code-recovery path: the integration verifier's scratch copy
+
+When the shared workspace AND all per-task workspaces are reaped post-completion
+(scratch workspaces are deleted on `done`), two recovery paths are documented
+above (§1b trace ledger; §"Reaped scratch" log mining). There is a THIRD, faster
+one specific to boards that ran an integration verify (`[verify-b]`) step:
+
+The integration verifier copies the full SUT + all test files into
+`/tmp/hermes-verify-<slug>/` (e.g. `/tmp/hermes-verify-b64/`) to run its own
+adversarial suite in isolation. That `/tmp` dir is **outside the board's
+cleanup lifecycle**, so it frequently survives even after every board workspace
+is gone.
+
+```sh
+# The close-card body usually names the surviving path. Read it FIRST:
+sqlite3 kanban.db "SELECT body FROM task_comments WHERE body LIKE '%/tmp/hermes-verify%' LIMIT 5;"
+# Or enumerate every scratch path any worker touched:
+grep -rhoE "/tmp/hermes-verify[a-z0-9/-]+" logs/ | sort -u
+```
+
+On livetest-unbias-5 this recovered the complete `b64/__init__.py` (109 lines)
+plus all 4 test files in seconds — no JSONL reconstruction needed. The close
+verdict's "surviving canonical copy at `/tmp/hermes-verify-b64/`" pointer was
+honest and load-bearing.
+
+### c. Lenient-vs-strict decode: the honest non-defect note
+
+A from-scratch codec often matches the stdlib's *default* (lenient) behavior
+rather than strict-canonical behavior. For Base64, `decode('AB==')` returns
+`b'\x00'` (the `B` carries non-zero bits in the padded zone) rather than
+rejecting — this matches Python's `base64.b64decode` default and is permitted by
+RFC 4648 §3.3. **Characterize this explicitly in the report as a non-defect**,
+not as a silent acceptance: run the comparison against the stdlib oracle and
+show they agree. A reviewer who sees `decode('AB==')` accepted without comment
+will flag it; one who sees it matches the oracle default will not.
+
+### d. Test-count reconciliation for multi-layer suites
+
+On this board the close verdict claimed "155/155". Reconcile the layers:
+
+| Layer | File | Count | Where it lives |
+|-------|------|-------|----------------|
+| Dev suite (P0–P3) | test_core.py + test_validation.py + test_streaming.py (+ test_urlsafe.py, GC'd) | 4 + 23 + 6 + ~9 = ~42 | shared workspace (GC'd); recovered in /tmp copy |
+| Integration verifier suite | test_integration_behavior.py | 122 | `/tmp/hermes-verify-b64/tests/` (survives) |
+| **Total** | | **155** | matches close verdict |
+
+The dev-suite `test_urlsafe.py` was folded into the integration file in the
+surviving `/tmp` copy (the integration verifier only copied core/validation/
+streaming + its own). Confirm via `pytest --co -q` per file that the per-file
+counts sum to the claimed total — do not echo "155" without breaking it down.
+

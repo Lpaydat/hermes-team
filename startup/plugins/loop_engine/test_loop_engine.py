@@ -1008,6 +1008,61 @@ class TestDoDArtifactGate(unittest.TestCase):
         )
         self.assertNotEqual(parsed["status"], "complete")
 
+    def test_ground_truth_advances_when_fewer_traces_than_behaviors(self):
+        # ground_truth code verifier: behaviors = "what I tested",
+        # defect_traces = "defects I found". Fewer traces than behaviors is the
+        # SUCCESS case (a clean implementation), NOT under-coverage. The count
+        # invariant must NOT block advance for metric_type=ground_truth.
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        v_gt = _verifier()
+        v_gt["metric_type"] = "ground_truth"
+        verdict = self._verdict_with_traces(n_behaviors=3, n_traces=1)
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": v_gt},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        self.assertEqual(parsed["status"], "complete")
+        self.assertEqual(parsed["decision"], "advance")
+
+    def test_ground_truth_advances_with_zero_defect_traces(self):
+        # ground_truth clean pass: zero defects found (empty defect_traces) on
+        # a dod_met=true verdict must advance.
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        v_gt = _verifier()
+        v_gt["metric_type"] = "ground_truth"
+        verdict = {"dod_met": True, "recommendation": "advance",
+                   "behaviors": [{"behavior": "b1"}, {"behavior": "b2"}],
+                   "defect_traces": [], "gaps": []}
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": v_gt},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        self.assertEqual(parsed["status"], "complete")
+
+    def test_ground_truth_rejects_fabricated_trace(self):
+        # Universal integrity: ground_truth does NOT skip the fabrication guard.
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        v_gt = _verifier()
+        v_gt["metric_type"] = "ground_truth"
+        verdict = self._verdict_with_traces(fabricated=True)
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": v_gt},
+            create_ids=["t_root", "t_exec2", "t_verifier2"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        self.assertNotEqual(parsed["status"], "complete")
+
     def test_rejects_dod_met_true_when_a_trace_is_latent_defect(self):
         # The headline fix: a latent_defect trace hard-blocks advance even when
         # the verifier mistakenly wrote dod_met=true.

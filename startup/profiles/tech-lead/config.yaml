@@ -44,6 +44,7 @@ fallback_model: []
 platform_toolsets:
   cli:
   - kanban
+  - loop_engine
   - memory
   - session_search
   - skills

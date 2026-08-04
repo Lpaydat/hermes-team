@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from 16+ gauntlet rounds of live-testing workflow templates. Load when debugging deadlocks, false PASS, ESCALATE crashes, instance leaks, or designing decomposition experiments. 30 lessons: adversarial behavior-test verify (#27), claimed-vs-actual score gap (#28), A/B/C decomposition (pure loop_engine B fixed the dispatch bug, 3-4 phases per spec), PO agents fabricate scores (#30). Cap: 10 iterations. Do NOT mix orchestration systems."
+description: "Proven pitfalls and fixes from 16+ gauntlet rounds of live-testing workflow templates. Load when debugging deadlocks, false PASS, ESCALATE crashes, instance leaks, or designing decomposition experiments. 31 lessons: adversarial behavior-test verify (#27), claimed-vs-actual score gap (#28), A/B/C decomposition (pure loop_engine B fixed the dispatch bug, 3-4 phases per spec), PO agents fabricate scores (#30), gateway restart after plugin add (#31). Cap: 10 iterations. Do NOT mix orchestration systems."
 ---
 
 # Workflow Engine Gauntlet Lessons
@@ -126,9 +126,11 @@ This is why `blocked` ESCALATE cards deadlock chains: they fail step 1 (sticky b
 | Dynamic iteration count | Fixed at call time | Iterates until DoD |
 | Caller blocking | Structural (parent links) | Internal (advance/replan) |
 | ESCALATE handling | Via kanban_chains (dependency-park) | Internal (advance/replan/escalate) |
-| Profiles with access | All 13 | architect, builder, debugger (+ tech-lead if enabled) |
+| Profiles with access | All 13 | architect, builder, debugger, tech-lead (when enabled) |
 
-**Rule:** kanban_chains for parallel fan-out and dev→verify pairs (ESCALATE now fixed via kanban_chains routing). loop_engine for complex multi-phase convergence (architect gates, debug converge loops). If you're building a workflow template that dispatches dev work, use kanban_chains — the template can't predict task count or dependency structure at design time.
+**Rule:** kanban_chains for parallel fan-out and dev→verify pairs (ESCALATE now fixed via kanban_chains routing). loop_engine for complex multi-phase convergence (architect gates, debug converge loops, **tech-lead decomposition+execution — A/B/C winner at 9.30 avg**). If you're building a workflow template that dispatches dev work, use kanban_chains — the template can't predict task count or dependency structure at design time.
+
+**EXCEPTION (proven in A/B/C decomposition gauntlet):** For the tech-lead-execute PLAN phase specifically, pure loop_engine OUTPERFORMS kanban_chains (9.30 vs 8.13 avg). loop_engine handles both convergence AND dispatch in one system — no kanban_chains handoff that drops tasks. The tech-lead calls loop_engine with a `phases` array (one phase per task, execution=developer, verifier=verifier). This eliminates the dispatch bug where kanban_chains dropped 2/3 tasks on wide specs. Do NOT mix systems within one plan phase — use loop_engine end-to-end OR kanban_chains end-to-end.
 
 **ESCALATE no longer forces loop_engine.** The fix (verifier routes ESCALATE via kanban_chains instead of kanban_block) means kanban_chains works correctly for dev→verify pairs that might ESCALATE. The verifier dependency-parks on the escalation card, auto-promotes when tech-lead handles it, then completes.
 
@@ -748,6 +750,8 @@ one system throughout.
 Full experiment record (version designs, critic questions, atomicity
 definition, test specs, stop conditions): `references/decomposition-abc-experiment.md`.
 
+**Pure loop_engine B final results (winner, pinned):** `references/pure-loop-engine-b-decomposition.md` — full leaderboard (A=7.53, C=7.67, old-B=8.13, loop-B=9.30), per-dimension scores, dispatch bug analysis, phase structures.
+
 ### 30. Never fabricate gauntlet scores — read the actual subagent output
 
 **What happened:** When asked for the A/B/C comparison, the PO agent
@@ -793,3 +797,108 @@ is bad," check X's actual scores before agreeing. If the data disagrees
 with the user's assessment, say so — that's more valuable than agreement.
 The user expects evidence-based pushback, not sycophantic agreement. This
 is the same standard as fabrication: no claim without proof.
+
+### 31. Gateway must be restarted after adding plugins to a running profile
+
+**Symptom:** A plugin is enabled in `config.yaml` and symlinked into
+`profiles/<name>/plugins/`, but dispatched workers report: "loop_engine
+tool not in this session's schema. Plugin is enabled in config.yaml but
+not installed/discoverable: no symlink for loop_engine."
+
+**Mechanism:** The gateway daemon caches its toolset registration at
+startup. A symlink added AFTER the gateway launched (e.g. `loop_engine`
+symlink added at 11:21 but gateway running since July 31) is invisible
+to all worker sessions spawned by that gateway. The tool list is built
+once at gateway boot and reused for every dispatched card.
+
+**Detection:**
+```bash
+# When was the gateway started?
+ps aux | grep "<profile> gateway" | grep -v grep
+# When was the plugin symlink created?
+stat ~/.hermes-teams/startup/profiles/<profile>/plugins/<plugin> | grep Modify
+# If gateway started BEFORE the symlink, workers will fail.
+```
+
+**FIX:** Kill and restart the gateway for the affected profile:
+```bash
+kill $(ps aux | grep "<profile> gateway" | grep -v grep | awk '{print $2}')
+# Wait for it to die
+sleep 2
+# Restart (use hermes gateway run --profile <name>, or the gateways function)
+```
+
+After restart, any cards that failed with the missing-plugin error need
+their plan card reset (status back to `ready`, task_runs cleared, engine
+node_states reset to `pending`) so the dispatcher re-dispatches them with
+the new gateway that has the plugin available.
+
+**Generalizes to ANY code/config change, not just plugin adds.** The same
+stale-gateway problem hit the `prompt_builder.py` developer-review-required
+fix (lesson #8): the fix was committed to the hermes-agent repo, but the
+developer gateway was 4 days old and kept injecting the old protocol — cards
+blocked with `review-required` on every run until the gateway was restarted.
+Any change to `config.yaml`, `plugins/` symlinks, `prompt_builder.py`, or
+profile `SOUL.md` requires a gateway restart to take effect on dispatched
+workers.
+
+**Proper restart via systemd (not kill+nohup):** Hermes gateways are managed
+by systemd user units. Killing and re-launching manually leaves orphans and
+triggers a warning. Use:
+```bash
+systemctl --user restart hermes-gateway-<profile>.service
+```
+Verify with `systemctl --user status hermes-gateway-<profile>.service`.
+
+**After restart, reset failed cards.** Cards that failed due to the stale
+gateway (missing plugin, old protocol) need their status reset to `ready`,
+task_runs cleared, and engine node_states reset to `pending` so the
+dispatcher re-dispatches them with the corrected gateway.
+
+**This is an operational step, not a template or engine bug.** When you
+change anything about how a profile's gateway builds its toolset or prompt,
+always restart that profile's gateway.
+
+### 32. Dependency-link verification — the structural integrity check
+
+After decomposition (plan phase), verify the dependency links are
+structurally correct before running the full pipeline. This catches
+premature promotion bugs (lesson #22), parallel/serial confusion, and
+missing parent edges.
+
+**Query:**
+```sql
+SELECT parent_id, child_id FROM task_links
+```
+
+Cross-reference with task titles. The correct pattern for loop_engine
+decomposition:
+```
+Loop root → discover (optional)
+Loop root → [task] dev_card_1 → [verify] verifier_1 → [plan] caller
+Loop root → [task] dev_card_2 → [verify] verifier_2 → [plan] caller
+```
+
+Each phase creates: Loop root → task → verify → plan(caller). The plan
+card is the terminal parent — all phase verify cards link back to it.
+This is correct (plan auto-promotes when all phases converge).
+
+**Parallel vs serial detection:**
+- Parallel phases (independent concerns like REST endpoints): each
+  phase's task parents on the Loop root, NOT on the previous phase's
+  verify. Example: board 2 (Contact Manager API) — POST, GET, PUT, DELETE
+  each independently parent on Loop root. Correct.
+- Serial phases (sequential build-up like game features): each phase's
+  task parents on the previous phase's verify. Example: board 4 (RPS
+  game) — core→best-of-N→stats chains verify→next-task. Correct.
+
+**Bug indicators:**
+- Plan card with `parents: []` (no parent edge) → premature promotion
+  risk (lesson #22)
+- Two Loop roots on same board → duplicate instance (lesson #20)
+- Task with parent NOT in expected set (orphan link) → probe artifact
+  or dispatch bug
+
+**Cost:** Near-zero. One SQL query + title cross-reference. Run this
+during the decomposition analysis phase before committing to the full
+pipeline run.

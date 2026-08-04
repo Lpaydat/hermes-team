@@ -8,9 +8,14 @@ description: "Score a completed kanban board's pipeline quality across five dime
 Score a finished kanban board end-to-end: did the pipeline actually produce a
 working artifact backed by real evidence, or did it go through the motions?
 This skill is the methodology — the concrete probes and DB queries live in
-[`references/board-deep-analysis.md`](references/board-deep-analysis.md), and
-the reusable REST API break-it probe lives in
-[`scripts/rest-api-breakit.py`](scripts/rest-api-breakit.py).
+[`references/board-deep-analysis.md`](references/board-deep-analysis.md), the
+reusable REST API break-it probe lives in
+[`scripts/rest-api-breakit.py`](scripts/rest-api-breakit.py), the reusable
+CLI/log-tool break-it probe (delimiter injection, SIGINT handling, corrupt
+state files) lives in [`scripts/cli-breakit.py`](scripts/cli-breakit.py), and
+the reusable library/codec break-it probe (oracle cross-check, round-trip
+matrix, purity check, streaming chunk stress) lives in
+[`scripts/library-breakit.py`](scripts/library-breakit.py).
 
 ## When to load
 
@@ -40,8 +45,32 @@ The real evidence is in `task_comments`, the workspaces dir, and git history.
   "unbeatable", write your own exhaustive game-tree explorer and count terminal
   leaves by outcome. Spot-checking a few games is not proof — only an exhaustive
   count is.
+- **Adversarial break-it probes — write your own, don't reuse the verifier's.**
+  The four dimensions most likely to survive both dev and verify suites (load
+  [`scripts/cli-breakit.py`](scripts/cli-breakit.py) for CLI tools,
+  [`scripts/rest-api-breakit.py`](scripts/rest-api-breakit.py) for REST APIs,
+  [`scripts/library-breakit.py`](scripts/library-breakit.py) for
+  libraries/codecs):
+  1. **Delimiter injection** (CLI/log tools): a user-provided string field that
+     collides with the output format's separator (tab, comma, newline). A task
+     name containing `\t` corrupts a 4-field tab-separated log into 5 fields.
+     This is the bug that most commonly slips past both dev and verify because
+     testers check quotes and spaces but rarely the actual delimiter character.
+  2. **Signal handling + partial side effects** (long-running CLIs/servers):
+     SIGINT must exit cleanly (rc 0 or 130, no traceback) AND leave no partial
+     side effect — a half-written log entry, a dangling lock, an unflushed
+     buffer. Use `subprocess.Popen` + `send_signal(SIGINT)`, then check the
+     state dir for partial writes.
+  3. **Corrupt/empty input files**: read commands on missing, empty, or
+     malformed state files. Whether a corrupt-JSONL crash is a contract FAIL
+     or a robustness NOTE depends on whether the contract guarantees tolerance
+     of externally-corrupted input (usually it only guarantees the app *writes*
+     valid data).
+  4. **Boundary arg values**: zero-length timers (`--work 0`), negative counts
+     (`--cycles -1`), non-numeric args — these hit the `range()` off-by-one
+     and argparse-validation gaps that injected-function unit tests miss.
 - Cite: the entrypoint command, the piped-game output, your adversarial probe
-  result (leaf counts).
+  results (leaf counts, field counts, signal exit codes).
 
 ### 2. Test quality — coverage of the right things
 
@@ -209,6 +238,17 @@ only for critic variants. Dispatch-artifact detection (§5 there) catches
   `toolCall.arguments.content` from `write` calls. Validate faithfulness by
   re-running the dev suite on the reconstruction. See
   [`references/board-deep-analysis.md`](references/board-deep-analysis.md) §1b.
+- **GC'd workspaces — the integration verifier's scratch copy survives.** When
+  the shared workspace AND per-task workspaces are all reaped, there is a THIRD
+  recovery path: the `[verify-b]` (integration verify) card often wrote its own
+  copy of the SUT + all tests to `/tmp/hermes-verify-<slug>/` (or
+  `/tmp/hermes-verify-<task-id>/`). Because that scratch dir lives in `/tmp`,
+  NOT under the board's `workspaces/`, it is outside the board's post-completion
+  cleanup lifecycle and frequently still exists. The close-card body usually
+  names the surviving path ("surviving canonical copy at
+  `/tmp/hermes-verify-b64/`"). `grep -rh "hermes-verify" logs/ | sort -u` lists
+  every scratch path any worker used. This is faster and more faithful than
+  reconstructing from the trace JSONL — read the close card FIRST for the path.
 - **Empty `result` column.** Findings/fixes live in `task_comments`, not
   `result`. Query comments ordered by `created_at`.
 - **Per-task verify false PASS.** A per-task verifier can stamp PASS while its
@@ -282,3 +322,68 @@ only for critic variants. Dispatch-artifact detection (§5 there) catches
   [`references/decomposition-audit.md`](references/decomposition-audit.md) §6-7
   for the full planning-quality / decomposition audit methodology and worked
   examples across decomposition variants.
+- **loop_engine's `loop_state` blackboard is the authoritative per-phase
+  evidence source.** For loop_engine boards, the root loop card (assignee =
+  the loop profile, e.g. `livetest-unbias-3`) carries a series of
+  `[swarm:blackboard]` comments with key `loop_state`. Each comment is a full
+  JSON snapshot at a phase transition: `phase_index`, `iteration_counter`,
+  `execution_card`, `verifier_card`, `terminal_ids`, `max_iterations`,
+  `no_progress_streak`, and the entire `phases[]` array with each phase's
+  execution/verifier contract + ACs. This is *better* than mining plan-card
+  comments — it gives you the exact iteration count per phase, the dev↔verify
+  card pairing, and the convergence state machine, all in one query. See
+  [`references/board-deep-analysis.md`](references/board-deep-analysis.md) §16
+  for the query and a worked example. Read it FIRST on any loop_engine board —
+  it tells you how many phases, how many iterations each took, and which cards
+  to pull before you look at anything else.
+- **Verification probe-swarm fan-out inflates card counts on loop_engine
+  boards.** When a verify card returns FAIL, loop_engine re-dispatches a fresh
+  dev card AND spawns a 3-way parallel probe swarm: fresh-eyes AC verification
+  + static review + delta-check-vs-iter-1, each as a separate `[probe]` card.
+  On a 5-phase board with 4 failed-first-attempt phases, this produces ~30
+  probe cards on top of ~16 core dev/verify cards. When scoring right-sizing,
+  **separate ceremony cost (probe swarms, matrix-root anchors, wrapper cards)
+  from dev decomposition (the phase plan itself).** A 46-card board for a
+  120-line tool looks over-decomposed by raw count, but if only 16 cards are
+  real dev/verify work, the *decomposition* may be right-sized while the
+  *verification topology* is heavy. Score them as two separate observations:
+  "the 5-phase plan was correctly sized; the 3-way probe fan-out per failed
+  iteration was the card-count driver." Query to separate them:
+  `SELECT title, count(*) FROM tasks GROUP BY substr(title,1,15)` — `[task]`/
+  `[verify]` are core; `[probe]`/`Matrix root`/`verify t_` are ceremony.
+- **Delimiter injection is the most-missed CLI/log bug.** When the spec defines
+  a delimited output format (tab-separated, CSV, pipe-separated), a user string
+  field containing the delimiter character corrupts the column structure.
+  Verifiers reliably test quotes and spaces but almost never test the actual
+  separator byte. A `--task "a\tb"` on a tab-separated log line silently
+  produces 5 fields instead of 4. Always probe with the literal separator
+  character in every user-supplied string field — this bug class has survived
+  two independent verifier suites on a clean board. See
+  [`scripts/cli-breakit.py`](scripts/cli-breakit.py) probe 5.
+- **Mutation testing by the verifier is the strongest verify-accuracy signal.** A
+  verifier that not only writes behavior tests but then *deliberately breaks
+  the code* (revert the symlink guard → crash returns; restore → green; break
+  `n+=1` → hardcoded `_1` → data loss) and confirms its tests catch the
+  mutation has proven its tests are load-bearing, not vacuous. Look for
+  "mutation" in verifier run summaries (`SELECT task_id, summary FROM
+  task_runs WHERE profile='verifier' AND summary LIKE '%mutation%'`). A board
+  where verifiers ran mutations AND caught them is a 9-10 on verify accuracy
+  even if some individual probes missed edge cases — the mutation loop is the
+  integrity guarantee. Cross-check: if the verifier claims "3/3 mutations
+  caught" but you can't find the mutation in the logs, the claim is unverified.
+- **"Implement from scratch, no stdlib X" specs need a dedicated purity probe.**
+  When a spec mandates a pure-Python (or otherwise forbidden-dependency-free)
+  reimplementation of a stdlib module (base64, json, csv, hashlib, urllib…),
+  the purity constraint is a CRITICAL pass/fail gate that a self-reported
+  "pure-python confirmed" verdict can lie about or stale out on. Verify it
+  yourself with two layered checks: (1) on-disk grep —
+  `grep -rn "import base64\|from base64" <sut-dir>/` (exit 1 = clean); (2)
+  in-memory source scan — `inspect.getsource(<sut-module>)` then assert
+  neither `import <forbidden>` nor `from <forbidden>` is a substring. The
+  second catches dynamic/exec'd imports the disk grep misses. The reusable
+  probe is `probe_purity()` in
+  [`scripts/library-breakit.py`](scripts/library-breakit.py) — adapt
+  `FORBIDDEN_IMPORTS` to the spec. The oracle (stdlib `base64`, etc.) may be
+  imported by YOUR probe and by the verifier's cross-check scripts, but never
+  by the SUT itself — trace any `import base64 as _oracle` you find to confirm
+  it lives in a `/tmp/hermes-verify-*` probe, not in `b64/`.
