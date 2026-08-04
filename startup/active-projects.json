@@ -19,6 +19,18 @@
     {
       "board": "livetest-unbias-5",
       "repo": "/tmp/livetest-unbias/repo-5"
+    },
+    {
+      "board": "livetest-unbias-6",
+      "repo": "/tmp/livetest-unbias/repo-6"
+    },
+    {
+      "board": "livetest-unbias-7",
+      "repo": "/tmp/livetest-unbias/repo-7"
+    },
+    {
+      "board": "livetest-unbias-8",
+      "repo": "/tmp/livetest-unbias/repo-8"
     }
   ]
 }

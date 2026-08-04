@@ -152,6 +152,19 @@ count.
   diffs on the behavior test file. If an N/N clean-sweep was achieved by
   relaxing a failing test, note the original expectation vs the relaxed one and
   score accordingly. See §10 in the reference file.
+- **Forensic re-read of the verifier's own test file for false-confidence.**
+  A verifier can report `score=1.0, gaps=[]` with N/N green tests and STILL
+  have missed a bug class — because its tests *claimed* coverage they never
+  *exercised*. The three tell-tale patterns: (1) happy-path lock-in (every
+  format assertion uses the spec's literal example string, never hostile
+  input); (2) docstring-vs-input mismatch (docstring says "tabs, quotes" but
+  the test body only injects quotes); (3) no negative/stress oracle on the
+  format dimension. These are NOT caught by re-running the suite (it stays
+  green) — they require reading the test inputs and checking whether any test
+  ever injects the output delimiter into a user-supplied field. See
+  [`references/board-deep-analysis.md`](references/board-deep-analysis.md) §18
+  for the detection technique + worked example (tab-injection surviving two
+  verifier suites).
 - Did the per-task verify stamp PASS while missing a bug the integration verify
   caught? Call out the layered-verify win (or the miss).
 - Cite: the finding (comment id, body excerpt), your reproduction, and whether

@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from 16+ gauntlet rounds of live-testing workflow templates. Load when debugging deadlocks, false PASS, ESCALATE crashes, instance leaks, or designing decomposition experiments. 31 lessons: adversarial behavior-test verify (#27), claimed-vs-actual score gap (#28), A/B/C decomposition (pure loop_engine B fixed the dispatch bug, 3-4 phases per spec), PO agents fabricate scores (#30), gateway restart after plugin add (#31). Cap: 10 iterations. Do NOT mix orchestration systems."
+description: "Proven pitfalls and fixes from 16+ gauntlet rounds of live-testing workflow templates. Load when debugging deadlocks, false PASS, ESCALATE crashes, instance leaks, or designing decomposition experiments. 34 lessons: adversarial behavior-test verify (#27), claimed-vs-actual score gap (#28), A/B/C decomposition (pure loop_engine B fixed the dispatch bug, 3-4 phases per spec), PO agents fabricate scores (#30), gateway restart after plugin add (#31), behavior-test happy-path lock-in (#33), two-phase self-attack verify (#34). Cap: 10 iterations. Do NOT mix orchestration systems."
 ---
 
 # Workflow Engine Gauntlet Lessons
@@ -902,3 +902,116 @@ This is correct (plan auto-promotes when all phases converge).
 **Cost:** Near-zero. One SQL query + title cross-reference. Run this
 during the decomposition analysis phase before committing to the full
 pipeline run.
+
+### 33. Behavior-test happy-path lock-in — format-injection blind spot
+
+**Symptom:** The adversarial behavior-test verify paradigm (#27)
+dramatically reduced false PASS rates, but a THIRD class of false
+negative survives: the verifier tests ONLY happy-path inputs for each
+spec requirement, missing the delimiter-injection case.
+
+**Observed in livetest-unbias-1 (Pomodoro Timer, round 3 full e2e):**
+The spec defines a TSV log format (tab-separated). The verifier wrote 51
+behavior tests including `TestLogFormat` and
+`test_log_task_with_special_chars`. But:
+
+- The format test asserted `len(fields) == 4` using task="implement
+  auth" — a string with NO tabs. It could only confirm the example
+  round-trips, never stress the delimiter boundary.
+- The special-chars test's docstring said "tabs, quotes" but supplied
+  ONLY quotes (`'quote "test"'`) — ZERO tabs. It asserted `rc == 0` and
+  substring survival, not field-count integrity.
+- The "adversarial probes" tested time math, missing files, and empty
+  strings — never tested what happens when user input contains the
+  format delimiter itself.
+
+The bug: `format_log_line()` interpolates the task name raw into a
+tab-separated line. A task name containing a tab character produces 6
+fields instead of 4, corrupting the TSV. Reproducible:
+```python
+task = 'implement\tinject\tauth'
+→ '2024-01-15\t09:00-09:25\tWORK\timplement\tinject\tauth (cycle 1)'
+# 6 fields, not 4
+```
+
+**Three compounding failures (same root cause as #23/#24 — testing what
+the verifier IMAGINES, not what it doesn't):**
+
+1. **Happy-path lock-in on format tests.** Every format assertion used
+   the spec's literal example string. The test confirms the example
+   round-trips — not hostile input.
+2. **Docstring vs. input mismatch.** The test NAMED the threat
+   ("tabs, quotes") but didn't EXERCISE it. Named without tested = no
+   coverage.
+3. **No format-injection stress test.** Adversarial probes focused on
+   time math and missing files, not delimiter injection. The textbook
+   injection case (user input contains the field delimiter) was never
+   tried.
+
+**Both verifiers reported `gaps: []` and `score: 1.0`** — claiming 100%
+coverage with zero gaps. They asserted completeness they hadn't earned.
+
+**Why behavior tests didn't fix this (the limit of #27):** The
+adversarial paradigm says "write tests to BREAK the code." But the
+verifier can only break what it IMAGINES. It imagined time math, empty
+strings, missing files. It didn't imagine "what if the task name
+contains a tab character?" — despite the spec format literally using
+tabs as the delimiter. No amount of body_template instruction fixes
+this: it's a fundamental limitation of LLM-generated tests.
+
+**The infrastructure fix (not template-fixable):** A deterministic fuzz
+test that injects every ASCII control character (\\t, \\n, \\r, \\x00,
+etc.) into every string field, then asserts format integrity. This is
+the kind of thing a SCRIPT does better than an LLM. A
+`scripts/format-injection-fuzz.py` that runs as part of the verify node
+would catch this entire class every time, for free, with zero
+imagination required.
+
+**The one-line test that would have caught it:**
+```python
+s = {"task": "a\tb", "start": "...", "end": "...", "cycle": 1}
+assert len(format_log_line(s).split("\t")) == 4  # FAILS: gets 5
+```
+
+**Generalization:** Any spec that defines a delimiter-joined format\n(CSV, TSV, pipe-separated, log lines) is vulnerable. The verify node\nshould ALWAYS include a delimiter-injection probe. The most effective\nfix is a script, not a body-template instruction — see\n`references/behavior-test-injection-gap.md` for the full forensic\nanalysis and the fuzz-test pattern.
+
+### 34. Two-phase adversarial self-attack — verify attacks its own tests
+
+**The fix for #33 (and the common root of #23/#24):** After the behavior-test\nparadigm (#27) eliminated most false PASS issues, the remaining gap was\nLLMs writing impressive docstrings then using safe inputs. The verify\nbody_template now has an explicit **Phase 2: Attack Your Own Tests** that\nforces self-review before stamping a verdict.
+
+**The pattern (mirrors decomposition critic — clean-context second pass\nis genuinely better than self-review bias):**
+
+```
+Phase 1 (verifier): write behavior tests from spec — map every requirement
+Phase 2 (verifier): ATTACK your own tests:
+  1. Read EVERY test. Does the input actually match what the docstring claims?
+     If a test says 'special chars (tabs, quotes)' but input only has quotes
+     — that's a lie. Fix it.
+  2. What input would slip through this test and still be a bug? Write that test.
+  3. What format delimiter does the output use? Inject it into every string field.
+  4. What unhappy path is NOT tested? Empty/None, huge, Unicode, control chars
+     (0x00-0x1F, 0x7F), boundary values.
+  5. Production-mode: test with TESTING=False.
+Phase 3: run ALL tests (Phase 1 + Phase 2 additions).
+```
+
+**Common gaps LLMs miss (listed explicitly in verify body):**
+- Delimiter injection (tab in TSV, comma in CSV, pipe-separated)
+- Control characters in string inputs (null byte, tab, newline, carriage return)
+- Empty/None inputs where strings expected
+- Unicode and non-ASCII characters
+- Production-mode testing (TESTING=False)
+- Boundary values at exact limits
+
+**Why this is body text, not a new graph node:** The user asked about adding\nnodes or scripts, but decided body text is the right layer. A fuzz plugin\nwould be a pile of scripts — one for each bug class. The self-attack\nchecklist catches the same class (delimiter injection, control chars,\nempty/None) without infrastructure. It's the same pattern that worked for\ndecomposition: a second-pass adversarial review finds gaps the first pass\nmissed.
+
+**Re-verify also has Phase 2.** The re-verify body instructs the same\nself-attack on the fixed code: "the fix may have introduced NEW bugs —\napply the same adversarial self-review."
+
+**Limitation (honest):** The self-attack is still an LLM reviewing its own\nwork. It might rubber-stamp. But clean-context second pass is proven better\nthan self-review bias (decomposition critic found real gaps). The marginal\ncost is small — Phase 2 is reading, not writing from scratch.
+
+**Distinction from #23/#24:**
+- #23: verifier confirms FIXED without re-running original input
+- #24: verifier never notices missing feature
+- #33: verifier tests happy-path format only, misses delimiter injection
+All three share the root cause (testing what exists, not what could go
+wrong) but manifest at different points in the verify lifecycle.

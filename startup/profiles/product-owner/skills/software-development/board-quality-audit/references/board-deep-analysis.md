@@ -346,3 +346,105 @@ surviving `/tmp` copy (the integration verifier only copied core/validation/
 streaming + its own). Confirm via `pytest --co -q` per file that the per-file
 counts sum to the claimed total — do not echo "155" without breaking it down.
 
+## 18. Forensic detection of verifier false-confidence on the format dimension
+
+A verifier can write N/N green tests, declare `score=1.0, gaps=[]`, and STILL
+have missed a bug class — because its tests *claimed* coverage they never
+*exercised*. This is the most insidious verify-accuracy failure: the metadata
+honestly reports what the tests assert, but the tests assert the wrong inputs.
+The board looks clean (PASS, zero findings) and only a forensic re-read of the
+verifier's actual test file exposes the gap.
+
+Worked example: livetest-unbias-1 (Pomodoro Timer CLI). Two independent
+verifier cards (`t_fa987e67` primary, `t_57119cb8` integration) both stamped
+`dod_met=true, score=1.0, gaps=[]`. A tab-injection bug in
+`format_log_line()` (a task name containing `\t` corrupts a 4-field TSV into 6
+fields) survived BOTH suites. The forensic re-read revealed three distinct
+false-confidence patterns.
+
+### a. The three patterns to grep for in a verifier's test file
+
+Read the verifier's test file (recovered from `verify_suite_path` in run
+metadata, or `/tmp/hermes-verify-<slug>.py`, or mined from
+`logs/t_<verify-id>.log`). Then check for these three patterns:
+
+1. **Happy-path lock-in on format tests.** Every format assertion uses the
+   spec's literal example string verbatim. A `format_log_line` test that
+   asserts `len(fields) == 4` but only ever passes `task="implement auth"`
+   (the spec example) can NEVER catch delimiter injection — the example string
+   has no tabs. The test is structurally correct but epistemically inert.
+   **Detection:** for every format-output assertion, check whether the input
+   uses a user-supplied string field. If yes, confirm the test ever passes a
+   value containing the output delimiter. If no, the format dimension is
+   untested under hostile input.
+
+2. **Docstring vs. input mismatch.** A test docstring names a threat class
+   ("tabs, quotes") but the actual test input only exercises a subset (quotes
+   only). The test PASSES because it never injects the named dangerous
+   character. This is worse than pattern 1 — the verifier *knew* about the
+   threat, wrote the word "tabs" in the docstring, but only typed quotes.
+   **Detection:** for every test whose docstring or comment mentions a special
+   character class (tabs, newlines, quotes, unicode), grep the test body for
+   the literal byte (`\t`, `\n`, `"`, `\u`). A docstring saying "tabs" with no
+   `\t` in the input is a smoking gun.
+
+3. **No negative/stress oracle on the format dimension.** Even where field
+   count is checked, it is never checked against hostile input. The verifier's
+   "adversarial probes" are adversarial about *time math and missing files*,
+   not about *format integrity under delimiter injection*. The probe set covers
+   the spec's example shapes but not the spec's structural invariants.
+   **Detection:** enumerate the adversarial/edge-case test class. Does any test
+   inject the output delimiter character into a user-supplied field that flows
+   into a formatted output line? If the spec defines a delimited format (TSV,
+   CSV, pipe-separated) and no edge-case test puts the delimiter in a user
+   field, this dimension is untested.
+
+### b. The one-line probe that would have caught it
+
+```python
+s = {"task": "a\tb", "start": "2024-01-15T09:00:00", "end": "2024-01-15T09:25:00", "cycle": 1}
+assert len(format_log_line(s).split("\t")) == 4   # FAILS: gets 5
+```
+
+Every verifier testing a delimited output format should include this shape:
+inject the literal delimiter into every user-supplied string field, then assert
+field-count integrity. See
+[`scripts/cli-breakit.py`](scripts/cli-breakit.py) probe 5 for the reusable
+version.
+
+### c. Why this is a Dimension-4 (verify accuracy) problem, not Dimension-1 (code quality)
+
+The code bug (no sanitization) is Dimension-1. But the *systemic* failure here
+is that two independent verifier suites, both reporting `gaps=[]`, both failed
+to test format integrity under hostile input. That is a verify-accuracy finding
+that determines the board's PASS verdict is unreliable. When you detect these
+patterns during a board audit:
+
+- **Do not** score verify-accuracy 9-10 just because the suite is large (51+
+  39 tests, 3/3 mutation checks caught). Mutation checks that target *time
+  math* and *phase alternation* prove nothing about *format integrity*.
+- **Do** score verify-accuracy down and name the specific gap: "format
+  dimension untested under hostile input; 2 suites × 90 tests, 0 injected the
+  output delimiter into a user field."
+- **Do** reproduce the bug yourself (§a probe above) and report it as a true
+  positive that both verifiers missed — this is the most valuable output for
+  the user.
+
+### d. Generalizing beyond tabs
+
+The three patterns apply to ANY delimited output format where a user-supplied
+string field flows into the output line:
+
+| Format | Delimiter | User field | Injection probe |
+|--------|-----------|------------|-----------------|
+| TSV log | `\t` | task name | `task="a\tb"` |
+| CSV | `,` | name/description | `name="a,b"` |
+| Pipe-separated | `\|` | label | `label="a\|b"` |
+| Newline-delimited | `\n` | comment | `comment="a\nb"` |
+| JSON-in-string | `"` | any field | `field='a"b'` |
+
+The detection technique (§a) is the same: read the verifier's test file, find
+every format-output assertion, and confirm the test ever injects the delimiter
+into a user field. If not, the format dimension is untested regardless of how
+many tests pass.
+
