@@ -19,6 +19,12 @@ the reusable REST API break-it probe lives in
 - You are the gauntlet's Step-5 analyst grading a competing template run
   (see `template-ab-testing`).
 - You need to compare two boards' quality head-to-head.
+- You are auditing **decomposition/planning quality** across one or more boards
+  (does this template under-decompose?, score the plan cards, compare the
+  decomposition across these 3 specs, did loop_engine actually iterate?).
+  This is a planning-quality audit (coverage/atomicity/AC/dependencies/right-sizing
+  + convergence-loop impact), distinct from the execution-quality audit below —
+  see [`references/decomposition-audit.md`](references/decomposition-audit.md).
 
 ## The five scoring dimensions
 
@@ -61,11 +67,41 @@ The real evidence is in `task_comments`, the workspaces dir, and git history.
 
 ### 3. Decomposition — task count, AC quality, dependency ordering
 
-- Read `task_links` for the dependency tree. Confirm dev beads are ordered
-  correctly (foundation → algorithm → integration → verify).
-- Check AC count and specificity per dev bead. Good ACs are testable assertions,
-  not vague goals.
-- Cite: total card count, the tree, AC examples.
+Read `task_links` for the dependency tree. Confirm dev beads are ordered
+correctly (foundation → algorithm → integration → verify). Then score the
+decomposition on five sub-dimensions (0-10 each), each with cited evidence:
+
+- **Spec coverage** — does every spec requirement have a task? Enumerate the
+  spec's numbered requirements and map each to a dev card. List any gaps. This
+  is the floor: a plan that drops a requirement scores badly regardless of the
+  other four.
+- **Task atomicity** — are tasks small enough for a junior dev (5-8 ACs,
+  one coherent responsibility), or are multiple separable concerns crammed into
+  one card? A card bundling N distinct subsystems (e.g. an alignment engine +
+  an escaping engine + an error handler + the test suite) is under-decomposed.
+  Decompose by *concern*, not by output artifact: a single file with separable
+  layers (engine / I-O / tests) should still become 2-3 cards.
+- **AC quality** — are ACs testable assertions with exact expected values /
+  exit codes / output strings, or vague goals? "Pipe escapes to `\|`" is good;
+  "handles escaping" is bad. The strongest ACs pin numeric or string outputs.
+- **Dependency structure** — are serial/parallel dependencies correct? Verify
+  the `task_links` graph actually encodes the claimed ordering. Watch for
+  `kanban_chains` topology bugs (see pitfalls below): a parallel verify edge
+  left behind after a manual serial-fix, or a missing verifier→tech-lead link
+  causing premature promotion. Check the plan-card comments for the tech-lead's
+  own dispatch-failure confessions.
+- **Right-sizing** — is the dev-card count appropriate for spec complexity?
+  Rule of thumb: 1 dev card per 2-4 spec requirements, more for specs with many
+  separable sub-domains. A single card for a 9-10 requirement spec with distinct
+  sub-domains is almost always under-decomposed.
+
+**Under-decomposition's tell:** the verifier card has to invent edge cases the
+dev card omitted (reverse conversions, boundary counts, fallback rules). When
+the dev AC checklist is missing cases the spec implies and the verifier
+supplies them, the single dev card was too coarse to specify tightly.
+
+Cite: total card count, the dependency tree, AC examples, and the per-card AC
+count.
 
 ### 4. Verify accuracy — did verify find real findings? Were they true positives?
 
@@ -149,6 +185,18 @@ and inline evidence (file:line, commit SHA, test count). Followed by a short
 overall verdict. See [`references/board-deep-analysis.md`](references/board-deep-analysis.md)
 for the concrete DB queries, code-location technique, and a worked example.
 
+For **planning/decomposition-only audits** (no execution evidence to probe —
+score the plan cards and dev-card bodies against the spec, not the shipped
+code), the 5-sub-dimension decomposition rubric, the convergence-loop impact
+analysis, a cross-spec A/B comparison methodology, the **critic-impact**
+dimension (for self-grill / critic-decomp templates), and
+**dispatch-artifact detection** (PROBE-ONLY-DELETE cards, double-dispatch
+chains) live in [`references/decomposition-audit.md`](references/decomposition-audit.md).
+The critic-impact dimension (§4 there) scores whether the critic actually
+found real issues and whether the dispatch honored the revision — score it
+only for critic variants. Dispatch-artifact detection (§5 there) catches
+`kanban_chains` probe leakage and abandoned first-attempt chains.
+
 ## Pitfalls
 
 - **Stub repo trap.** The `/tmp/` repo path is often a bare `.git` + README.
@@ -199,3 +247,38 @@ for the concrete DB queries, code-location technique, and a worked example.
   mismatches between test-name verbs and the function actually called in the
   body. (The implementation may still be correct — independently verify rather
   than assume the test proves it.)
+- **`kanban_chains` matrix-root cards inflate dev-card counts.** A
+  `kanban_chains` dispatch creates a root blackboard card (body starts
+  "Matrix root / shared blackboard", assignee is the dev profile) that is NOT a
+  real dev task. Counting dev cards with `assignee='developer'` includes it.
+  Filter on `title LIKE '[task]%'` (real dev cards) or exclude
+  `body LIKE 'Matrix root%'` to get the true count. A brief saying "4 dev
+  cards" may actually mean 3 dev cards + 1 root — reconcile before scoring
+  right-sizing.
+- **Plan-card comments are a first-class evidence source for dispatch failures.**
+  The tech-lead's `[tl] Plan:` card often carries a comment confessing a
+  `kanban_chains` misuse that was hand-recovered: a `block_verified=false`
+  state race, parallel verify chains created when serial was needed, a manually
+  re-added verifier→tech-lead link. Query it:
+  `SELECT body FROM task_comments c JOIN tasks t ON t.id=c.task_id WHERE t.title LIKE '[tl] Plan%';`
+  A confessed manual recovery is a dependency-structure yellow flag even if the
+  final `task_links` graph looks correct — the stale wrong edge may still be
+  present (e.g. a root→verify parallel edge left after the serial fix).
+- **Partial dispatch trap (plan says N tasks, only M dispatched).** A tech-lead
+  plan can enumerate N converged leaf tasks in its comments but only dispatch
+  M < N of them via `kanban_chains`. The plan card is stuck in `running` (never
+  reached `done`) because Phase 3 didn't complete. This is a **spec-coverage**
+  failure, not a code failure. Cross-check the converged task count named in
+  the plan comment against `SELECT id FROM tasks WHERE title LIKE '[task]%'`.
+  The delta = dropped requirements. Observed on a loop_engine board where 2 of
+  3 converged tasks (spec reqs #5 and #6) had no dev card at all.
+- **Convergence-loop metadata lives in comments, not the result/metadata field.**
+  For loop_engine / iterative-decomposition templates,
+  `decomposition_iterations`, `sizing_summary`, and `task_ids` are logged in
+  the plan card's `task_comments` — NOT in `result` or kanban_complete
+  `metadata` (the plan card may never reach `done`). Always mine comments for
+  convergence evidence; do not trust an empty `result` to mean no convergence
+  happened. See
+  [`references/decomposition-audit.md`](references/decomposition-audit.md) §6-7
+  for the full planning-quality / decomposition audit methodology and worked
+  examples across decomposition variants.

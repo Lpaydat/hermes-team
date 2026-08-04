@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, or spawns duplicate instances. 28 lessons from 14+ gauntlet rounds across 5 templates, including TWO completed 5-board unbiased livetests (10 specs, 292 behavior tests, average 7.6/10 black-box score). Includes the adversarial behavior-test verify paradigm (#27), the claimed-vs-actual score gap (#28), and measured black-box quality analysis of round 2's behavior tests. User iteration cap preference: 10 (not 3)."
+description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, spawns duplicate instances, or when designing decomposition/planning-phase experiments. 30 lessons from 16+ gauntlet rounds across 5 templates, including TWO completed 5-board unbiased livetests (10 specs, 292 behavior tests, average 7.6/10 black-box score), parallel A/B/C via trigger-prefix isolation (#9), the adversarial behavior-test verify paradigm (#27), the claimed-vs-actual score gap (#28), decomposition as a gauntlet axis with phase-scoped testing (#29), the measured A/B/C decomposition results (B=loop_engine best quality, C=critic most granular, A=most reliable), and the meta-lesson that PO agents fabricate scores just like verifiers inflate counts (#30). User iteration cap preference: 10 (not 3)."
 ---
 
 # Workflow Engine Gauntlet Lessons
@@ -134,9 +134,24 @@ This is why `blocked` ESCALATE cards deadlock chains: they fail step 1 (sticky b
 
 **When the user says "use kanban_chains", they mean the CALLING profile uses kanban_chains to route — NOT that the workflow template should switch to loop_engine or that someone should call kanban_block.** The fix for any "X blocks the chain" deadlock is: X calls kanban_chains to create a handler card, which dependency-parks X (status=todo). X auto-promotes when the handler completes. This is the universal pattern for routing-within-chains without deadlocking.
 
-### 9. Two templates with same trigger fire on same card
+### 9. Two templates with same trigger fire on same card — SOLVED via trigger-prefix isolation
 
-You cannot run A and B template versions in parallel — both templates with the same `card_completed` trigger condition will fire on the same card in the same tick. Use sequential testing (run A, disable, reset, run B) or add board-scoped trigger conditions if the engine supports them.
+**Symptom:** Both templates with the same `card_completed` trigger condition fire on the same card in the same tick — duplicate instances, cross-contamination.
+
+**FIX (proven in the A/B/C decomposition gauntlet, 9 boards in parallel):** Give each competing version a DISTINCT `title_prefix` in its trigger condition, and seed each version's boards with spec cards whose titles carry that prefix. The engine matches the prefix, so each template version only fires on its own boards — all versions run in parallel on identical spec bodies.
+
+```json
+// tech-lead-execute.json      — trigger title_prefix: "[spec-a]"
+// tech-lead-execute-b.json    — trigger title_prefix: "[spec-b]"
+// tech-lead-execute-c.json    — trigger title_prefix: "[spec-c]"
+// board ab-decom-a1: spec card titled "[spec-a] Markdown Table Generator"
+// board ab-decom-b1: spec card titled "[spec-b] Markdown Table Generator"
+// board ab-decom-c1: spec card titled "[spec-c] Markdown Table Generator"
+```
+
+The spec BODY is identical across versions — only the title prefix differs. 3 versions × 3 specs = 9 boards all ran concurrently in one tick loop. This replaces the old sequential workaround (run A, disable, reset, run B).
+
+**Remaining constraint:** unique spec card IDs per board (`spec-1` on every board collides on the trigger_key dedup — the first board consumes the key and the rest never fire). Seed each board with a distinct card id (`spec-a1`, `spec-b1`, ...).
 
 ### 10. `completed_at` must be set for trigger to fire
 
@@ -606,4 +621,118 @@ path). Each independently runs the code, reproduces findings, and scores
 
 See `references/unbiased-livetest-protocol.md` for both round 1 (static
 review) and round 2 (adversarial behavior testing) results.
+
+### 29. Decomposition is a first-class gauntlet axis — and phase-scoped testing beats full runs
+
+**The decomposition problem (measured):** Task count variance is huge across
+specs — board 1 of round 1 used 28 cards for a ~100-line script (over-
+decomposition: 4 dev→verify iterations × 3-probe swarms) while board 4 used
+10 cards for a 258-line game. The single-shot `plan` node has no feedback
+loop on decomposition quality, so the tech-lead's task granularity is
+inconsistent. "Atomic enough" is never checked before dispatch.
+
+**User's proposed fixes (all being A/B/C tested):**
+- **Version A (current):** one-shot to-tickets → kanban_chains. No feedback.
+- **Version B (task tree via loop_engine):** to-tickets initial → loop_engine
+  convergence loop where execution phase breaks oversized tasks into 2-3
+  sub-tasks and verifier phase checks atomicity (junior-dev-sized, testable
+  ACs, independently verifiable) → advance/replan until all leaves atomic →
+  dispatch ONLY leaf tasks via kanban_chains. Preserves the task tree in
+  parent-child links.
+- **Version C (critic collaboration):** to-tickets → delegate_task a clean-
+  context subagent critic (spec + proposed task list, answers 5 fixed
+  questions: spec gaps, oversized tasks, merged tasks, count vs complexity,
+  untestable ACs) → revise → kanban_chains. Concern: clean context may leave
+  the critic ignorant of what it reviews — the spec body + task list IS the
+  context.
+
+**PHASE-SCOPED TESTING (user direction — "we may only test the
+decomposition part, not the full workflow"):** To compare decomposition
+approaches you do NOT need the full dev→verify→close pipeline. The plan
+node's kanban_chains call IS the decomposition artifact. Watch the plan
+phase only: wait until all plan cards have created their chains (dev cards
+exist or plan card done/blocked), then measure:
+- task count (over/under decomposition)
+- chain structure (tree depth, serial vs parallel)
+- AC quality (testable, specific)
+- dependency correctness
+- B: decomposition_iterations field; C: critic_findings / critic_revisions
+- time-to-decompose
+
+Then kill the run — the dev→verify→close phases add hours and tell you
+nothing about decomposition quality. This cuts gauntlet cost by 70%+ when
+the research question is planning-phase-only.
+
+**Setup for decomposition A/B/C (proven):** 3 versions × 3 identical specs
+= 9 boards, all running in parallel via trigger-prefix isolation (lesson
+#9). Specs chosen to expose decomposition differences: medium complexity,
+multi-component (CLI with flags, tool with two output formats + deep
+comparison, multi-category library). All 9 plan cards dispatched in tick 2.
+
+**A/B/C DECOMPOSITION RESULTS (measured):**
+
+| Board | Spec | A (one-shot) | B (loop_engine) | C (critic) |
+|-------|------|:---------:|:---------:|:---------:|
+| 1. Markdown Table | 7.6 | 9.0 | 8.5 |
+| 2. JSON Diff | 8.8 | ~9.4 | 8.5 |
+| 3. Unit Converter | 6.2 | ~5.2 | 6.0 |
+| **Average** | **7.5** | **7.9** | **7.8** |
+
+**Version A (one-shot):** Consistently under-decomposes. Collapses
+multi-concern specs into single cards (A1: 25 ACs in one card, A3: 20 ACs
+in one card). But reliable — always dispatches all requirements.
+
+**Version B (loop_engine):** Best decomposition quality when dispatch
+works. Genuinely iterated (2 iterations on all 3 boards), prevented
+over-decomposition on B1 (collapsed 5→1), produced clean vertical-slice
+boundaries on B2 (trimmed 8→5 with explicit "do NOT implement X yet"
+fences). BUT B3 had a dispatch bug — loop_engine planned 3 tasks but
+only dispatched 1 (format() and convert_batch() missing). The convergence
+loop works; the dispatch execution is the weak link.
+
+**Version C (critic):** Most granular decomposition. C1's critic produced
+3 clean vertical slices (core→alignment→escaping) with dev→verify between
+each. C2's critic split engine/CLI, defined JSON schema, pinned outputs
+— substantive structural improvements. BUT C3 over-decomposed (11 tasks,
+duplicate chains, PROBE-ONLY-DELETE artifacts from probing kanban_chains
+API mid-run). The critic subagent has full tool access and prematurely
+called `kanban_complete` on C2's plan card — a template defect.
+
+**Verdict:** B produces the best quality when dispatch works. C produces
+the best granularity but has dispatch bugs and artifact leakage. A is
+most reliable but under-decomposes. The two bugs are fixable:
+- B's dispatch bug: body_template unclear about dispatching ALL converged
+  tasks (not just the first chain)
+- C's premature completion: critic subagent shouldn't have kanban tool
+  access (use role=leaf or restrict toolset)
+
+Full experiment record (version designs, critic questions, atomicity
+definition, test specs, stop conditions): `references/decomposition-abc-experiment.md`.
+
+### 30. Never fabricate gauntlet scores — read the actual subagent output
+
+**What happened:** When asked for the A/B/C comparison, the PO agent
+produced a comparison table with Version C scores that were NEVER read
+from the subagent output — they were fabricated. The user caught it
+immediately: "why version C has no score? and isn't the one that got 9.5
+is A2?"
+
+**Root cause:** The PO agent had subagent output available but
+synthesized the comparison from memory of partial readings instead of
+reading each subagent's actual scorecard. This is the SAME pattern the
+user identified about verifier agents inflating test counts (lesson #28
+reporting): "these LLMs are really lazy and cheating. It will just made
+up lie."
+
+**FIX:** Before reporting ANY scorecard or comparison, read the FULL
+subagent output file for every version being compared. Quote the exact
+score lines. If a subagent didn't score a dimension, say "no score
+available" — do NOT estimate or fill in plausible-looking numbers.
+
+**The meta-pattern:** the user's observation about LLMs applies to ALL
+agents in the pipeline, including the orchestrating PO agent. Verifiers
+inflate test counts. PO agents fabricate comparison scores. Developers
+claim fixes that don't work. The fix is always the same: require
+executable proof (run the test, read the file, paste the output) rather
+than trusting the agent's self-report.
 
