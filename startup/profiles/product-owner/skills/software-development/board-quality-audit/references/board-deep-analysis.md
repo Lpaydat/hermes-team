@@ -448,3 +448,107 @@ every format-output assertion, and confirm the test ever injects the delimiter
 into a user field. If not, the format dimension is untested regardless of how
 many tests pass.
 
+## 19. CRUD-resource REST API audit — worked example (livetest-unbias-8, Expense Tracker)
+
+Resource-oriented REST specs (POST create / GET list w-filters / GET single /
+DELETE / GET summary) are a distinct audit class from KV-store/TTL APIs. They
+have two patterns the other REST script does not cover: (a) query-param
+filtering + sorting correctness, (b) aggregation/summary correctness over the
+live dataset. The reusable probe is
+[`scripts/rest-api-crud-breakit.py`](../scripts/rest-api-crud-breakit.py).
+
+### a. The six probe clusters and why each exists
+
+| Cluster | What it catches | Why dev/verify suites miss it |
+|---------|-----------------|-------------------------------|
+| **Input validation** (neg/zero/NaN/Inf/bool amount, date format AND calendar, missing fields, malformed JSON, type mismatch) | The NaN/Infinity bypass (`float("nan") <= 0` is `False` in Python), the bool-is-int trap, calendar-validity vs format-validity | Dev tests check happy path + obvious negatives; NaN/Inf are an LLM blind spot because the code reads correct (`amount > 0`) but Python's float semantics defeat it. This exact bug was found-and-fixed on this board (Foundation iter 1 FAIL → iter 2 PASS). |
+| **Filtering** (category match/no-match, date range inclusive, boundary dates start==end, reversed range start>end, start-only, end-only) | Off-by-one on range bounds, reversed-range crashes, boundary exclusion | Dev tests usually cover the inclusive-range happy path but not `start==end` (single day) or `start>end` (reversed, should return empty not error). |
+| **Sorting** (default direction, explicit sort, invalid sort value, combined filter+sort) | Default-direction ambiguity (desc vs asc), invalid-sort-value crash | The spec's "default date desc" is easy to get backwards; an invalid sort value (`?sort=name`) should 400 not 500. |
+| **Summary/aggregation** (empty database, by_category, avg, float precision, deletion reflection, date range) | Division-by-zero on empty dataset, float accumulation artifacts | `avg = total / count` crashes if count is 0; float sums (0.1+0.2=0.30000000000000004) are IEEE-754, not code bugs — characterize as non-defect. |
+| **CRUD lifecycle + id reuse** (create→read→list→summary→delete→gone, double delete, id not reused, non-int paths) | Id-counter reuse after delete, 404-vs-405 confusion on bad paths | Sequential-id counters that use `len(list)` instead of a monotonic counter reuse deleted ids. |
+| **Delimiter injection** (null byte, tab, newline, SQL-like string, unicode in string fields) | Field corruption, truncation, (for SQL-backed stores) injection | For in-memory stores, expectation is verbatim storage. The probe documents this is a NON-defect for in-memory (no injection surface) but would be critical for SQL-backed. |
+
+### b. Production-mode testing recipe
+
+A verifier claim of `production_mode_tested: true` is only as good as how it
+was tested. The correct method (which the reusable probe automates):
+
+```python
+import threading, time, urllib.request, json
+
+def run_server():
+    app.run(host="127.0.0.1", port=<free>, debug=False, use_reloader=False)
+    #                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    # debug=False (no HTML error pages), use_reloader=False (no double-exec)
+
+t = threading.Thread(target=run_server, daemon=True)
+t.start()
+time.sleep(2)  # wait for bind
+
+# Now hit it with REAL urllib — not test_client, not TESTING=True
+req = urllib.request.Request("http://127.0.0.1:<port>/api/expenses",
+                             data=json.dumps({...}).encode(),
+                             headers={"Content-Type": "application/json"},
+                             method="POST")
+with urllib.request.urlopen(req) as resp:
+    assert resp.status == 201
+```
+
+Why this matters: `app.test_client()` uses Werkzeug's test harness, which
+swallows some routing/signal differences. `TESTING=True` enables the
+exception-trapping debugger. Neither catches bugs that only surface under a
+real WSGI request cycle. If the verifier only used `test_client`, its
+"production mode" claim is weak — reproduce it yourself over real HTTP.
+
+### c. Attachments directory as the fourth code-recovery path
+
+When the integration verifier (`[verify-b]`) completes with
+`kanban_complete(artifacts=["<path>/test_behavior.py"])`, that file is copied
+into `attachments/<verify-task-id>/test_behavior.py`. This directory is OUTSIDE
+the per-task workspace cleanup lifecycle, so it survives even after every
+`workspaces/` dir is reaped.
+
+On this board, the dev workspace `t_7e0ad9b2/` survived AND the behavior test
+file was in `attachments/t_86ffe4bb/test_behavior.py` — both paths existed.
+But on a board where all workspaces are GC'd, the attachments directory is the
+fastest recovery path for the verifier's behavior suite (the single most
+valuable file for a forensic re-read).
+
+```sql
+-- Find the verify-b card's attachments:
+SELECT filename, size FROM task_attachments WHERE task_id = '<verify-b-id>';
+-- Or list the directory:
+-- ls <board>/attachments/t_<verify-b-id>/
+```
+
+Recovery priority for a verifier's behavior test file (try in order):
+1. `attachments/<verify-task-id>/` — survives workspace cleanup (FASTEST).
+2. The dev's final workspace `workspaces/t_<last-dev-task>/tests/` — if the
+   workspace wasn't reaped.
+3. `/tmp/hermes-verify-<slug>/` — the integration verifier's scratch dir
+   (§17b).
+4. `logs/t_<verify-id>.log` — the session transcript (§"Reaped scratch").
+
+### d. Scoring a clean CRUD board
+
+When a CRUD-resource board passes ALL probes (input validation, filtering,
+sorting, summary, lifecycle, delimiter injection, concurrency, production
+mode), the composite is 9/10, not 10/10, because:
+
+- **Spec-ambiguous gaps are not code defects.** A spec that mandates
+  validation for `amount`, `category`, and `date` but is SILENT on
+  `description` type means `description: null` / `description: 123` being
+  accepted is a SPEC GAP, not a code bug. The verifier correctly flagged this
+  as "spec-ambiguous, not a code defect." Score it as a note, not a deduction.
+- **Whitespace-only category** (spec says "non-empty string"; `"   "` has
+  len > 0) is similarly spec-ambiguous. Characterize, don't penalize.
+- **Float precision** (0.1 + 0.2 = 0.30000000000000004) is IEEE-754, not a
+  code defect. A board using plain floats for monetary amounts has a design
+  limitation but not a correctness bug against a spec that doesn't mandate
+  `Decimal`.
+
+The 1-point deduction from 10 reflects that real-world production code WOULD
+need description-type validation and `Decimal` for money — but the audit
+scores against the SPEC, not against an idealized production standard. Reserve
+the deduction for a composite note, not for any of the five dimensions.
+

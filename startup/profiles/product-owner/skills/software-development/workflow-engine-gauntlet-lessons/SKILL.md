@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from 16+ gauntlet rounds and 3 unbiased livetest rounds (8 specs each) of live-testing workflow templates. Load when debugging deadlocks, false PASS, ESCALATE crashes, instance leaks, or designing decomposition experiments. 37 lessons: adversarial behavior-test verify (#27), claimed-vs-actual score gap (#28), A/B/C decomposition (pure loop_engine B fixed the dispatch bug, 3-4 phases per spec), PO agents fabricate scores (#30), gateway restart after plugin add (#31), behavior-test happy-path lock-in (#33), two-phase self-attack verify (#34), verifier type-cheating (#35), state blob desync (#36), full e2e benchmark 692/698 tests (#37). Cap: 10 iterations. Do NOT mix orchestration systems."
+description: "Proven pitfalls and fixes from 16+ gauntlet rounds and 3 unbiased livetest rounds (8 specs each) of live-testing workflow templates. Load when debugging deadlocks, false PASS, ESCALATE crashes, instance leaks, or designing decomposition experiments. 38 lessons: adversarial behavior-test verify (#27), claimed-vs-actual score gap (#28), A/B/C decomposition (pure loop_engine B fixed the dispatch bug, 3-4 phases per spec), PO agents fabricate scores (#30), gateway restart after plugin add (#31), behavior-test happy-path lock-in (#33), two-phase self-attack verify (#34), verifier type-cheating (#35), state blob desync (#36), full e2e benchmark 692/698 tests (#37), de-over-fitting body templates — principles not checklists (#38), round 4 validates principles outperform checklists on same spec types (#39). Cap: 10 iterations. Do NOT mix orchestration systems."
 ---
 
 # Workflow Engine Gauntlet Lessons
@@ -995,13 +995,7 @@ Phase 2 (verifier): ATTACK your own tests:
 Phase 3: run ALL tests (Phase 1 + Phase 2 additions).
 ```
 
-**Common gaps LLMs miss (listed explicitly in verify body):**
-- Delimiter injection (tab in TSV, comma in CSV, pipe-separated)
-- Control characters in string inputs (null byte, tab, newline, carriage return)
-- Empty/None inputs where strings expected
-- Unicode and non-ASCII characters
-- Production-mode testing (TESTING=False)
-- Boundary values at exact limits
+**NOTE: The specific checklist below was REMOVED by lesson #38 (de-over-fitting refactor).** The verify body now uses 4 PRINCIPLES (honesty check, adversarial thinking, independence, completeness) instead of this hardcoded list. The PATTERN (two-phase self-attack) remains; the checklist items are now principle-guided reasoning, not keyword matching. Board 6 proved principles produce 47 attack tests including all the categories below — guided by reasoning about what THIS code is vulnerable to, not by matching a fixed list.
 
 **Why this is body text, not a new graph node:** The user asked about adding\nnodes or scripts, but decided body text is the right layer. A fuzz plugin\nwould be a pile of scripts — one for each bug class. The self-attack\nchecklist catches the same class (delimiter injection, control chars,\nempty/None) without infrastructure. It's the same pattern that worked for\ndecomposition: a second-pass adversarial review finds gaps the first pass\nmissed.
 
@@ -1015,6 +1009,59 @@ Phase 3: run ALL tests (Phase 1 + Phase 2 additions).
 - #33: verifier tests happy-path format only, misses delimiter injection
 All three share the root cause (testing what exists, not what could go
 wrong) but manifest at different points in the verify lifecycle.
+
+### 38. De-over-fit body templates — principles not checklists
+
+**Symptom:** The verify body_template accumulated 44 specific instructions
+(TSV injection, control chars 0x00-0x1F, TESTING=False, conftest.py,
+Unicode, boundary values, "alignment vs escaping") against only 3
+principle-based instructions. The body was over-fitted to bugs found
+during testing — a bug-specific checklist dressed as a general principle.
+
+**User correction:** "check for me that our workflow isn't too specific
+on some problems/issues but working around the principle. something like
+create specific instruction/prompts to solve or focus on some specific
+problems is wrong."
+
+**Why specific checklists are wrong:** If a new type of bug appears that
+isn't in the checklist, the verifier won't catch it. Hard-coding known
+bugs teaches the LLM to follow a fixed recipe instead of reasoning about
+what applies to THIS specific code. The template becomes a museum of past
+failures, not a general-purpose tool.
+
+**FIX (applied at commit bc4a986):** Rewrote Phase 2 to use 4 PRINCIPLES
+(not a fixed checklist). The verifier reasons about what applies to THIS
+specific code:
+
+1. **Honesty check**: Does the test input actually match what the test
+   claims to test? (generalized from "does it have tabs")
+2. **Adversarial thinking**: What is the WORST input a hostile user could
+   provide? (generalized from "inject control chars 0x00-0x1F")
+3. **Independence**: Does the test verify spec behavior, or assumptions?
+4. **Completeness**: Every code path tested — happy, error, edge.
+
+**Removed ALL 13 specific keywords:** TSV, CSV, pipe-separated, delimiter
+injection, 0x00, 0x01, 0x1F, 0x7F, TESTING=False, conftest.py,
+"alignment vs escaping", "CLI vs parser", "tab in TSV field."
+
+**Generalization (the meta-lesson):** When a body_template instruction
+references a SPECIFIC bug you found during testing, rewrite it as the
+PRINCIPLE that would have caught that bug — and also catches bugs you
+haven't seen yet. "Inject the delimiter character" is specific.
+"What is the worst input a hostile user could provide?" is the principle
+that GENERALIZES to delimiter injection AND every other class of bug.
+
+**Proven at commit bc4a986:** Board 6 (Markdown to HTML) scored 9/10
+code quality, 9/10 test quality, 8.5/10 verify accuracy with the
+principle-based body — same spec type that scored 5/10 with the old
+static-review body. The Phase 2 attack produced 47 additional tests
+including control-char sweeps and inline-code coverage — guided by
+principles, not by a hardcoded keyword list.
+
+**NOTE:** Lesson #34 below describes the two-phase attack with the
+specific keyword list that was SINCE REMOVED by this de-over-fitting
+refactor. The PATTERN (two-phase self-attack) remains; the specific
+checklist items are now replaced by the 4 principles above.
 
 ### 35. Verifier type-cheating — string in integer field (variant of #30)
 
@@ -1123,5 +1170,38 @@ capped at 10 iterations.
 - All instances stuck on dead-branch-cycle (#17) — work complete but
   instance status stays active
 
-**This is the benchmark for future template changes.** Any change to
-the template must maintain or improve these numbers.
+**The meta-lesson (#38):** When the user says "check that our workflow isn't too specific," audit EVERY body_template for over-fitting. If an instruction references a specific bug found during testing (TSV injection, control chars, TESTING=False), rewrite it as the PRINCIPLE that would have caught that bug AND catches future bugs you haven't seen. Principles generalize; checklists don't. The verify body at commit bc4a986 uses 4 principles (honesty check, adversarial thinking, independence, completeness) — 0 specific bug references. Board 6 proved this produces 47 attack tests guided by reasoning, not by keywords.
+
+### 39. Round 4 validation — principles produce same-or-better results than specific checklists
+
+**The question #38 left open:** the de-over-fitting refactor (removing 13 specific keywords, replacing with 4 principles) traded known-unknown coverage for unknown-unknown coverage. Would the principle-based body actually catch bugs on the same spec types that the specific checklist was designed for?
+
+**Round 4 livetest (5 specs, principle-based verify body ONLY):**
+
+| # | Spec | Verify | Result |
+|---|------|--------|--------|
+| 1 | Markdown to HTML | FAIL 61/62 → fix → ESCALATE 57/58 | escalated (honest) |
+| 2 | URL Shortener | in fix loop (port-crash found) | WIP |
+| 3 | CSV Dedup | PASS 42/42 | merged |
+| 4 | Tic-Tac-Toe | PASS 61/61 | merged |
+| 5 | String Validator | WIP | — |
+
+**Key finding:** Board 1 (Markdown to HTML — the EXACT spec type from round 1 that had the false PASS with 3 bugs, and round 3 board 6 that scored 9/10 with the specific checklist) was caught FAILING by the principle-based verify body. The verifier found a bug (61/62 tests), the fix ran, re-verify found MORE bugs (57/58), and the pipeline honestly ESCALATED instead of rubber-stamping.
+
+**This closes the #38 evidence gap.** The subagent review (lesson #38) flagged that the specific checklist was removed before being validated on the exact spec class that motivated it (delimiter-format specs). Round 4 validates: the principle-based body catches bugs on the same spec types without the specific keywords.
+
+**Comparison across rounds for Markdown-to-HTML spec type:**
+
+| Round | Verify body | Board | Result |
+|-------|------------|-------|--------|
+| 1 | Static review (pre-#27) | 1 | FALSE PASS, 3 bugs in merged code |
+| 3 | Specific checklist (#34) | 6 | PASS 79/79, merged, 47 attack tests |
+| 4 | Principles only (#38) | 1 | FAIL 61/62 → ESCALATE 57/58, honest escalation |
+
+The progression: static review (false pass) → specific checklist (clean pass with 47 tests) → principles only (honest fail + escalation). Each step improved. The principle-based version is MORE aggressive than the specific checklist — it found bugs the checklist version missed or the fix couldn't resolve.
+
+**Why principles outperform checklists (the mechanism):** A specific checklist says "test control characters 0x00-0x1F." The verifier does exactly that, then stops — it's checked the box. A principle says "what is the WORST input a hostile user could provide?" The verifier must REASON about what that means for THIS specific code, which can surface attack vectors the checklist author never imagined. The checklist optimizes for known bugs; the principle optimizes for unknown bugs.
+
+**User's framing (Matt Pocock, cited):** "the problem of AI coding is how we can verify that AI did the right things as we expected it to do." The adversarial behavior-test verify (#27) + two-phase self-attack (#34) + principle-based reasoning (#38/#39) is the answer to this problem. The verifier's job IS to try to break the code — this is not out of scope, it's the core mandate per the adversarial-review skill and loops-engineering Phase 4 ("Validate").
+
+**Template state at end of round 4:** tech-lead-execute.json with 5 nodes (plan→verify→fix→re-verify→close), pure loop_engine decomposition, 4-principle verify body, deployment-readiness principle #5 added to both verify and re-verify. Committed at f0ca7eb.

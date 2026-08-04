@@ -11,11 +11,20 @@ This skill is the methodology — the concrete probes and DB queries live in
 [`references/board-deep-analysis.md`](references/board-deep-analysis.md), the
 reusable REST API break-it probe lives in
 [`scripts/rest-api-breakit.py`](scripts/rest-api-breakit.py), the reusable
-CLI/log-tool break-it probe (delimiter injection, SIGINT handling, corrupt
-state files) lives in [`scripts/cli-breakit.py`](scripts/cli-breakit.py), and
+the reusable CLI/log-tool break-it probe (delimiter injection, SIGINT handling, corrupt
+state files) lives in [`scripts/cli-breakit.py`](scripts/cli-breakit.py),
 the reusable library/codec break-it probe (oracle cross-check, round-trip
 matrix, purity check, streaming chunk stress) lives in
-[`scripts/library-breakit.py`](scripts/library-breakit.py).
+[`scripts/library-breakit.py`](scripts/library-breakit.py), and
+the reusable CRUD-resource-REST-API break-it probe (validation, filtering,
+sorting, aggregation, lifecycle, delimiter injection, concurrency, production
+mode) lives in
+[`scripts/rest-api-crud-breakit.py`](scripts/rest-api-crud-breakit.py) —
+use this one for Expense-Tracker / Todo / Inventory class specs rather than
+the KV-store/TTL `rest-api-breakit.py`, and the reusable markup/text-transform
+break-it probe (XSS injection in text/URLs/link-text, escape-ordering,
+double-escape, inline-formatting leakage into code blocks, CRLF leakage) lives
+in [`scripts/markup-breakit.py`](scripts/markup-breakit.py).
 
 ## When to load
 
@@ -50,7 +59,9 @@ The real evidence is in `task_comments`, the workspaces dir, and git history.
   [`scripts/cli-breakit.py`](scripts/cli-breakit.py) for CLI tools,
   [`scripts/rest-api-breakit.py`](scripts/rest-api-breakit.py) for REST APIs,
   [`scripts/library-breakit.py`](scripts/library-breakit.py) for
-  libraries/codecs):
+  libraries/codecs,
+  [`scripts/markup-breakit.py`](scripts/markup-breakit.py) for markup/text-transform
+  specs like Markdown→HTML):
   1. **Delimiter injection** (CLI/log tools): a user-provided string field that
      collides with the output format's separator (tab, comma, newline). A task
      name containing `\t` corrupts a 4-field tab-separated log into 5 fields.
@@ -66,6 +77,16 @@ The real evidence is in `task_comments`, the workspaces dir, and git history.
      or a robustness NOTE depends on whether the contract guarantees tolerance
      of externally-corrupted input (usually it only guarantees the app *writes*
      valid data).
+  - **Production-mode testing**: spin up a real server
+    (`app.run(host='127.0.0.1', port=<free>, debug=False, use_reloader=False)`
+    in a daemon thread) and hit it with `urllib.request` / `httpx` — NOT the
+    Flask test_client, NOT with `TESTING=True`. A verifier claim of
+    "production mode tested: true" is corroborating evidence; reproduce it
+    yourself because test_client and conftest fixtures mask deployment bugs
+    (Werkzeug vs production WSGI server behaviour, reloader double-execution,
+    debug-mode HTML error pages). The reusable harness is
+    `probe_production_mode()` in
+    [`scripts/rest-api-crud-breakit.py`](scripts/rest-api-crud-breakit.py).
   4. **Boundary arg values**: zero-length timers (`--work 0`), negative counts
      (`--cycles -1`), non-numeric args — these hit the `range()` off-by-one
      and argparse-validation gaps that injected-function unit tests miss.
@@ -165,6 +186,30 @@ count.
   [`references/board-deep-analysis.md`](references/board-deep-analysis.md) §18
   for the detection technique + worked example (tab-injection surviving two
   verifier suites).
+- **For the two-phase "Attack Your Own Tests" verify body (newer integration
+verify prompt), check whether Phase 2 actually executed.** This body asks the
+verifier to first write a behavior-test matrix (Phase 1), then re-read every
+test, find gaps, and write ADDITIONAL attack tests (Phase 2). Phase 2 now uses
+4 PRINCIPLES (honesty check, adversarial thinking, independence, completeness)
+rather than a specific checklist — see gauntlet-lessons #38. The five
+evidence signals that Phase 2 genuinely ran: (a) two physically distinct
+files (`test_behavior.py` + `test_attack.py`); (b) the attack file has a
+higher count AND tests different things (the verifier reasoned about what
+THIS code is vulnerable to); (c) `attack_categories_covered` in the run
+metadata; (d) a self-caught probe-inversion (strongest signal — the verifier
+admits its own test was wrong); (e) coverage of gaps the verifier identified
+through adversarial reasoning rather than following a fixed checklist. See
+[`references/two-phase-verify-forensics.md`](references/two-phase-verify-forensics.md)
+§19 for the full detection technique, the 5-signal checklist, and a worked
+example (Markdown→HTML board where all five signals were present).
+- **Self-caught probe-inversions are a POSITIVE verify-integrity signal, not a
+  defect.** When the verdict metadata records `probe_inversions_caught_and_fixed: N`
+  with a detail string, the verifier genuinely re-read its own tests, found one
+  was wrong, and corrected the assertion rather than filing a false positive or
+  silently relaxing the bar. A verifier that NEVER reports a single self-caught
+  error across a large adversarial suite is suspicious; one that reports and
+  correctly dismisses 1-2 probe-inversions has higher epistemic integrity. Do
+  not score this as a defect — score verify-accuracy UP for it.
 - Did the per-task verify stamp PASS while missing a bug the integration verify
   caught? Call out the layered-verify win (or the miss).
 - Cite: the finding (comment id, body excerpt), your reproduction, and whether
@@ -192,6 +237,19 @@ count.
   effective. Score the four real dimensions and note the clean first-pass as a
   positive signal. See
   [`references/board-deep-analysis.md`](references/board-deep-analysis.md) §10.
+- **On zero-rework boards, score "Overall robustness" as the substitute fifth
+  dimension.** When fix-effectiveness is N/A (no fixes happened), the operative
+  fifth dimension is *independent break-it*: throw your own adversarial inputs
+  at the public interface across ALL spec dimensions at once (range boundaries,
+  invalid sequences, type confusion, empty/null/whitespace, very-long strings,
+  mixed case, CLI edge args) rather than probing one dimension at a time. This
+  is where the auditor adds the most marginal value on a clean board — the code
+  and verify suites are already green, so the only new signal is whether *you*
+  can find something they both missed. Score it on whether the code handles
+  every thrown input by either returning the correct value or raising a caught
+  exception (no unhandled traceback within the documented type contract).
+  Document any spec-permitted-but-debatable quirks found (e.g. `to_roman('007')`
+  → VII via int parsing) as notes, not deductions.
 
 ## The imperative: never trust, always re-probe
 
@@ -362,8 +420,19 @@ only for critic variants. Dispatch-artifact detection (§5 there) catches
   *verification topology* is heavy. Score them as two separate observations:
   "the 5-phase plan was correctly sized; the 3-way probe fan-out per failed
   iteration was the card-count driver." Query to separate them:
-  `SELECT title, count(*) FROM tasks GROUP BY substr(title,1,15)` — `[task]`/
-  `[verify]` are core; `[probe]`/`Matrix root`/`verify t_` are ceremony.
+ `SELECT title, count(*) FROM tasks GROUP BY substr(title,1,15)` — `[task]`/
+ `[verify]` are core; `[probe]`/`Matrix root`/`verify t_` are ceremony.
+ - **The integration verifier's behavior test file often survives in
+ `attachments/`.** When the verifier passes `kanban_complete(artifacts=[...])`,
+ the file is copied into the board's `attachments/<verify-task-id>/`
+ directory, which is OUTSIDE the per-task workspace cleanup lifecycle. So even
+ after every `workspaces/` dir is reaped, the `test_behavior.py` (the most
+ valuable artifact for your forensic re-read) is recoverable via
+ `ls attachments/t_<verify-id>/` or
+ `SELECT filename FROM task_attachments WHERE task_id='<verify-id>'`.
+ This is the FOURTH recovery path (after: workspaces dir, trace JSONL, /tmp
+ scratch dir). Read it BEFORE reconstructing from logs — it's the original
+ file, not a transcript reconstruction.
 - **Delimiter injection is the most-missed CLI/log bug.** When the spec defines
   a delimited output format (tab-separated, CSV, pipe-separated), a user string
   field containing the delimiter character corrupts the column structure.
@@ -400,3 +469,20 @@ only for critic variants. Dispatch-artifact detection (§5 there) catches
   imported by YOUR probe and by the verifier's cross-check scripts, but never
   by the SUT itself — trace any `import base64 as _oracle` you find to confirm
   it lives in a `/tmp/hermes-verify-*` probe, not in `b64/`.
+- **Markup/HTML-emitter specs need a dedicated XSS + escape-ordering probe.**
+  For any spec whose output is HTML (Markdown→HTML, RST→HTML, BBCode, wiki
+  markup), the #1 risk class is HTML injection in the INPUT that survives into
+  the OUTPUT as a live tag (`<script>`, `<img onerror=>`). The critical
+  invariant is **escape-before-format**: HTML-escape the raw text FIRST, then
+  apply inline Markdown formatting (`**bold**` → `<strong>`). If the order is
+  reversed, the generated `<strong>` tags get re-escaped to `&lt;strong&gt;`
+  and the output is broken — OR worse, injected `<script>` survives because
+  escaping ran on the wrong pass. Three distinct injection vectors to probe:
+  (1) raw HTML in text content; (2) HTML in link URLs (attribute breakout via
+  `"` in the URL, `javascript:` scheme); (3) HTML in link TEXT (renders inside
+  the `<a>` anchor). Also check: double-escape in code blocks (`&` → `&amp;`
+  once, not `&amp;amp;`), inline formatting leaking INTO fenced code blocks
+  (should be verbatim), and CRLF leakage (`\r` surviving into `<p>` content
+  because the parser splits only on `\n`). The reusable probe is
+  [`scripts/markup-breakit.py`](scripts/markup-breakit.py) — adapt `MARKERS`
+  and the feature flags to the spec's syntax.
