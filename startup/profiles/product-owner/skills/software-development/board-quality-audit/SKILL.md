@@ -210,6 +210,31 @@ example (Markdown→HTML board where all five signals were present).
   error across a large adversarial suite is suspicious; one that reports and
   correctly dismisses 1-2 probe-inversions has higher epistemic integrity. Do
   not score this as a defect — score verify-accuracy UP for it.
+- **Detect dual-track boards and run the method head-to-head.** When a board
+  has BOTH a static-review track (`[probe] static review`, `[probe]
+  fresh-eyes`) AND a principle-based behavior track (`[verify-b]` integration
+  with a Phase-2 "attack your own tests" body), build the comparison table:
+  for every bug on the board, mark which track found it. Bugs in only one
+  column are the audit headline. The robust pattern observed across boards:
+  principle-based behavior verify catches I/O crash bugs (unhandled exception
+  on NUL byte, bad UTF-8, broken pipe, ENOSPC, closed fd) that static review
+  structurally cannot — static review reads what the code *says*, behavior
+  verify discovers what it *does* under inputs the author never imagined.
+  Static review wins on readable-logic bugs (a missing quote-escape visible in
+  a regex). See
+  [`references/verify-method-comparison.md`](references/verify-method-comparison.md)
+  for the detection query, the comparison-table methodology, and a worked
+  example (5 I/O crash bugs all missed by static review, all caught by
+  principle-based behavior verify).
+- **Read the multi-iteration re-verify chain as escalation evidence, not
+  verifier failure.** When `[verify-b] FAIL → fix → re-verify FAIL → …` runs
+  3-6 iterations, each iteration typically finds a NEW real bug (the
+  "whack-a-mole" I/O pattern: each fix guards one path, leaving the next
+  unguarded). This is the verifier working correctly. Score verify-accuracy
+  UP for sustained finding of true positives; score fix-effectiveness on
+  whether the final holistic fix (usually a tech-lead escalation card) closed
+  the systemic root cause in one pass. The tech-lead's I/O-surface matrix
+  (every path + its guard status) is the convergence evidence.
 - Did the per-task verify stamp PASS while missing a bug the integration verify
   caught? Call out the layered-verify win (or the miss).
 - Cite: the finding (comment id, body excerpt), your reproduction, and whether
@@ -486,3 +511,23 @@ only for critic variants. Dispatch-artifact detection (§5 there) catches
   because the parser splits only on `\n`). The reusable probe is
   [`scripts/markup-breakit.py`](scripts/markup-breakit.py) — adapt `MARKERS`
   and the feature flags to the spec's syntax.
+- **CLI tools that write to stdout have a 5-path I/O exception surface — probe
+  all 5.** Any tool that can `print()` or `sys.stdout.write()` has five
+  distinct unhandled-exception paths that LLM-authored code routinely leaves
+  unguarded: (1) **input read OSError** (file not found, permission denied,
+  IsADirectoryError); (2) **input decode UnicodeDecodeError** (non-UTF-8 byte
+  — NOT an OSError subclass, so a bare `except OSError` misses it); (3) **output
+  `-o` write OSError** (full disk, nonexistent dir); (4) **stdout broken pipe**
+  (`| head` closes early — must exit SILENTLY per Unix convention, empty stderr,
+  NOT print `error:`); (5) **closed stdout `>&-`** (CPython sets
+  `sys.stdout=None`, so `sys.stdout.write` raises `AttributeError`, NOT an
+  OSError subclass — escapes both `except BrokenPipeError` and `except OSError`).
+  Path (5) is the sneakiest: `AttributeError` is not in the OSError hierarchy at
+  all. The correct guard is `if sys.stdout is None:` BEFORE the write, not
+  `except AttributeError` (too broad — masks real bugs). This whack-a-mole
+  pattern (each fix guards one exception type, leaving the next) survived 6
+  verify iterations on a Markdown→HTML board. Probe all 5 yourself:
+  `md2html.py x.md 2>&1 >/dev/full` (ENOSPC), `md2html.py x.md | head -1`
+  (broken pipe), `md2html.py x.md >&-` (closed stdout). Each must produce a
+  clean `error:` on stderr + exit 1 (or silent exit for broken pipe), NEVER a
+  raw traceback.
