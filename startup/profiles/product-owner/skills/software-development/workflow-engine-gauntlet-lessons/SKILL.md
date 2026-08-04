@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, or spawns duplicate instances. 26 lessons from 14+ gauntlet rounds across 5 templates, including a measured 5-board unbiased livetest. User iteration cap preference: 10 (not 3)."
+description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, or spawns duplicate instances. 28 lessons from 14+ gauntlet rounds across 5 templates, including TWO measured 5-board unbiased livetests (10 total specs). Includes the adversarial behavior-test verify paradigm (#27) — the fix for false PASS from static review — and the claimed-vs-actual score gap (#28). User iteration cap preference: 10 (not 3)."
 ---
 
 # Workflow Engine Gauntlet Lessons
@@ -478,4 +478,106 @@ derived from a git operation.
 `git log --oneline` in the repo. If the deliverable isn't in a commit, the
 merge is aspirational. For livetest, note it. For production, it's a blocker.
 See `references/board-postmortem-analysis.md` section 8.
+
+### 27. Adversarial behavior-test verify paradigm (the fix for #23/#24)
+
+Lessons #23 (swarm confirms FIXED without re-running original input) and
+#24 (missing feature never filed) share a root cause: **the verifier reads
+code instead of executing it.** A verifier that checks "does the code look
+correct" can be fooled by plausible-looking diffs. A verifier that checks
+"can I PROVE the code is wrong" cannot.
+
+**The paradigm shift:** the verifier's goal is to BREAK the code, not to
+read it. It writes BEHAVIOR tests against the public interface (CLI
+stdin/stdout, HTTP requests, public function calls) that map every spec
+requirement to an executable test. Then it RUNS them.
+
+**Why behavior tests, not implementation tests:** behavior tests check what
+the USER sees (output contains `<code>`), not internals (`INLINE_RE.match`).
+They survive refactors — regex→parser, dict→database, recursive→iterative.
+Implementation tests break on every refactor and force the dev to rewrite
+tests. The verifier owns behavior tests; the dev owns implementation tests.
+
+**The adversarial game:**
+```
+DEV: writes code + tests that prove it works
+     Goal: make the code unbreakable
+
+VERIFY: writes NEW behavior tests designed to break the dev's code
+        Maps every spec requirement to a test, EXECUTES them
+     Goal: find weaknesses, prove claims are false
+
+FIX: takes verifier's failing tests, fixes code until they pass
+     Must run ALL tests (dev's + verifier's) — cannot lie
+     Goal: resolve every finding with executable proof
+```
+
+**Key constraints:**
+- Verifier must NOT edit dev code — only write tests against it
+- Every spec requirement gets a behavior test — no missing features (#24)
+- "FIXED" claims require running the failing test and seeing it pass (#23)
+- Tests are black-box (public interface only) — survive refactors
+
+**Schema enforcement (proven approach):**
+- verify: `behavior_tests_total` (required int), `behavior_tests_passed`
+  (required int), `behavior_test_file` (path to test file), plus
+  `production_mode_tested` (required boolean, lesson #15)
+- fix: `all_tests_pass` (required int, count of ALL tests including
+  verifier's), `total_tests` (required int), `findings_fixed`
+- re-verify: same as verify + writes NEW attack vectors ("fresh attack")
+
+**Why this fixes the false PASS problem:**
+- Board 1's inline code bug: verify would write a behavior test that calls
+  the converter with backticks → see literal backticks → FAIL
+- Board 1's bold+italic bug: verify would write a nested emphasis test →
+  run it → see broken output → FAIL
+- Board 1's "FIXED" lie: fix must run ALL tests including verifier's
+  behavior tests → the still-broken test fails → cannot claim fixed
+
+**Implemented in tech-lead-execute template at commit 3d1e32a.**
+
+**User's framing:** "verifier needs to be the one that catches these lies.
+What if verifier tries its best to break the code and proof that the code
+that dev wrote is wrong or broken or false-claimed as done? It must try to
+think of the way to break it, within the task scope. And dev must try its
+best to make the verifier not be able to break it."
+
+**Behavior tests vs implementation tests (user direction):** "can verifier
+break it by not too deep in very specific function but test the behavior
+instead? The approach that not break the tests or need to delete or rewrite
+every tests when we refactor the code." → Black-box behavior testing through
+the public interface. Tests survive refactors.
+
+### 28. Gauntlet score inflated vs unbiased livetest score (7.7 vs 9.0)
+
+**Symptom:** The gauntlet (single carefully-controlled spec, the same spec
+used during template development) scored 9.0/10. Five unbiased livetests
+with fresh specs scored 7.7/10 — a 1.3-point gap.
+
+**Root cause:** The gauntlet uses the SAME spec type repeatedly (Flask auth
+API). The tech-lead, verifier, and developer all developed familiarity with
+that codebase. Unbiased tests with completely different domains (CLI tool,
+REST API, game, data processing, library) exposed gaps invisible in the
+familiar gauntlet: verify false PASS on board 1 (3 bugs in merged code),
+missing features never filed, parallel chain artifact selection failure.
+
+**The lesson:** gauntlet score is an UPPER BOUND, not a true score. The
+gauntlet proves the template CAN work on familiar inputs. Only unbiased
+livetests (different domains, no hints, fresh repos) reveal the true
+generalization quality. Always run both — gauntlet for iteration speed,
+unbiased for honest measurement.
+
+**Scorecard methodology:** dispatch 6+ subagents per board (code quality,
+test quality, decomposition, verify accuracy, fix effectiveness, workflow
+path). Each independently runs the code, reproduces findings, and scores
+0-10 with evidence. Average across all boards for the true template score.
+
+**Round 2 unbiased results (adversarial behavior-test template):**
+- 4/5 work complete (board 1 hit review-required block again)
+- verify now writes behavior tests and EXECUTES them
+- Fix must pass ALL tests (dev's + verifier's behavior tests)
+- Cannot lie about fixes — the failing test is the proof
+
+See `references/unbiased-livetest-protocol.md` for both round 1 (static
+review) and round 2 (adversarial behavior testing) results.
 
