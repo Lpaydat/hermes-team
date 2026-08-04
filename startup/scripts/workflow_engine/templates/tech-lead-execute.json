@@ -7,7 +7,7 @@
     "condition": {
       "assignee": "tech-lead",
       "status": "done",
-      "title_prefix": "[spec]"
+      "title_prefix": "[spec-a]"
     }
   },
   "nodes": [
