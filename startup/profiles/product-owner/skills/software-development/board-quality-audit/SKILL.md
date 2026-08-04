@@ -42,7 +42,22 @@ The real evidence is in `task_comments`, the workspaces dir, and git history.
 - Re-run the suite yourself: `cd <workspace> && .venv/bin/pytest -v`.
 - Check that tests cover: core board/model logic, all win-detection cases,
   the critical property (e.g. unbeatable), input validation edge cases.
-- Cite: pass count, which ACs have dedicated tests, any gaps.
+- **Score behavior tests for black-box quality.** When the verifier wrote
+  behavior tests (`test_behavior.py`), read the actual file and score 0-10:
+  0 = pure white-box (tests private methods, internal data structures, regex
+  patterns — breaks on any refactor); 10 = pure black-box (tests only through
+  the public interface — CLI stdout/exit, HTTP status/body, public function
+  return values — survives any refactor). Common white-box leaks to check:
+  (a) accessing module constants for assertions (`module.SYMBOLS`, `module.WORDS`);
+  (b) calling underscore-prefixed private methods (`_prompt_guess`);
+  (c) `patch.object(module, "time")` mocking implementation dependencies;
+  (d) AST/source-file scans for static contract checks (acceptable — tests
+  declared requirements, not internals);
+  (e) checking file existence as a proxy for coverage. Use the grep techniques
+  in [`references/board-deep-analysis.md`](references/board-deep-analysis.md)
+  §7a (REST) and §10b (library) to mechanically verify.
+- Cite: pass count, which ACs have dedicated tests, any gaps, the black-box
+  score with specific white-box patterns found (if any).
 
 ### 3. Decomposition — task count, AC quality, dependency ordering
 
@@ -140,6 +155,12 @@ for the concrete DB queries, code-location technique, and a worked example.
   The real code is in the board's `workspaces/` directory — find it via the
   `workspace_path` column on the tasks table. Never conclude "no code produced"
   without checking workspaces.
+- **GC'd workspaces — recover from the trace ledger.** When BOTH the repo and
+  `workspaces/` are empty, reconstruct the code from the harness trace JSONL
+  (`~/projects/<slug>/traces/<task>/attempt-N.jsonl`) by extracting
+  `toolCall.arguments.content` from `write` calls. Validate faithfulness by
+  re-running the dev suite on the reconstruction. See
+  [`references/board-deep-analysis.md`](references/board-deep-analysis.md) §1b.
 - **Empty `result` column.** Findings/fixes live in `task_comments`, not
   `result`. Query comments ordered by `created_at`.
 - **Per-task verify false PASS.** A per-task verifier can stamp PASS while its
@@ -147,6 +168,15 @@ for the concrete DB queries, code-location technique, and a worked example.
   what per-task verify missed.
 - **"Unbeatable" without exhaustive proof.** Only a full game-tree count is
   acceptable evidence. A few played games prove nothing.
+- **Claimed behavior-test files may be deleted.** A verifier's
+  "52/52 behavior tests" file can be GC'd with its scratch workspace. Don't
+  fake a recount; score on metadata consistency + dev-suite mutation tests, and
+  state the limitation. See
+  [`references/board-deep-analysis.md`](references/board-deep-analysis.md) §3e.
+- **Missing task_links edge.** A `kanban_chains` dispatch can omit the
+  verifier→tech-lead link, causing premature promotion. Before trusting that a
+  "blocked" card actually waited, check
+  `SELECT parent_id || ' -> ' || child_id FROM task_links`.
 - **Reaped scratch workspaces lose the verifier's test files.** Scratch
   (`workspace_kind='scratch'`) task dirs are deleted when the task reaches
   `done`. The verifier's `test_behavior.py` or adversarial suite often lived

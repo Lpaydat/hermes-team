@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, or spawns duplicate instances. 28 lessons from 14+ gauntlet rounds across 5 templates, including TWO completed 5-board unbiased livetests (10 total specs, 292 behavior tests). Includes the adversarial behavior-test verify paradigm (#27) — the fix for false PASS from static review — and the claimed-vs-actual score gap (#28). User iteration cap preference: 10 (not 3)."
+description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, or spawns duplicate instances. 28 lessons from 14+ gauntlet rounds across 5 templates, including TWO completed 5-board unbiased livetests (10 specs, 292 behavior tests, average 7.6/10 black-box score). Includes the adversarial behavior-test verify paradigm (#27), the claimed-vs-actual score gap (#28), and measured black-box quality analysis of round 2's behavior tests. User iteration cap preference: 10 (not 3)."
 ---
 
 # Workflow Engine Gauntlet Lessons
@@ -581,7 +581,28 @@ path). Each independently runs the code, reproduces findings, and scores
 - All instances stuck on dead-branch-cycle (known infra gap, lesson #17)
 - Round 1 board 1 false PASS (3 bugs in merged code) → round 2 eliminated via behavior testing
 
-**Pending:** 6 subagent deep-analysis of round 2 (same methodology as round 1). Key question: are the 292 behavior tests truly black-box?
+**Round 2 deep-analysis results (cross-cutting workflow-path + behavior-test-quality audit):**
+
+**Black-box scores (0=white-box, 10=pure black-box):**
+
+| Board | Score | Interface | White-box concerns |
+|-------|-------|-----------|-------------------|
+| 3 (Temp Converter) | **9/10** | Public functions only | AST scan for "pure Python" contract; otherwise pristine |
+| 2 (KV Store API) | **8/10** | HTTP REST API | `kvapp._store.clear()` for reset; `patch.object(kvapp, "time")` for TTL mocking |
+| 5 (Pagination) | **8/10** | Public `paginate`/`search`/`sort_and_paginate` | AST scan for deps; weakened generator test |
+| 1 (Passgen) | **7/10** | CLI subprocess + public functions | Accesses `passgen.SYMBOLS` constant; checks `test_passgen.py` file exists |
+| 4 (Hangman) | **6/10** | CLI subprocess + public classes | Tests internal `WORDS` list properties; calls private `_prompt_guess()` directly; purity gate reads source |
+
+**Average: 7.6/10** — predominantly black-box with recurring minor white-box leaks in test setup (reset/mocking) and contract-meta-testing (AST scans, file existence checks).
+
+**Key findings:**
+- **Fix loop NEVER entered on any board.** All 5 verifiers returned PASS → `verify→close` edge taken every time. The `fix` and `re-verify` nodes stayed `pending`. The `total_tests`/`all_tests_pass` fix metadata was never populated. The behavior tests' value as fix-loop acceptance criteria was **not exercised**.
+- **Zero false positives** across all 5 boards (total findings: B1=1 Note, B2=0, B3=0, B4=1 Minor, B5=0). Both filed findings genuine.
+- **6 probe-inversions self-caught and corrected** (B5=3, B3=1 from comment + log evidence) without filing — strong verifier discipline.
+- **Round 1 false PASS eliminated.** Round 1 B1 had 3 bugs in merged code (static review missed them). Round 2 behavior tests would have caught them (executable proofs), but code was already fixed from round 1's 4-iteration rework.
+- **Dead-branch leak at 5/5 this round** (vs 3/6 in round 1). Every instance that took verify→close (all 5) leaked — fix/re-verify stuck pending, no `workflow_completed` event. Deterministic correlation confirmed at 100%.
+- **6 cross-workflow qa-gate triggers fired** (one per verify card completion) but all were no-ops: `check-merge` returned `should_test: false, reason: "no project for board"`. Trigger fired correctly; no QA testing ran.
+- **Common white-box patterns** observed across boards: (1) accessing module constants (`SYMBOLS`, `WORDS`) for test setup/assertions; (2) calling underscore-prefixed private methods (`_prompt_guess`); (3) `patch.object(module, "time")` mocking implementation dependencies; (4) AST/source-file scans for static contract checks (acceptable — tests declared requirements, not internals); (5) checking file existence (`test_passgen.py` exists) as a proxy for test coverage.
 
 See `references/unbiased-livetest-protocol.md` for both round 1 (static
 review) and round 2 (adversarial behavior testing) results.

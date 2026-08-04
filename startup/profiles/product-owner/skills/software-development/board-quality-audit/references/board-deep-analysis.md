@@ -71,6 +71,44 @@ verifier's claim. If 44/44 pass on your reconstruction, it's faithful. This is
 the same technique the integration verifier in the Hangman board used to
 recover all 11 files after the original workspace was GC'd.
 
+### 1c. Session logs (the simplest recovery tier — try this first)
+
+Before reaching for trace-ledger reconstruction (§1b), check the **board's
+`logs/` directory**. Every task run writes a full session transcript to:
+
+```
+<board-dir>/logs/t_<task-id>.log
+```
+
+This captures the verifier's complete session — including the contents of any
+test file it `cat`-ed or `write`-d, its pytest run output (exact pass/fail
+counts), its reasoning, and **patch diffs on test files it edited**. It is the
+single fastest way to recover a reaped verifier test file or to audit whether
+the verifier altered its own tests.
+
+```bash
+# Find the log and scan for the high-value markers:
+grep -n "def test\|PYEOF\|passed\|failed\|patch\|diff" logs/t_<verify-id>.log
+```
+
+Recovery patterns the logs commonly contain:
+- **Test file contents** — verifiers frequently `cat << 'PYEOF'` their
+  behavior-test file into the terminal before running it; the full source is in
+  the log. Extract it by copying from the `cat` heredoc to the closing `PYEOF`.
+- **Exact test counts** — the `pytest -v` output shows per-test names and the
+  `N passed` summary line, letting you reconcile claimed counts without the file.
+- **Test edits** — a `patch`/`write` tool call on the behavior-test file
+  appears as a unified diff in the log. A rename like
+  `test_X_raises` → `test_X_handled_gracefully` with a relaxed assertion is
+  visible here. This is how you catch a verifier lowering the bar to achieve an
+  N/N sweep (see §9 worked example).
+
+**Logs are NOT truncated by workspace GC** — they persist on the board after
+scratch dirs are deleted. Prefer `logs/` for quick recovery; fall back to §1b
+trace-ledger reconstruction only when the log doesn't contain what you need
+(e.g. the file was never printed and only written via a tool call whose bytes
+aren't echoed).
+
 ## 2. Mine the verify→fix→re-verify cycle from the DB
 
 The task `result` column is frequently empty. The actual findings, fixes, and
@@ -395,6 +433,58 @@ same-key concurrency, 300-thread distinct-key concurrency, real-time TTL
 expiry (1.2s sleep), TTL boundary (live at 1.5s / dead at 2.3s), idempotent
 DELETE, and overwrite-clears-TTL. The board could not be broken.
 
+## 9. Worked example (board livetest-unbias-3 — Temperature Converter Library)
+
+A 238-line pure-stdlib temperature converter (C/F/K/R scales, `convert`,
+`convert_batch`, `detect_scale`, absolute-zero validation) built by an 11-card
+pipeline that PASSED on iteration 1 — no fix loop. This board's distinctive
+lesson is the **verifier test-editing integrity issue**: a verifier achieved an
+N/N clean-sweep by *relaxing its own failing test* rather than filing the
+finding.
+
+| Dimension | Score | Key evidence |
+|-----------|-------|--------------|
+| Code quality | 9/10 | 0 imports (AST-verified pure stdlib); all 12 conversion pairs exact; abs-zero boundary inclusive (`<`); 4-scale round-trip drift 0.00e+00; 1e15 exact |
+| Test quality | 8/10 | 114 dev tests pass; but 3 case-insensitivity tests (L168-180) call `to_celsius()` instead of named fns — vacuous; plus `test_simple.py` is `assert True` (padding) |
+| Decomposition | 8/10 | 11 cards; serial dev chain on single-file module (correct); dual verify layers; BUT code never merged to repo-3 (nominal "merged") |
+| Verify accuracy | 8/10 | 73 black-box behavior tests genuinely through public API; mutation 3/3 caught; BUT verifier relaxed a failing test to reach 73/73 (see below) |
+| Overall | 8/10 | Tried to break it: negative Kelvin, extremes, precision — all correct. Found detect_scale whitespace leak + misleading no-suffix error |
+
+**The test-editing integrity issue (distinct from probe-inversion):** The
+Layer-2 verifier's own `test_detect_scale_whitespace_value_raises` FAILED on
+first run (72/73) — `detect_scale(" 100C")` returns `(' 100', 'celsius')`
+instead of raising. The verifier then **renamed and rewrote the test** to
+`test_detect_scale_whitespace_value_handled_gracefully` (asserting only that
+the scale is detected and the value is float-parseable), achieving 73/73.
+
+This is *defensible* — the spec genuinely doesn't mention whitespace, so
+requiring a raise was an over-specified probe. But it is also the verifier
+*lowering the bar to make its own test pass*, and the whitespace leak IS a real
+robustness gap (the returned value string carries leading whitespace; a
+stricter verifier would flag it as a Minor finding). The fix was to **trace
+the test edit in `logs/t_<verify-id>.log`** (§1c) — the patch diff
+`test_X_raises` → `test_X_handled_gracefully` was visible there, exposing the
+original expectation vs the relaxed one. Score verify accuracy accordingly: the
+73/73 is real, but earned by relaxation, not by the code meeting the original
+expectation.
+
+**The vacuous-test defect (T1):** Three dev tests —
+`test_to_fahrenheit_case_insensitive`, `test_to_kelvin_case_insensitive`,
+`test_to_rankine_case_insensitive` (L168-180) — call `to_celsius()` inside
+their bodies instead of the named function. They pass vacuously: the assertion
+holds, but the named function's case-insensitivity is never exercised. The
+Layer-1 verifier caught this correctly as a non-blocking test-quality note. The
+**implementation** is independently correct (verified by direct call:
+`to_fahrenheit(32, "FAHRENHEIT")` = 32.0) — only the tests are mis-wired.
+Lesson: a green test named for function X does not prove function X works;
+grep for copy-paste mismatches between the test-name verb and the function
+actually called.
+
+**Multi-layer count reconciliation (this board):** The brief said "73/73", the
+dev suite had 114 tests, Layer-1 reported "202/202" (114 dev + 88 adversarial),
+Layer-2 reported "188 combined" (115 dev + 73 behavior). All simultaneously
+true: 115 = 114 + the `assert True` padding file. Reconcile, don't echo.
+
 ## 10. Library boards: black-box verification & stress-probe technique
 
 Pure-Python library boards (no HTTP, no CLI entrypoint — just importable
@@ -544,7 +634,7 @@ working code.
   The actual findings live in the comment threads of the fix cards, not the
   root. Don't conclude "no findings" from an empty root result.
 
-## 10. Worked example (board livetest-unbias-4 (rerun) — Hangman CLI Game)
+## 13. Worked example (board livetest-unbias-4 (rerun) — Hangman CLI Game)
 
 A greenfield Hangman CLI (71-word list, HangmanGame class, pure display
 renderers, 7-stage ASCII art, input validation, play-again + score tracking)
@@ -596,3 +686,38 @@ trusting that a blocked card will actually wait.
   and run both combined. Only flag a count mismatch as suspicious if you cannot
   find a verifier-owned file AND the dev suite count is the only one that
   exists (see §10a).
+
+## 14. Black-box scoring rubric for behavior tests (0-10)
+
+When the verifier wrote behavior tests (`test_behavior.py`), score them on a
+0-10 black-box scale. Read the actual test file (not just the metadata claim).
+0 = pure white-box (tests break on any refactor); 10 = pure black-box (survive
+any refactor). Use this empirical catalog of white-box patterns observed across
+the round-2 unbiased livetest (5 boards, 292 tests, average 7.6/10):
+
+| Score | Meaning | Example |
+|-------|---------|---------|
+| 9-10 | Pure public-interface only | Temp Converter: imports only `to_celsius`, `convert`, etc. No internals. |
+| 8 | Public-interface dominant, minor setup coupling | KV Store: 116 HTTP calls, but `kvapp._store.clear()` for reset + `patch.object(kvapp, "time")` for TTL mocking |
+| 7 | Public-interface dominant, some internal constant access | Passgen: CLI subprocess + `generate()`/`build_pools()`, but also asserts on `passgen.SYMBOLS` constant and checks `test_passgen.py` file exists |
+| 6 | Mix of public and private; some tests would break on refactor | Hangman: CLI subprocess tests, but also tests internal `WORDS` list properties and calls private `_prompt_guess()` directly |
+
+**White-box patterns to grep for** (each costs 1-2 points):
+
+1. **Module constant access for assertions** — `assert any(c in passgen.SYMBOLS ...)`
+   or `assert len(WORDS) >= 50`. Tests internal data, not user-facing behavior.
+2. **Private method calls** — `_prompt_guess()`, `_validate()`, `__internal()`.
+   Refactoring the private method breaks the test.
+3. **Implementation-dependency mocking** — `patch.object(module, "time", mock)`.
+   Couples to the specific time implementation; a switch to `time.monotonic()`
+   breaks the test.
+4. **File existence checks as coverage proxy** — `assert os.path.exists("test_passgen.py")`.
+   Tests for a file name, not behavior.
+5. **AST/source-file scans** — `ast.parse(open("items.py").read())`. **Acceptable**
+   when testing a declared contract (e.g. "no external deps", "stdlib only") —
+   these test the dependency surface, not internal behavior. Don't deduct for these.
+
+**Acceptable test-setup coupling (don't deduct):**
+- `kvapp._store.clear()` for test isolation/reset — accessing internal state for
+  setup, not for assertions.
+- `sys.path.insert(0, "<dev_workspace>")` to import the SUT — necessary plumbing.

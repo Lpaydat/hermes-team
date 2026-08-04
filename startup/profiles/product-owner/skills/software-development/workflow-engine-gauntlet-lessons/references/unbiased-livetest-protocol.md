@@ -86,13 +86,29 @@ Key improvement over round 1:
 
 All instances stuck on dead-branch-cycle (known infrastructure gap, lesson #17). Work IS complete on all 5.
 
-### Round 2 honest scorecard (pending subagent deep-analysis)
+### Round 2 honest scorecard — cross-cutting workflow-path + behavior-test-quality audit
 
-6 subagents dispatched to analyze:
-- Per-board (5): code quality, test quality, decomposition, verify accuracy, fix effectiveness
-- Cross-cutting (1): workflow path analysis, behavior test quality (black-box vs white-box)
+**Black-box scores (0=white-box, 10=pure black-box):**
 
-**Pending results.** The key question: are the 292 behavior tests truly black-box (survive refactors), or are some white-box (test implementation details)?
+| Board | Score | Interface | White-box concerns |
+|-------|-------|-----------|-------------------|
+| 3 (Temp Converter) | **9/10** | Public functions only | AST scan for "pure Python" contract; otherwise pristine |
+| 2 (KV Store API) | **8/10** | HTTP REST API | `kvapp._store.clear()` for reset; `patch.object(kvapp, "time")` for TTL mocking |
+| 5 (Pagination) | **8/10** | Public `paginate`/`search`/`sort_and_paginate` | AST scan for deps; weakened generator test |
+| 1 (Passgen) | **7/10** | CLI subprocess + public functions | Accesses `passgen.SYMBOLS` constant; checks `test_passgen.py` file exists |
+| 4 (Hangman) | **6/10** | CLI subprocess + public classes | Tests internal `WORDS` list properties; calls private `_prompt_guess()` directly; purity gate reads source |
+
+**Average: 7.6/10** — predominantly black-box with recurring minor white-box leaks.
+
+**Workflow-path findings:**
+- **Fix loop NEVER entered on any board.** All 5 verifiers returned PASS → `verify→close` edge taken. The `fix` and `re-verify` nodes stayed `pending`. The `total_tests`/`all_tests_pass` fix metadata was never populated. The behavior tests' value as fix-loop acceptance criteria was not exercised.
+- **Zero false positives** across all 5 boards (total findings: B1=1 Note, B2=0, B3=0, B4=1 Minor, B5=0). Both filed findings genuine.
+- **6 probe-inversions self-caught and corrected** (B5=3, B3=1) without filing — strong verifier discipline.
+- **Round 1 false PASS eliminated.** Round 2 behavior tests would have caught them (executable proofs), but code was already fixed from round 1's 4-iteration rework.
+- **Dead-branch leak at 5/5 this round** (vs 3/6 in round 1). Every instance that took verify→close (all 5) leaked — fix/re-verify stuck pending, no `workflow_completed` event. Deterministic correlation confirmed at 100%.
+- **6 cross-workflow qa-gate triggers fired** (one per verify card completion) but all were no-ops: `check-merge` returned `should_test: false, reason: "no project for board"`. Trigger fired correctly; no QA testing ran.
+
+**Recurring white-box patterns** across boards: (1) accessing module constants (`SYMBOLS`, `WORDS`) for assertions; (2) calling underscore-prefixed private methods (`_prompt_guess`); (3) `patch.object(module, "time")` mocking implementation dependencies; (4) AST/source-file scans for static contract checks (acceptable); (5) checking file existence as a proxy for test coverage.
 
 ## Round 1 vs Round 2 comparison
 
