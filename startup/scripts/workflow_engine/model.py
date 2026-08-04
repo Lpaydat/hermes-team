@@ -583,10 +583,39 @@ def _evaluate_single_clause(clause: str, context: dict) -> bool:
     if m:
         return str(context.get(m.group(1))) == m.group(2)
 
+    # ${var} == value  (bare value: True/False/null/number/unquoted string)
+    m = re.match(r"^\s*\$\{(.+?)\}\s*==\s*(\S+)\s*$", clause)
+    if m:
+        lhs = context.get(m.group(1))
+        rhs_raw = m.group(2)
+        # Boolean coercion: True/False/true/false
+        if rhs_raw in ("True", "true"):
+            return lhs is True or str(lhs).lower() == "true"
+        if rhs_raw in ("False", "false"):
+            return lhs is False or str(lhs).lower() == "false"
+        # Null check
+        if rhs_raw in ("null", "None"):
+            return lhs is None
+        # Fallback to string comparison
+        return str(lhs) == rhs_raw
+
     # ${var} != 'value'  (exact string inequality)
     m = re.match(r"^\s*\$\{(.+?)\}\s*!=\s*'(.+?)'\s*$", clause)
     if m:
         return str(context.get(m.group(1))) != m.group(2)
+
+    # ${var} != value  (bare value)
+    m = re.match(r"^\s*\$\{(.+?)\}\s*!=\s*(\S+)\s*$", clause)
+    if m:
+        lhs = context.get(m.group(1))
+        rhs_raw = m.group(2)
+        if rhs_raw in ("True", "true"):
+            return not (lhs is True or str(lhs).lower() == "true")
+        if rhs_raw in ("False", "false"):
+            return not (lhs is False or str(lhs).lower() == "false")
+        if rhs_raw in ("null", "None"):
+            return lhs is not None
+        return str(lhs) != rhs_raw
 
     # Numeric comparisons: <, <=, >, >=
     # Right-hand side may be a bare number (e.g. ${x} < 3) or a quoted

@@ -16,7 +16,7 @@ You wrap vendor coding harnesses. Every card follows the same lifecycle. The inv
 
 An assignee starts with zero context; the card must carry everything (and if it doesn't, block `needs_input` — don't guess):
 
-1. **Card body**: `bead_id` (read the bead for acceptance criteria — the card REFERENCES it, never copies), `contract_ref` (path to contract.md in the repo, committed by tech-lead), `evals_cmd` (executable check), `Size:` ∈ {small, medium, large}, `Harness:` ∈ {claude, codex, opencode}, constraints, context plan (what to read / not read). All of this lives in the BODY — kanban cards have no mutable metadata field.
+1. **Card body**: `bead_id` (read the bead for acceptance criteria — the card REFERENCES it, never copies), `contract_ref` (path to contract.md in the repo, committed by tech-lead), `evals_cmd` (executable check), `Size:` ∈ {small, medium, large}, `Harness:` ∈ {claude, codex}, constraints, context plan (what to read / not read). All of this lives in the BODY — kanban cards have no mutable metadata field.
 2. **Retry fields** (fix cards only, in the body): `Review-Iteration: <N>`, `Chain-Root: <original card id>`, `Resume-Session: <session_id>`, `Branch:`, `Worktree:` — the reviewer stamps these when it creates the fix card.
 3. **Full comment thread** (yours AND the chain root's — `kanban_show <Chain-Root>`): prior reviewer findings (`REVIEW-ITERATION:` comments) are your iteration memory. On a retry, the findings are your prompt — address each one explicitly; never re-derive the task from scratch.
 4. **Workspace**: `$HERMES_KANBAN_WORKSPACE` is your working dir. First attempt: a worktree card (`workspace_kind: worktree`, project-linked → deterministic `<slug>/<task-id>` branch). Fix cards: the reviewer created the card pointing at your ORIGINAL worktree (`workspace_kind: dir` + `workspace_path`) so the harness session can resume — verify you are in the `Worktree:` path from the body before resuming. If the workspace is scratch, block: scratch is deleted on completion and the branch would be lost.
@@ -25,7 +25,7 @@ An assignee starts with zero context; the card must carry everything (and if it 
 
 `--max-budget-usd` does NOT exist (claude 2.0.5 rejects it). The working cap stack is: wall-clock timeout + turn cap + post-hoc cost assertion.
 
-> **Harness selection**: the card body says `Harness:` ∈ {claude, codex, opencode, pi}. Pi is the default when `pi` is on PATH and no other is specified.
+> **Harness selection**: the card body says `Harness:` ∈ {claude, codex}. Pi is the default when `pi` is on PATH and no other is specified.
 
 ### Claude Code
 
@@ -65,18 +65,9 @@ timeout --signal=TERM --kill-after=30 <wall_secs> \
 
 No turn/budget flags exist — the timeout IS the cap. Never `-s danger-full-access`. Session rollout persists to `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`.
 
-### OpenCode
-
-```bash
-timeout --signal=TERM --kill-after=30 <wall_secs> \
-  opencode run --format json "<prompt>"
-```
-
-No caps; timeout only. `opencode export <sessionID>` dumps the transcript; `opencode stats` reports aggregate cost.
-
 ### Budget tiers (wall-clock + post-hoc cost ceiling)
 
-`--max-turns` exists ONLY for Claude Code. For pi/codex/opencode, the wall-clock timeout IS the cap.
+`--max-turns` exists ONLY for Claude Code. For pi/codex, the wall-clock timeout IS the cap.
 
 | Size | claude --max-turns | wall_secs (all harnesses) | cost ceiling (post-hoc) |
 |------|-------------------|---------------------------|------------------------|
@@ -105,7 +96,7 @@ mkdir -p ~/projects/<slug>/traces/<chain-root-id>/
 cp <transcript> ~/projects/<slug>/traces/<chain-root-id>/attempt-<n>.jsonl
 ```
 
-**Key by the chain root** — the ORIGINAL developer card id (`Chain-Root:` from a fix card's body; your own card id on a first attempt) — so all attempts for one piece of work land in one directory with continuous numbering (attempt-1 = first run, attempt-2 = first fix round, …). Transcript locations: claude `~/.claude/projects/<cwd-encoded>/<session-id>.jsonl`; codex `~/.codex/sessions/YYYY/MM/DD/rollout-*<session-id>.jsonl`; opencode via `opencode export`. The worktree dies; the ledger survives. Escalation (trace-first iteration) and tech-lead reflection both read from here.
+**Key by the chain root** — the ORIGINAL developer card id (`Chain-Root:` from a fix card's body; your own card id on a first attempt) — so all attempts for one piece of work land in one directory with continuous numbering (attempt-1 = first run, attempt-2 = first fix round, …). Transcript locations: claude `~/.claude/projects/<cwd-encoded>/<session-id>.jsonl`; codex `~/.codex/sessions/YYYY/MM/DD/rollout-*<session-id>.jsonl`. The worktree dies; the ledger survives. Escalation (trace-first iteration) and tech-lead reflection both read from here.
 
 ## 5. Complete with a structured report
 

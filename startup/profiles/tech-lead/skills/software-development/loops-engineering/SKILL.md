@@ -34,45 +34,39 @@ Understand the codebase and work surface before planning.
 
 - Index with CodeGraph (`--graph-only` for fast structural pass)
 - Read: `AGENTS.md`, `CONTEXT.md`, `CODING_STANDARDS.md`, existing ADRs
-- Scan: Beads issues (`bd status`), open PRs, failing tests, kanban board
+- Scan: open PRs, failing tests, kanban board
 - Identify: test framework, linter, formatter, commit style, branching strategy
 
 **Done when**: every convention, test command, and open work item is accounted for — nothing discovered later that a `grep` would have found here.
 
-### 2. Plan
+### 2. Plan (autonomous decomposition — NO human grilling)
 
-This is where human-in-the-loop lives — everything after this runs autonomously.
+The PO has already written the spec. Your job is implementation planning: how to break it into atomic tasks, order them, and verify them. Everything here runs autonomously — no human input needed.
 
-1. **Grill the user** (`grilling`): one question at a time, recommended answer attached, until the goal is crisp.
-2. **Artifacts**: PRD (`to-spec`), ADRs (`domain-modeling`), glossary (`ubiquitous-language`).
-3. **Negotiate the contract**: Before any code, draft a checklist of testable assertions (~20-27 for a small task; 10 is too few and the evaluator rubber-stamps). The PRD is the boundary; the **contract** is what gets graded. If multiple agents are involved, the generator proposes done-criteria and the evaluator pushes back — they argue via markdown on disk until they agree.
-4. **Build evals**: Structured assertions about behavior, not just unit tests. Build them NOW alongside the contract, not "when problems recur." For subjective quality (UI, text generation), encode the rubric.
-5. **Decompose** (`to-tickets`): tracer-bullet vertical slices with dependency tracking.
+1. **Read the spec**: the trigger card body IS the spec. Read it fully. If the spec references external files (PRD, ADRs), read those too.
+2. **Understand the codebase**: read AGENTS.md, existing tests, conventions, structure. Identify what exists today and where the new work fits.
+3. **Negotiate the contract**: Draft a checklist of testable assertions (~20-27 for a small task; 10 is too few and the evaluator rubber-stamps). The spec is the boundary; the **contract** is what gets graded.
+4. **Build evals**: Structured assertions about behavior, not just unit tests. Build them NOW alongside the contract. For subjective quality (UI, text generation), encode the rubric.
+5. **Decompose** (`to-tickets`): tracer-bullet vertical slices with dependency tracking. Each task gets: title, acceptance criteria, dependencies, sizing (small/medium/large).
 6. **Right-size gate**: Can one agent finish this in one context window? Does it touch >5 files across modules? Are there parallelizable sub-parts? → split if any.
-7. **Publish to Beads**: `bd issue create`, preserving hierarchy (epics → beads → sub-beads).
-8. **Write crash state to disk**: `contract.md`, `progress.md`, `log.md`. These three files ARE the state — the model should be able to crash, lose its session, and pick up by reading only these. If you can't describe state in three files, it's too complicated.
+7. **Create kanban cards**: create developer cards on THIS board (assignee=developer, title prefix `[task]`). Use parent-children links to enforce dependency ordering. NO beads. NO human approval.
+8. **Write crash state to disk**: `contract.md`, `progress.md`, `log.md`. These three files ARE the state.
 
 For complex work, add a critique loop: run `scrutinize` on the plan before decomposing. Loop until stable.
 
-**Re-contract rule**: if you hit a genuine gap missed during grilling, pause that issue only (unrelated tasks delegate as normal), and contract the user. Resolve everything else via research, code, docs, or other agents first.
+**Re-contract rule**: if you hit a genuine spec gap, pause that issue only (unrelated tasks delegate as normal), and BLOCK for the PO. Resolve everything else via research, code, docs, or other agents first.
 
-**Done when**: PRD published, ADRs written, contract.md written, evals written, issues in Beads with dependencies. User approved the decomposition.
+**Done when**: contract.md written, evals written, developer kanban cards created with dependencies. Plan is ready for execution.
 
 ### 3. Execute
 
-**You are the PLANNER. You NEVER write code and NEVER invoke a coding harness yourself.** Your tools are for planning (read, search, beads, git status) and orchestration (kanban cards). Code generation is the `developer` profile's job — create a kanban card assigned to `developer` with the contract as the body.
+**You are the PLANNER. You NEVER write code and NEVER invoke a coding harness yourself.** Your tools are for planning (read, search, git status) and orchestration (kanban cards). Code generation is the `developer` profile's job — create a kanban card assigned to `developer` with the contract as the body.
 
 **Kanban-native flow (the ONLY flow):**
 
 Follow this checklist EXACTLY. Each step is mandatory.
 
-### Step 1: Plan
-- [ ] Read the bead (`bd show <bead_id>`)
-- [ ] Read the PRD (`cat PRD.md`)
-- [ ] Write the contract: acceptance criteria, evals command, constraints
-- [ ] Identify the project directory (absolute path)
-
-### Step 2: Delegate
+### Step 1: Delegate
 - [ ] Call `kanban_chains` with your contract(s) as parallel chains
 - [ ] Single chain → pass one chain with dev + verifier steps
 - [ ] Parallel chains → pass multiple chains
@@ -81,7 +75,7 @@ Follow this checklist EXACTLY. Each step is mandatory.
 kanban_chains(
     goal="<short description>",
     chains=[[
-        {"assignee": "developer", "title": "<short title>", "body": "<full contract: ACs, evals_cmd, bead_id, constraints>", "workspace_path": "<absolute project dir>"},
+        {"assignee": "developer", "title": "<short title>", "body": "<full contract: ACs, evals_cmd, constraints>", "workspace_path": "<absolute project dir>"},
         {"assignee": "verifier", "title": "[verify] <short title>", "body": "Verify developer card. Contract: <full contract>"}
     ]]
 )
@@ -91,9 +85,9 @@ kanban_chains(
 - [ ] **STOP HERE.** Do NOT poll. Do NOT sleep. Do NOT call kanban_show in a loop.
 - [ ] Your session will end. The system will auto-promote you when ALL verifiers finish.
 
-### Step 3: After Auto-Promotion (when you are re-dispatched)
+### Step 2: After Auto-Promotion (when you are re-dispatched)
 - [ ] Read verifier completion summaries via `kanban_show`
-- [ ] If ALL PASS → close bead (`bd close <bead_id>`) → `kanban_complete`
+- [ ] If ALL PASS → `kanban_complete`
 - [ ] If any FAIL → check for fix chains created by the verifier
   - Fix chains are handled automatically — do NOT create your own fix card
   - The verifier creates fix cards on FAIL. Wait for the fix verifier to complete.
@@ -123,7 +117,7 @@ The verifier profile handles ALL validation autonomously via adversarial-review 
 
 - Read the verifier's completion summary when it finishes — the verdict is stamped in it (`PASS`/`FAIL`/`ESCALATE` + metadata)
 - **Expect `[probe]` cards on the board**: the verifier fans out its own kanban_chains workers (fresh-eyes AC prover, static review, delta check) and dependency-parks while they run. Those `[probe]` cards assigned to `verifier` are part of ONE review — normal, not stuck, not yours to touch. **One exception**: a `[probe]` card sitting in `blocked` (the crash circuit-breaker routed it there) strands its parked verifier with no self-heal path — that one you DO unblock (retry) or reassign, then let the swarm resume.
-- On PASS: bead is closed, kanban task completes
+- On PASS: kanban task completes
 - On FAIL: verifier creates fix card for developer → loop continues → you wait
 - On ESCALATE (iteration ≥ 3 or spec gap): read the accumulated findings, decide: re-contract, switch harness model, or abandon
 
@@ -145,9 +139,9 @@ The FAIL→fix→re-verify loop runs **without you**: the verifier files finding
    - **Harness/agent ceiling** (the model genuinely cannot do it): switch the harness model.
    - **Wrong slice**: abandon the slice back to the user.
 
-   Spec-gap you caused → Case B (fix the contract first). Contract-vs-INTENT gap (the bead promises the wrong thing) → `product-owner`.
+   Spec-gap you caused → Case B (fix the contract first). Contract-vs-INTENT gap (the spec promises the wrong thing) → `product-owner`.
 
-**Case B — spec gap you caused**: if any FAIL reveals the contract itself was wrong (not the code), update the PRD/contract BEFORE anything re-runs — the spec is not static; it evolves as you see what the agent builds. Contract-vs-INTENT gaps (the bead promises the wrong thing) route to product-owner, who owns bead content.
+**Case B — spec gap you caused**: if any FAIL reveals the contract itself was wrong (not the code), update the contract BEFORE anything re-runs — the spec is not static; it evolves as you see what the agent builds. Contract-vs-INTENT gaps (the spec promises the wrong thing) route to product-owner, who owns spec content.
 
 > **Never write code yourself.** You are the PLANNER. If no developer/harness path is available, BLOCK the task (`kanban_block`) rather than writing code. Code written by the planner destroys the role separation that makes adversarial verification meaningful.
 
@@ -157,11 +151,10 @@ Key rules:
 - **Let it run**: dev+verifier iterations are not yours to interrupt. Intervene only when the contract itself is wrong or an ESCALATE reaches you.
 
 **Done when**: validation passes (returns to Phase 4 done condition). Then:
-1. `bd close <bead-id>` — close the bead in the issue tracker (non-negotiable — the automation loop depends on this to surface the next ready bead)
-2. Mark done on kanban board (`kanban_complete`)
-3. Write journal entry to `~/projects/<slug>/journal/`
-4. Run reflection (below)
-5. Hand back to user
+1. Mark done on kanban board (`kanban_complete`)
+2. Write journal entry to `~/projects/<slug>/journal/`
+3. Run reflection (below)
+4. Hand back to user
 
 ## Reflection (after task completion)
 
@@ -178,11 +171,11 @@ Before starting the next task, take 60 seconds to learn from the one just comple
 
 **Done when**: one learning recorded. If nothing new was learned, skip — don't force reflection when there's nothing to reflect on.
 
-> Autonomous operation details: [references/loop-theory.md](references/loop-theory.md) — trigger mechanisms, heartbeat survival, beads watchdog script, three-control duplicate prevention, cron schedule pitfall, kanban CLI flag syntax.
+> Autonomous operation details: [references/loop-theory.md](references/loop-theory.md) — trigger mechanisms, heartbeat survival, three-control duplicate prevention, cron schedule pitfall, kanban CLI flag syntax.
 
 ## Board architecture (hybrid)
 
-- **Per-project boards** (discovered dynamically from `.beads/` directories) → tech-lead coding tasks. Each project gets its own board with isolated DB, workspace, and dispatcher loop.
+- **Per-project boards** (discovered dynamically from project directories) → tech-lead coding tasks. Each project gets its own board with isolated DB, workspace, and dispatcher loop.
 - **`hermes-hq`** → scout + researcher tasks (cross-project research).
 - CLI syntax: `hermes kanban --board <slug> <subcommand>` (board flag goes BEFORE the subcommand).
 

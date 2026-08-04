@@ -221,6 +221,24 @@ startup/scripts/workflow_engine/workflow_state.db
 
 When starting engine work in a worktree, ALWAYS verify `startup/scripts/workflow_engine/` is present after `git worktree add` — a missing directory means the gitignore whitelist isn't applied yet.
 
+## Boolean condition engine bug — bare == True silently fails
+
+The condition engine's `==`/`!=` operators only matched single-quoted strings (`${x} == 'PASS'`). Bare values like `${x} == True` fell through to `return False` — the regex `^\s*\$\{(.+?)\}\s*==\s*'(.+?)'\s*$` didn't match unquoted forms.
+
+**FIX (committed f498e77):** Added bare-value `==`/`!=` patterns that handle `True`/`False`/`true`/`false`/`null`/`None`.
+
+**Defensive rule for templates:** prefer `exists` for boolean gates (`${nodes.plan.output.plan_complete} exists`) over `== True`. Works for all types, immune to string-coercion edge cases.
+
+If a conditional edge silently fails (node dead-branched when it should fire), test with:
+```python
+from workflow_engine.model import evaluate_condition
+evaluate_condition("${x} == True", {"x": True})  # should be True
+```
+
+## Trigger cards need completed_at set
+
+The `card_completed` trigger checks `completed_at`, not just `status=done`. When seeding synthetic spec cards for testing, set `completed_at = int(time.time())` — otherwise the trigger watermark check skips the card.
+
 ## Run all 16 test suites, not just one
 
 The engine has 16 test suites. 15 pass consistently; the concurrency suite (`test_concurrency_standalone.py`) has 3 known failures (double-dispatch race, lost-update on concurrent state writes, overlapping ticks). These are pre-existing timing-sensitive failures in the engine's concurrency model, not test bugs. When verifying engine changes:

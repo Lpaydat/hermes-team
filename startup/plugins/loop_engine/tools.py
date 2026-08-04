@@ -1011,10 +1011,27 @@ def _extract_verdict(run):
             "gaps": meta.get("gaps", []),
             "recommendation": meta.get("recommendation"),
         }
+    # FALLBACK 3 (verdict field): verifiers commonly write ``verdict: "PASS"`` /
+    # ``"FAIL"`` flat in metadata (the field the verifier body asks them to fill)
+    # rather than the loop_engine-specific ``dod_met`` key. When an explicit
+    # verdict field is present, translate it so the engine advances instead of
+    # burning reeval attempts on a format mismatch. A PASS with zero findings is
+    # dod_met=True; anything else (FAIL/REPLAN/REJECT) is False. This mirrors
+    # FALLBACK 2's philosophy and only fires when all prior fallbacks miss.
+    if isinstance(meta, dict):
+        v = meta.get("verdict")
+        if isinstance(v, str):
+            vs = v.strip().upper()
+            if vs == "PASS":
+                return {"dod_met": True, "gaps": [],
+                        "recommendation": "advance"}
+            if vs in ("FAIL", "REJECT", "REPLAN", "REJECTED"):
+                return {"dod_met": False, "gaps": meta.get("gaps", []),
+                        "recommendation": "replan"}
     return None
 
 
-def _validate_dod_artifact(verdict, artifact_required=False):
+def _validate_dod_artifact(verdict, artifact_required=False, metric_type=None):
     """Mechanically validate the DoD artifact shape before trusting ``dod_met``.
 
     The verifier's ``dod_met`` is a self-report. When a phase opts in
@@ -1029,14 +1046,31 @@ def _validate_dod_artifact(verdict, artifact_required=False):
     verifier produced one; a verdict with no ``behaviors``/``defect_traces`` is
     artifact-neutral (defers to ``dod_met``).
 
+    ``metric_type`` discriminates the artifact's semantics:
+
+      * ``ground_truth`` (mechanical code verification): ``behaviors`` is "what
+        I tested" and ``defect_traces`` is "defects I found". Fewer traces than
+        behaviors — or ZERO traces — is the SUCCESS case (a clean
+        implementation), not under-coverage. The count invariant is SKIPPED;
+        only the universal integrity guards (fabrication, latent_defect,
+        citation) apply.
+      * ``proxy`` / None (design-council / judgment): the count invariant
+        ``len(traces) >= len(behaviors)`` is a COVERAGE requirement (every
+        behavior must have at least one defect trace). Preserved verbatim.
+
     When ``artifact_required`` is True (or an artifact is present), returns True
-    only when:
+    only when (non-ground_truth):
 
       - ``behaviors[]`` and ``defect_traces[]`` are both non-empty lists;
       - there is at least one trace per behavior (``len(traces) >= len(behaviors)``);
       - every trace has a non-empty ``citation``;
       - no trace is flagged ``fabricated`` (fabrication guard failed);
       - no trace is left at ``status == "latent_defect"``.
+
+    For ``ground_truth``: ``behaviors[]`` must be non-empty when opted in, but
+    ``defect_traces[]`` may be empty (zero defects = clean pass); the
+    fabrication / latent_defect / citation guards still apply to any traces
+    present.
     """
     if not isinstance(verdict, dict):
         return False
@@ -1051,9 +1085,17 @@ def _validate_dod_artifact(verdict, artifact_required=False):
         return not artifact_required
     if not isinstance(behaviors, list) or not isinstance(traces, list):
         return False
-    if not behaviors or not traces:
-        return False
-    if len(traces) < len(behaviors):
+    is_ground_truth = metric_type == "ground_truth"
+    if not is_ground_truth:
+        # Design-council / judgment: the count invariant is a COVERAGE
+        # requirement (every behavior must have >= 1 defect trace).
+        if not behaviors or not traces:
+            return False
+        if len(traces) < len(behaviors):
+            return False
+    elif artifact_required and not behaviors:
+        # Ground-truth + opted-in: behaviors (what was checked) is required,
+        # but traces (defects found) may legitimately be empty (clean pass).
         return False
     for tr in traces:
         if not isinstance(tr, dict):
@@ -2597,7 +2639,9 @@ def _reinvoke_verifier(kb, conn, root_id, loop_state, author, run_id,
                                                     verifier)
     _artifact_required = bool((_cur_verifier or {}).get("artifact_required",
                                                         False))
-    artifact_complete = _validate_dod_artifact(verdict, _artifact_required)
+    _metric_type = (_cur_verifier or {}).get("metric_type")
+    artifact_complete = _validate_dod_artifact(
+        verdict, _artifact_required, metric_type=_metric_type)
 
     # Advance: DoD met AND the artifact is complete. The engine no longer
     # trusts recommendation='advance' to override a failed/partial DoD — a

@@ -1,0 +1,232 @@
+{
+  "id": "tech-lead-execute",
+  "name": "Tech-Lead Execute \u2014 plan (loop_engine), verify (behavior), fix, close",
+  "description": "Version B: tech-lead decomposes spec into tasks, then calls loop_engine with one phase per task (execution=developer, verifier=verifier). loop_engine handles all iteration internally. No kanban_chains in plan phase.",
+  "trigger": {
+    "source": "card_completed",
+    "condition": {
+      "assignee": "tech-lead",
+      "status": "done",
+      "title_prefix": "[spec]"
+    }
+  },
+  "nodes": [
+    {
+      "id": "plan",
+      "profile": "tech-lead",
+      "skill": "loops-engineering",
+      "body_template": "## Pure loop_engine \u2014 decompose + execute\n\n**Spec card:** ${trigger.card_id}\n**Title:** ${trigger.title}\n\nYou are the tech-lead. DO NOT grill the user.\n\n### Phase 1: Decompose\n\nRead the spec. Load your `to-tickets` skill. Decompose into atomic tasks. Each task needs: title, acceptance criteria (testable), dependencies on other tasks, sizing.\n\nGuidelines for atomic tasks:\n- A junior dev can complete it in one sitting\n- It has clear, testable acceptance criteria\n- It can be verified independently\n- It's not two tasks disguised as one\n- Split by independent concern, not by technical layer\n- For wide specs (many independent features), create separate tasks per feature\n\n### Phase 2: Execute via loop_engine (CRITICAL)\n\nCall `loop_engine` with:\n- `goal`: the spec title\n- `runner`: \"tech-lead\"\n- `phases`: one phase per task. Order them by dependency. Each phase has:\n  - `execution`: {title: \"[task] <title>\", body: \"<acceptance criteria + constraints>\", assignee: \"developer\"}\n  - `verifier`: {title: \"[verify] <title>\", body: \"Verify the developer's work against ALL acceptance criteria. Write behavior tests against the public interface and execute them. Do NOT edit dev code.\", assignee: \"verifier\", metric_type: \"boolean\", battery: [\"Do all acceptance criteria pass?\", \"Do behavior tests pass?\"]}\n  - `max_iterations`: 5\n\nloop_engine will:\n- Execute each phase's execution card (developer builds)\n- Run the verifier card (verifier checks)\n- advance \u2192 next phase, replan \u2192 re-execute, escalate \u2192 stop\n- Dependency-park YOUR card until ALL phases converge\n\nDO NOT call kanban_chains. DO NOT call kanban_create. loop_engine handles ALL card creation internally.\n\nAfter loop_engine converges (you auto-promote): read the verifier summaries. Complete with plan metadata.\n\n**Completion metadata:**\n```\n{plan_complete: true, task_count: N, phases_converged: N, sizing_summary: \"small:N medium:N large:N\"}\n```",
+      "title_template": "[tl-b] Plan: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "plan_complete",
+            "task_count"
+          ],
+          "properties": {
+            "plan_complete": {
+              "type": "boolean"
+            },
+            "task_count": {
+              "type": "integer"
+            },
+            "phases_converged": {
+              "type": "integer"
+            },
+            "sizing_summary": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "verify",
+      "profile": "verifier",
+      "skill": "adversarial-review",
+      "body_template": "## Adversarial Behavior Verification\n\n**Spec card:** ${trigger.card_id}\n**Tasks completed:** ${nodes.plan.output.task_count}\n\nYour goal: TRY TO BREAK the integrated code. Prove the developer's claims are true by EXECUTING behavior tests \u2014 not by reading code.\n\n### Phase 1: Spec \u2192 Behavior Test Matrix\n\nRead the spec. Extract EVERY requirement. For each, write a BEHAVIOR test that proves it works through the PUBLIC INTERFACE:\n- CLI tools: pipe input, check stdout/stderr/exit code\n- REST APIs: HTTP requests, check status codes + response bodies\n- Libraries: import and call public functions, check return values\n\nDo NOT test implementation details. Test BEHAVIOR \u2014 what the user sees. These tests must survive refactors.\n\nWrite all behavior tests to a file (e.g. test_behavior.py).\n\n### Phase 2: Attack Your Own Tests (CRITICAL)\n\nYour tests have gaps. LLMs write impressive docstrings then use safe inputs that never actually exercise the edge case. Attack your own work.\n\nRead EVERY test you just wrote. For each test, ask these PRINCIPLES (not a fixed checklist \u2014 reason about what applies to THIS specific code):\n\n1. **Honesty check**: Does the test input actually match what the test claims to test? If the docstring says 'special characters' but the input is safe \u2014 that's a lie. Fix it. Put the actual edge-case value in the input.\n2. **Adversarial thinking**: For every input the code accepts, what is the WORST input a hostile user could provide? Not just invalid \u2014 adversarial. Write tests for those inputs.\n3. **Independence**: Does the test verify behavior the spec requires, or behavior the test author assumed? Remove assumptions. Test only what the spec guarantees.\n4. **Completeness**: Walk through every code path \u2014 happy path, error path, edge path. Is every path tested? If not, write the missing test.\n5. **Deployment readiness**: Does the code run the same way in production as in tests? Test fixtures and test configuration can mask deployment-only failures.\n\nWrite ADDITIONAL tests for every gap you find. Append them to the same test file.\n\n### Phase 3: Execute \u2014 Run ALL Tests\n\nRun ALL tests: developer's existing tests AND your behavior tests AND your attack tests. Any failure is a finding.\n\n### Phase 4: Do NOT Edit Dev Code\n\nYou must NOT modify the developer's code. You only write tests AGAINST it.\n\n**Verdict:**\n- PASS: ALL behavior tests passed. Every spec requirement proven by execution.\n- FAIL: One or more behavior tests failed. Findings are the failing tests + their output.\n- ESCALATE: spec is ambiguous or impossible to test.\n\n**Counting rule**: behavior_tests_passed and behavior_tests_total MUST be integers. Count the actual tests in your test file using `pytest --collect-only -q | wc -l` or equivalent. If some tests fail, behavior_tests_passed is the number that passed (NOT the total, NOT a string description).\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"ESCALATE\", findings_count: N, behavior_tests_total: N, behavior_tests_passed: N, behavior_test_file: \"path\", production_mode_tested: true}\n```",
+      "title_template": "[verify-b] Integration: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "verdict",
+            "findings_count",
+            "behavior_tests_total",
+            "behavior_tests_passed",
+            "production_mode_tested"
+          ],
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL",
+                "ESCALATE"
+              ]
+            },
+            "findings_count": {
+              "type": "integer"
+            },
+            "behavior_tests_total": {
+              "type": "integer"
+            },
+            "behavior_tests_passed": {
+              "type": "integer"
+            },
+            "behavior_test_file": {
+              "type": "string"
+            },
+            "production_mode_tested": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "depends_on": [
+        "plan"
+      ]
+    },
+    {
+      "id": "fix",
+      "profile": "developer",
+      "skill": "",
+      "body_template": "## Fix findings from behavior verification\n\n**Behavior test file:** ${nodes.verify.output.behavior_test_file}\n\nThe verifier wrote behavior tests designed to break your code. Fix YOUR code so ALL tests pass. Do NOT modify the verifier's tests.\n\nRun ALL tests. Every test must pass.\n\n**Completion metadata:**\n```\n{fixed: true, findings_fixed: N, all_tests_pass: N, total_tests: N}\n```",
+      "title_template": "[fix-b] Behavior findings: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "fixed",
+            "findings_fixed",
+            "all_tests_pass",
+            "total_tests"
+          ],
+          "properties": {
+            "fixed": {
+              "type": "boolean"
+            },
+            "findings_fixed": {
+              "type": "integer"
+            },
+            "all_tests_pass": {
+              "type": "integer"
+            },
+            "total_tests": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "re-verify",
+      "profile": "verifier",
+      "skill": "adversarial-review",
+      "body_template": "## Re-verify \u2014 adversarial behavior testing after fix\n\n**Spec card:** ${trigger.card_id}\n**Fix card:** ${nodes.fix.output.findings_fixed} findings fixed\n**Previous run:** ${nodes.verify.output.behavior_tests_passed}/${nodes.verify.output.behavior_tests_total} behavior tests passed\n\nThe developer claims all findings are fixed. Your job: PROVE IT.\n\n### Phase 1: Re-run behavior tests\n\nRun your behavior tests from the first verify. Every previously-failing test must now PASS.\n\n### Phase 2: Attack Your Own Tests Again\n\nThe fix may have introduced NEW bugs. Apply the same adversarial self-review principles:\n1. **Honesty check**: Does each test input actually match what it claims?\n2. **Adversarial thinking**: What new worst-case input would the fix be vulnerable to?\n3. **Independence**: Are you testing behavior, or assumptions about the fix?\n4. **Completeness**: Did the fix close one door but open another?\n5. **Deployment readiness**: Test the fix under production configuration \u2014 test fixtures can mask deployment-only regressions.\n\n### Phase 3: Run ALL Tests\n\nRun ALL tests \u2014 developer's AND your behavior tests AND your attack tests. Every previously-failing test must now PASS.\n\n### Phase 4: Do NOT Edit Dev Code\n\n**Verdict:**\n- PASS: ALL behavior tests pass (old + new).\n- FAIL: Some behavior tests still failing.\n- ESCALATE: cannot resolve.\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"ESCALATE\", findings_count: N, behavior_tests_total: N, behavior_tests_passed: N, production_mode_tested: true}\n```",
+      "title_template": "[re-verify-b] Integration: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "verdict",
+            "findings_count",
+            "behavior_tests_total",
+            "behavior_tests_passed",
+            "production_mode_tested"
+          ],
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL",
+                "ESCALATE"
+              ]
+            },
+            "findings_count": {
+              "type": "integer"
+            },
+            "behavior_tests_total": {
+              "type": "integer"
+            },
+            "behavior_tests_passed": {
+              "type": "integer"
+            },
+            "production_mode_tested": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "close",
+      "profile": "tech-lead",
+      "skill": "loops-engineering",
+      "body_template": "## Close\n\n**Plan:** ${nodes.plan.output.task_count} tasks planned\nRead verify: ${nodes.verify.output.verdict}\nIf fix\u2192re-verify ran: ${nodes.re-verify.output.verdict}\n\n- verify/re-verify PASSED: write journal, complete with verdict=merged\n- ESCALATED: classify, complete with verdict=escalated\n\n**Completion metadata:**\n```\n{verdict: \"merged\"|\"escalated\", tasks_planned: ${nodes.plan.output.task_count}, tasks_completed: ${nodes.plan.output.task_count}, escalate_reason: \"\"}\n```",
+      "title_template": "[tl-b] Close: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "verdict"
+          ],
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "merged",
+                "escalated"
+              ]
+            },
+            "tasks_planned": {
+              "type": "integer"
+            },
+            "tasks_completed": {
+              "type": "integer"
+            },
+            "escalate_reason": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "plan",
+      "to": "verify",
+      "condition": "${nodes.plan.output.plan_complete} exists"
+    },
+    {
+      "from": "verify",
+      "to": "close",
+      "condition": "${nodes.verify.output.verdict} == 'PASS' OR ${nodes.verify.output.verdict} == 'ESCALATE'"
+    },
+    {
+      "from": "verify",
+      "to": "fix",
+      "condition": "${nodes.verify.output.verdict} == 'FAIL'",
+      "max_iterations": 10
+    },
+    {
+      "from": "fix",
+      "to": "re-verify",
+      "max_iterations": 10
+    },
+    {
+      "from": "re-verify",
+      "to": "close",
+      "condition": "${nodes.re-verify.output.verdict} == 'PASS' OR ${nodes.re-verify.output.verdict} == 'ESCALATE'"
+    },
+    {
+      "from": "re-verify",
+      "to": "fix",
+      "condition": "${nodes.re-verify.output.verdict} == 'FAIL'",
+      "max_iterations": 10
+    }
+  ]
+}
