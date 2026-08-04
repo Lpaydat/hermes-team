@@ -7,8 +7,11 @@ description: "Score a completed kanban board's pipeline quality across five dime
 
 Score a finished kanban board end-to-end: did the pipeline actually produce a
 working artifact backed by real evidence, or did it go through the motions?
-This skill is the methodology — the concrete probes and DB queries live in
+This skill is the methodology — the break-it probes and DB queries live in
 [`references/board-deep-analysis.md`](references/board-deep-analysis.md), the
+evidence-source hierarchy for `[verify-b]` integration tasks (where result +
+comments are BOTH empty) lives in
+[`references/verify-b-evidence-sources.md`](references/verify-b-evidence-sources.md), the
 reusable REST API break-it probe lives in
 [`scripts/rest-api-breakit.py`](scripts/rest-api-breakit.py), the reusable
 the reusable CLI/log-tool break-it probe (delimiter injection, SIGINT handling, corrupt
@@ -303,6 +306,23 @@ must re-run yourself:
    (e.g. 569 leaves, 0 losses) is powerful corroborating evidence.
 3. **The fix** — git-diff the commit, then trigger the originally-failing input.
 
+**On cross-version probe runs, reconcile the interpreter.** When you re-run
+a board's test suite, note which Python the board originally used (the
+`.venv/bin/python` in the dev workspace, often 3.11) vs what you invoke
+(`python3` on your host, often 3.12/3.13). A suite that was green on the
+board's interpreter can FAIL on yours due to stdlib behavior changes that are
+NOT code defects — the code is fragile but was honestly passing at audit time.
+Example: `csv.Sniffer().sniff('v\r\nA\r\nA\r\nB\r\n')` returns
+`delimiter='\r'` on both 3.11 and 3.13, but `csv.reader` ACCEPTS `\r` on 3.11
+(works) and REJECTS it on 3.13 (`ValueError: bad delimiter value` → crash).
+The verify-b's "42/42 PASS" was accurate for 3.11; the crash only surfaces on
+3.13. **Characterize these as latent portability bugs, not verify
+false-claims.** The fix (restrict Sniffer candidate delimiters) is correct
+regardless of version. Cross-version probe failures are valuable signal — they
+catch fragility the board's own runtime never exercised — but score them as a
+note on code quality / fix-effectiveness, not as a verify-accuracy deduction,
+since the verifier honestly passed on its own interpreter.
+
 ## Report format
 
 A summary table of the five scores, each with 1–2 sentences of justification
@@ -347,6 +367,27 @@ only for critic variants. Dispatch-artifact detection (§5 there) catches
   reconstructing from the trace JSONL — read the close card FIRST for the path.
 - **Empty `result` column.** Findings/fixes live in `task_comments`, not
   `result`. Query comments ordered by `created_at`.
+- **Verify-b integration tasks: `result` AND `task_comments` can BOTH be empty.**
+  The `[verify-b]` (integration verify) card frequently has an empty `result`
+  column AND zero `task_comments` — because the verdict, test counts, mutation
+  results, and findings are written to **`task_runs.summary`** and the
+  **`task_events` `kind='completed'` payload** instead. Do NOT conclude "no
+  verify ran" from empty result+comments. The authoritative queries:
+  ```sql
+  -- The verdict + test breakdown + mutation-check outcome:
+  SELECT summary FROM task_runs WHERE task_id = '<verify-b-id>';
+  -- The structured completion payload (result_len, artifacts list, findings):
+  SELECT payload FROM task_events
+  WHERE task_id = '<verify-b-id>' AND kind = 'completed';
+  ```
+  The `task_events` `kind='completed'` payload is a JSON object with `summary`,
+  `result_len`, and `artifacts` (absolute paths to behavior-test files copied
+  into `attachments/`). The `task_runs.summary` is a human-readable string like
+  `PASS — 207/207 tests in fresh venv: 142 dev + 40 behavior + 25 adversarial;
+  mutation check 3/3 caught`. Query BOTH before concluding verify-b left no
+  evidence. See
+  [`references/verify-b-evidence-sources.md`](references/verify-b-evidence-sources.md)
+  for the full evidence-source hierarchy and worked example.
 - **Per-task verify false PASS.** A per-task verifier can stamp PASS while its
   own probe workers flagged a defect. Check whether integration verify caught
   what per-task verify missed.
@@ -376,6 +417,36 @@ only for critic variants. Dispatch-artifact detection (§5 there) catches
   card body often admits this ("no git merge target; deliverable is the
   validated library in the developer's workspace"). Note it in the
   decomposition score, not code quality.
+- **The canonical code ≠ the code that verify-b tested (post-escalation fix
+  drift).** On boards with an escalation chain (iter-cap → tech-lead
+  escalation → fix card → re-verify), the close task may declare a DIFFERENT
+  workspace as canonical than the one the integration verifier (`[verify-b]`)
+  actually ran against. The fix card produced corrected code in its own
+  workspace; verify-b ran against the *pre-fix* last-phase dev workspace; the
+  close task pointed at the *post-fix* workspace. Result: verify-b's PASS
+  verdict covers code that is NOT the shipped artifact. **Detection:** (1)
+  read the close-card comment for the named canonical workspace path; (2)
+  read the verify-b card for which workspace its test harness pointed at
+  (grep the behavior test file / hermes_verify script for the dev workspace
+  path); (3) `diff` the two `app.py`/`dedupe.py` files. If they differ, the
+  verify-b PASS does not cover the canonical code — re-run verify-b's suite
+  against the canonical file yourself. This is a **verify-accuracy** scoring
+  deduction even if both files independently pass their own suites, because
+  the integration gate did not gate what shipped.
+- **Known fix documented but never merged into canonical code.** A developer
+  or re-execution worker may find a real bug, write a fix, verify it in their
+  own workspace, and document it on the loop blackboard ("Recommend the
+  tech-lead decide whether to apply this fix to the canonical code before the
+  loop exits") — and the tech-lead closes the loop as "merged" WITHOUT
+  propagating the fix. The fix exists in an orphaned workspace; the canonical
+  code still has the bug. **Detection:** mine the loop blackboard comments on
+  the root loop card for `[developer — bug found ...]` or `Recommend the
+  tech-lead decide` notes — these are un-merged fix recommendations. Then
+  `diff` the recommending worker's workspace against the canonical final. If
+  the fix is absent from canonical, the finding is **still open** despite the
+  "merged" verdict. Score fix-effectiveness down and report the bug as open.
+  The one-line-fix-that-never-shipped is the most common shape (e.g.
+  `csv.Sniffer().sniff(sample)` → `sniff(sample, delimiters=',;\t|')`).
 - **Vacuous tests pass green but test the wrong function.** A test named
   `test_to_fahrenheit_case_insensitive` that calls `to_celsius()` inside passes
   vacuously — it never exercises the named function. These inflate the green
@@ -407,7 +478,24 @@ only for critic variants. Dispatch-artifact detection (§5 there) catches
   failure, not a code failure. Cross-check the converged task count named in
   the plan comment against `SELECT id FROM tasks WHERE title LIKE '[task]%'`.
   The delta = dropped requirements. Observed on a loop_engine board where 2 of
-  3 converged tasks (spec reqs #5 and #6) had no dev card at all.
+ 3 converged tasks (spec reqs #5 and #6) had no dev card at all.
+ - **A phase that crashes repeatedly then recovers is a resilience win, not a
+ failure — score it accordingly.** On loop_engine boards, query
+ `task_runs.outcome` for every dev card to surface phase-level crash/retry
+ history:
+ ```sql
+ SELECT t.id, substr(t.title,1,40), r.outcome, substr(r.summary,1,80)
+ FROM task_runs r JOIN tasks t ON r.task_id = t.id
+ WHERE t.title LIKE '[task]%' AND r.outcome IN ('crashed','failed','timed_out','reclaimed')
+ ORDER BY r.id;
+ ```
+ When one phase's dev cards show 3 consecutive `crashed`/`failed` outcomes
+ before a `completed` on the 4th attempt, the loop_engine **recovered and
+ converged** — that is loop resilience working as designed. Score
+ decomposition DOWN for the repeated crash (an instability signal in that
+ phase's contract or the dev-profile's reliability on it), but do NOT score
+ it as a failed board: the convergence metadata on the close card
+ (`phases_converged`) confirms the loop reached a green terminal state.
 - **Convergence-loop metadata lives in comments, not the result/metadata field.**
   For loop_engine / iterative-decomposition templates,
   `decomposition_iterations`, `sizing_summary`, and `task_ids` are logged in

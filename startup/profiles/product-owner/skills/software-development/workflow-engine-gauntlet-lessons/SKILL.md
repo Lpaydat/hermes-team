@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from 16+ gauntlet rounds and 3 unbiased livetest rounds (8 specs each) of live-testing workflow templates. Load when debugging deadlocks, false PASS, ESCALATE crashes, instance leaks, or designing decomposition experiments. 38 lessons: adversarial behavior-test verify (#27), claimed-vs-actual score gap (#28), A/B/C decomposition (pure loop_engine B fixed the dispatch bug, 3-4 phases per spec), PO agents fabricate scores (#30), gateway restart after plugin add (#31), behavior-test happy-path lock-in (#33), two-phase self-attack verify (#34), verifier type-cheating (#35), state blob desync (#36), full e2e benchmark 692/698 tests (#37), de-over-fitting body templates — principles not checklists (#38), round 4 validates principles outperform checklists on same spec types (#39). Cap: 10 iterations. Do NOT mix orchestration systems."
+description: "Proven pitfalls and fixes from 16+ gauntlet rounds and 4 unbiased livetest rounds of live-testing workflow templates. Load when debugging deadlocks, false PASS, ESCALATE crashes, instance leaks, or designing decomposition experiments. 41 lessons: adversarial behavior-test verify (#27), claimed-vs-actual score gap (#28), A/B/C decomposition (pure loop_engine B fixed the dispatch bug, 3-4 phases per spec), PO agents fabricate scores (#30), gateway restart after plugin add (#31), behavior-test happy-path lock-in (#33), two-phase self-attack verify (#34), verifier type-cheating (#35), state blob desync (#36), full e2e benchmark 692/698 tests (#37), de-over-fitting body templates — principles not checklists (#38), round 4 validates principles outperform checklists (#39), verify-b tested wrong workspace (#40), orphaned fix not merged into canonical code (#41). Cap: 10 iterations. Do NOT mix orchestration systems."
 ---
 
 # Workflow Engine Gauntlet Lessons
@@ -1205,3 +1205,57 @@ The progression: static review (false pass) → specific checklist (clean pass w
 **User's framing (Matt Pocock, cited):** "the problem of AI coding is how we can verify that AI did the right things as we expected it to do." The adversarial behavior-test verify (#27) + two-phase self-attack (#34) + principle-based reasoning (#38/#39) is the answer to this problem. The verifier's job IS to try to break the code — this is not out of scope, it's the core mandate per the adversarial-review skill and loops-engineering Phase 4 ("Validate").
 
 **Template state at end of round 4:** tech-lead-execute.json with 5 nodes (plan→verify→fix→re-verify→close), pure loop_engine decomposition, 4-principle verify body, deployment-readiness principle #5 added to both verify and re-verify. Committed at f0ca7eb.
+
+**Round 4 deep-analysis results (5 boards scored by subagents):**
+
+| # | Spec | Code | Tests | Decomposition | Verify | Overall |
+|---|------|:----:|:-----:|:------------:|:------:|:-------:|
+| 1 | Markdown to HTML | 8 | 9 | 9 | **10** | 8 |
+| 2 | URL Shortener | 8 | 8 | 9 | 8 | 8 |
+| 3 | CSV Dedup | 7 | 8 | 7 | 7 | 7 |
+| 4 | Tic-Tac-Toe | 9.5 | 9 | 10 | 9 | 9.5 |
+| 5 | String Validator | 9 | 9 | 8 | 9 | 9 |
+
+**Average: 8.3/10. 274/275 behavior tests passed.**
+
+Board 1 (the critical test) scored **10/10 on verify accuracy** — the principle "what's the WORST input?" drove discovery of a NUL-sentinel IndexError crash that round 1's static review completely missed. 5 real I/O bugs found across 6 iterations (NUL crash, UnicodeDecodeError, BrokenPipeError, ENOSPC, closed-stdout AttributeError). Every escalation was justified — no rubber-stamping.
+
+Board 4 (Tic-Tac-Toe) minimax proven unbeatable: 569 terminal positions exhaustively checked, 0 human wins, 183 draws, 386 AI wins.
+
+### 40. Verify-b tested wrong workspace — process gap between phase output and canonical code
+
+**Symptom:** The integration verify-b card runs against a DIFFERENT developer workspace than the one the close card declares as canonical. Bugs found in the canonical code were never tested by verify-b.
+
+**Observed in livetest-unbias-2 (URL Shortener, round 4):** The port-range validation crash was found during a loop_engine escalation fix loop. The fix was developed in workspace `t_36eb9bb1` and declared canonical by the close card. But verify-b (`t_622879f8`) ran against `t_ec6080b9` — the PRE-fix workspace. The port fix was never present in the code verify-b tested.
+
+**Root cause:** When loop_engine phases iterate (dev fails → re-execute → different workspace), the phase-level verifier tests the latest phase workspace. But the integration verify-b may run against a stale workspace path if the close card references a later escalation-fix workspace. There's no mechanism ensuring verify-b tests the EXACT code the close card ships.
+
+**Detection:** Compare the workspace path in verify-b's task_runs against the canonical workspace in close's completion metadata. If they differ, the verify-b verdict doesn't cover the shipped code.
+
+**FIX (process):** After the pipeline completes, always check that verify-b ran against the same workspace the close card declares canonical. If they differ, re-run verify-b against the canonical workspace before trusting the verdict.
+
+**Generalizes:** Any pipeline where code moves between workspaces during escalation loops has this risk. The fix is a workspace-identity check, not a template change.
+
+### 41. Orphaned fix not merged into canonical code
+
+**Symptom:** A developer finds a real bug during phase execution, writes a fix, and documents it on the loop blackboard. But the fix is never merged into the canonical code the close card ships.
+
+**Observed in livetest-unbias-3 (CSV Deduplicator, round 4):** The developer in workspace `t_42d66921` found that `csv.Sniffer().sniff(sample)` without restricted `delimiters=` mis-detects delimiters on small/ambiguous single-column CSVs. The developer wrote a one-line fix (`delimiters=',;\\t|'`) and flagged it: "Recommend the tech-lead decide whether to apply this fix to the canonical code before the loop exits." The tech-lead closed as merged WITHOUT applying the fix.
+
+**Root cause:** Within a loop_engine phase, the developer's re-execution card is a child of the phase task. Its findings live in task_comments on that card — not in the main dev workspace. The tech-lead's close card reads verify verdicts and plan metadata but does not scan child-card comments for unmerged fixes. There's no structural mechanism forcing the close card to sweep for orphaned fixes.
+
+**Contrast:** Board 2's port-crash fix WAS merged (via escalation chain), but board 3's Sniffer fix was NOT (no escalation — it was just a recommendation on a re-execution card). The difference: escalations go through the full fix→verify cycle and land in a new workspace that becomes canonical. Re-execution recommendations are advisory and get lost.
+
+**FIX (process):** After the pipeline completes, scan all developer cards on the board for unmerged fix recommendations. Check each developer card's comments for language like "recommend," "should apply," or "before the loop exits." If any exist, verify whether the fix is in the canonical code.
+
+```sql
+SELECT t.id, substr(t.body, 1, 80)
+FROM tasks t
+WHERE t.assignee = 'developer'
+  AND t.status = 'done'
+  AND EXISTS (
+    SELECT 1 FROM task_comments c
+    WHERE c.task_id = t.id
+    AND (c.body LIKE '%recommend%' OR c.body LIKE '%should apply%' OR c.body LIKE '%before the loop%')
+  );
+```
