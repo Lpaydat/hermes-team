@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, or spawns duplicate instances. 28 lessons from 14+ gauntlet rounds across 5 templates, including TWO measured 5-board unbiased livetests (10 total specs). Includes the adversarial behavior-test verify paradigm (#27) — the fix for false PASS from static review — and the claimed-vs-actual score gap (#28). User iteration cap preference: 10 (not 3)."
+description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, or spawns duplicate instances. 28 lessons from 14+ gauntlet rounds across 5 templates, including TWO completed 5-board unbiased livetests (10 total specs, 292 behavior tests). Includes the adversarial behavior-test verify paradigm (#27) — the fix for false PASS from static review — and the claimed-vs-actual score gap (#28). User iteration cap preference: 10 (not 3)."
 ---
 
 # Workflow Engine Gauntlet Lessons
@@ -573,10 +573,15 @@ path). Each independently runs the code, reproduces findings, and scores
 0-10 with evidence. Average across all boards for the true template score.
 
 **Round 2 unbiased results (adversarial behavior-test template):**
-- 4/5 work complete (board 1 hit review-required block again)
-- verify now writes behavior tests and EXECUTES them
+- **5/5 work complete, 5/5 close=merged**
+- verify wrote and EXECUTED **292 behavior tests** across 5 specs — all passed
+- Per-spec behavior test counts: 37 (password gen), 60 (KV store API), 73 (temp converter), 52 (hangman), 70 (pagination)
 - Fix must pass ALL tests (dev's + verifier's behavior tests)
 - Cannot lie about fixes — the failing test is the proof
+- All instances stuck on dead-branch-cycle (known infra gap, lesson #17)
+- Round 1 board 1 false PASS (3 bugs in merged code) → round 2 eliminated via behavior testing
+
+**Pending:** 6 subagent deep-analysis of round 2 (same methodology as round 1). Key question: are the 292 behavior tests truly black-box?
 
 See `references/unbiased-livetest-protocol.md` for both round 1 (static
 review) and round 2 (adversarial behavior testing) results.

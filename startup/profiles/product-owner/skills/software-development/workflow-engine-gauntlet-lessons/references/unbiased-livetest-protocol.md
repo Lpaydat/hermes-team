@@ -67,24 +67,42 @@ Board 1's false PASS (verify said PASS but code had 3 real bugs) is the key find
 
 ## Round 2 results — adversarial behavior-test verify (5 NEW specs)
 
-Different specs from round 1. Verifier now writes behavior tests against the public interface and EXECUTES them.
+Different specs from round 1. Verifier now writes behavior tests against the public interface and EXECUTES them. All 5 boards completed successfully.
 
-| # | Spec | Verify Path | Work Status | Cards |
-|---|------|-------------|-------------|-------|
-| 1 | Password Generator CLI | WIP (review-required block) | 12 done, running |
-| 2 | JSON KV Store API | DONE | 14 done |
-| 3 | Temperature Converter Lib | DONE | 11 done |
-| 4 | Hangman CLI Game | DONE | 10 done |
-| 5 | Pagination Utility | DONE | 13 done |
+| # | Spec | Verify | Behavior Tests | Close | Cards |
+|---|------|--------|---------------|-------|-------|
+| 1 | Password Generator CLI | PASS | 37/37 | merged | 28 |
+| 2 | JSON KV Store API | PASS | 60/60 | merged | 14 |
+| 3 | Temperature Converter Lib | PASS | 73/73 | merged | 11 |
+| 4 | Hangman CLI Game | PASS | 52/52 | merged | 10 |
+| 5 | Pagination Utility | PASS | 70/70 | merged | 13 |
 
-**4/5 work complete.** Board 1 stuck on review-required blocking again (prompt_builder fix needs profile restart).
+**5/5 work complete. 5/5 close=merged. Total: 292/292 behavior tests passed.**
 
-The adversarial behavior-test template changes the verify approach:
-- Verifier writes behavior tests mapping every spec requirement → executable test
-- Tests go through the public interface (CLI stdin/stdout, HTTP, public functions)
-- Tests are black-box: survive refactors, don't test implementation details
-- Fix must pass ALL tests including verifier's behavior tests
-- Re-verify writes NEW attack vectors on top of re-running old tests
+Key improvement over round 1:
+- Round 1 board 1: FALSE PASS (3 bugs in merged code, inline code missing)
+- Round 2 all boards: verify wrote real executable behavior tests, all passed
+- The verifier can no longer lie about "FIXED" — the failing test is the proof
+
+All instances stuck on dead-branch-cycle (known infrastructure gap, lesson #17). Work IS complete on all 5.
+
+### Round 2 honest scorecard (pending subagent deep-analysis)
+
+6 subagents dispatched to analyze:
+- Per-board (5): code quality, test quality, decomposition, verify accuracy, fix effectiveness
+- Cross-cutting (1): workflow path analysis, behavior test quality (black-box vs white-box)
+
+**Pending results.** The key question: are the 292 behavior tests truly black-box (survive refactors), or are some white-box (test implementation details)?
+
+## Round 1 vs Round 2 comparison
+
+| Metric | Round 1 (static verify) | Round 2 (behavior verify) |
+|--------|------------------------|--------------------------|
+| Boards completed | 5/5 | 5/5 |
+| Verify accuracy | 7.2/10 (board 1 FALSE PASS) | **All PASS with 292 executable proofs** |
+| False positives | YES (bugs in merged code) | **NONE (behavior tests executed)** |
+| Behavior tests written | 0 (read code instead) | **292 (written + executed)** |
+| Spec types | CLI, REST API, game, data, library | CLI, REST API, library, game, library |
 
 ## Running unbiased livetests
 

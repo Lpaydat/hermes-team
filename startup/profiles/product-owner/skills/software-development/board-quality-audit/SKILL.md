@@ -8,7 +8,9 @@ description: "Score a completed kanban board's pipeline quality across five dime
 Score a finished kanban board end-to-end: did the pipeline actually produce a
 working artifact backed by real evidence, or did it go through the motions?
 This skill is the methodology — the concrete probes and DB queries live in
-[`references/board-deep-analysis.md`](references/board-deep-analysis.md).
+[`references/board-deep-analysis.md`](references/board-deep-analysis.md), and
+the reusable REST API break-it probe lives in
+[`scripts/rest-api-breakit.py`](scripts/rest-api-breakit.py).
 
 ## When to load
 
@@ -61,6 +63,15 @@ The real evidence is in `task_comments`, the workspaces dir, and git history.
   behavior as a bug when it actually satisfies the contract. Example: flagging
   `(False, "empty input")` for non-str as a bug, when the spec mandates exactly
   that return shape. Read the spec card before counting a finding as real.
+- **Check for verifier test-editing (a distinct integrity issue).** A verifier
+  whose own behavior test FAILS may rewrite the test to pass (e.g.
+  `test_X_raises` → `test_X_handled_gracefully`) rather than filing the finding
+  OR honestly dismissing it as a probe-inversion. This is different from
+  probe-inversion: the test wasn't *wrong*, the bar was *lowered*. Trace the
+  verifier's test-file edits in `logs/t_<verify-task-id>.log` — look for patch
+  diffs on the behavior test file. If an N/N clean-sweep was achieved by
+  relaxing a failing test, note the original expectation vs the relaxed one and
+  score accordingly. See §10 in the reference file.
 - Did the per-task verify stamp PASS while missing a bug the integration verify
   caught? Call out the layered-verify win (or the miss).
 - Cite: the finding (comment id, body excerpt), your reproduction, and whether
@@ -83,6 +94,11 @@ The real evidence is in `task_comments`, the workspaces dir, and git history.
   output for the user.
 - Cite: fix commit SHA, the diff, the regression test names, re-verify verdict,
   and the deferred/open finding IDs with severities.
+- **Zero-rework boards: dimension 5 is N/A, not 0.** When verify stamps PASS on
+  iteration 1 with no `[fix]` or `[re-verify]` card, there are no fixes to be
+  effective. Score the four real dimensions and note the clean first-pass as a
+  positive signal. See
+  [`references/board-deep-analysis.md`](references/board-deep-analysis.md) §10.
 
 ## The imperative: never trust, always re-probe
 
@@ -91,6 +107,21 @@ The whole point of this skill is independent reproduction. Three things you
 must re-run yourself:
 
 1. **The test suite** — compare your pass count to the verifier's claim.
+   **Reconcile the numbers, don't echo them.** A brief saying "73/73" and a
+   dev suite of 114 and a verifier claiming "202" can all be *simultaneously
+   true* because they count different things. Know the three layers and where
+   each file lives: (a) **dev suite** in the dev workspace; (b) **verifier
+   Layer-1 adversarial suite** written to `/tmp/hermes-verify-<task-id>/` (may
+   be reaped on completion — recover from `logs/t_<verify-id>.log`); (c)
+   **verifier Layer-2 behavior suite** — a separate file the verifier authored,
+   often `test_behavior.py`, testing through the public API. Run each
+   independently AND combined; confirm the combined count matches the
+   verifier's claim. For REST API boards, also confirm the tests are genuinely
+   black-box (HTTP-level, not implementation tests) via the grep technique in
+   [`references/board-deep-analysis.md`](references/board-deep-analysis.md)
+   §7a. For library boards, see §10 for the library black-box equivalent.
+   **Watch for padding:** a trivial `assert True` test file inflating the dev
+   count by 1 is a test-quality yellow flag.
 2. **An adversarial probe for the critical property** — write your own, don't
    reuse the verifier's test. Matching the verifier's reported counts exactly
    (e.g. 569 leaves, 0 losses) is powerful corroborating evidence.
@@ -116,3 +147,25 @@ for the concrete DB queries, code-location technique, and a worked example.
   what per-task verify missed.
 - **"Unbeatable" without exhaustive proof.** Only a full game-tree count is
   acceptable evidence. A few played games prove nothing.
+- **Reaped scratch workspaces lose the verifier's test files.** Scratch
+  (`workspace_kind='scratch'`) task dirs are deleted when the task reaches
+  `done`. The verifier's `test_behavior.py` or adversarial suite often lived
+  there and is now gone from disk. **Recover it from
+  `logs/t_<verify-task-id>.log`** — the full session transcript (test file
+  contents via `cat`/`write` tool output, patch diffs, pytest output) is
+  preserved there. `grep -n "def test\|PYEOF\|passed\|failed" logs/t_<id>.log`
+  to find the test bodies and counts.
+- **"Merged" can be nominal, not real.** A close card may stamp verdict=merged
+  while the code was never actually merged to the seed repo — it lives only in
+  scratch workspaces. Check the repo at the original path (`git ls-files`); if
+  it's still just `.gitignore` + README, the "merge" was nominal. The close
+  card body often admits this ("no git merge target; deliverable is the
+  validated library in the developer's workspace"). Note it in the
+  decomposition score, not code quality.
+- **Vacuous tests pass green but test the wrong function.** A test named
+  `test_to_fahrenheit_case_insensitive` that calls `to_celsius()` inside passes
+  vacuously — it never exercises the named function. These inflate the green
+  count while proving nothing about the named behavior. Grep for copy-paste
+  mismatches between test-name verbs and the function actually called in the
+  body. (The implementation may still be correct — independently verify rather
+  than assume the test proves it.)
