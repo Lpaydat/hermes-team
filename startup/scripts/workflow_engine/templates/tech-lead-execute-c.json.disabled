@@ -1,13 +1,13 @@
 {
-  "id": "tech-lead-execute-b",
-  "name": "Tech-Lead Execute B — pure loop_engine decomposition + execution",
-  "description": "Version B: tech-lead decomposes spec into tasks, then calls loop_engine with one phase per task (execution=developer, verifier=verifier). loop_engine handles all iteration internally. No kanban_chains in plan phase.",
+  "id": "tech-lead-execute-c",
+  "name": "Tech-Lead Execute C — critic-collaborated decomposition",
+  "description": "Version C: tech-lead decomposes → verifier criticizes decomposition quality (are tasks atomic? right-sized? complete spec coverage?) → tech-lead revises → kanban_chains. Adds a decomposition review phase before dispatch.",
   "trigger": {
     "source": "card_completed",
     "condition": {
       "assignee": "tech-lead",
       "status": "done",
-      "title_prefix": "[spec-b]"
+      "title_prefix": "[spec-c]"
     }
   },
   "nodes": [
@@ -15,8 +15,8 @@
       "id": "plan",
       "profile": "tech-lead",
       "skill": "loops-engineering",
-      "body_template": "## Pure loop_engine — decompose + execute\n\n**Spec card:** ${trigger.card_id}\n**Title:** ${trigger.title}\n\nYou are the tech-lead. DO NOT grill the user.\n\n### Phase 1: Decompose\n\nRead the spec. Load your `to-tickets` skill. Decompose into atomic tasks. Each task needs: title, acceptance criteria (testable), dependencies on other tasks, sizing.\n\nGuidelines for atomic tasks:\n- A junior dev can complete it in one sitting\n- It has clear, testable acceptance criteria\n- It can be verified independently\n- It's not two tasks disguised as one\n- Split by concern (alignment vs escaping), not by layer (CLI vs parser)\n- For wide specs (many independent functions), create separate tasks per function\n\n### Phase 2: Execute via loop_engine (CRITICAL)\n\nCall `loop_engine` with:\n- `goal`: the spec title\n- `runner`: \"tech-lead\"\n- `phases`: one phase per task. Order them by dependency. Each phase has:\n  - `execution`: {title: \"[task] <title>\", body: \"<acceptance criteria + constraints>\", assignee: \"developer\"}\n  - `verifier`: {title: \"[verify] <title>\", body: \"Verify the developer's work against ALL acceptance criteria. Write behavior tests against the public interface and execute them. Do NOT edit dev code.\", assignee: \"verifier\", metric_type: \"boolean\", battery: [\"Do all acceptance criteria pass?\", \"Do behavior tests pass?\"]}\n  - `max_iterations`: 5\n\nloop_engine will:\n- Execute each phase's execution card (developer builds)\n- Run the verifier card (verifier checks)\n- advance → next phase, replan → re-execute, escalate → stop\n- Dependency-park YOUR card until ALL phases converge\n\nDO NOT call kanban_chains. DO NOT call kanban_create. loop_engine handles ALL card creation internally.\n\nAfter loop_engine converges (you auto-promote): read the verifier summaries. Complete with plan metadata.\n\n**Completion metadata:**\n```\n{plan_complete: true, task_count: N, phases_converged: N, sizing_summary: \"small:N medium:N large:N\"}\n```",
-      "title_template": "[tl-b] Plan: ${trigger.title}",
+      "body_template": "## Collaborative Decomposition (tech-lead + verifier critic)\n\n**Spec card:** ${trigger.card_id}\n**Title:** ${trigger.title}\n\nYou are the tech-lead. DO NOT grill the user.\n\n### Phase 1: Initial Decomposition\n\nRead the spec. Load your `to-tickets` skill. Decompose into tasks. Each task: title, acceptance criteria, dependencies, sizing.\n\n### Phase 2: Self-Grill — Critique Your Own Decomposition\n\nBefore dispatching, stress-test your decomposition. Use `delegate_task` to spawn a subagent (clean context) as a critic. Give the subagent:\n- The spec card body\n- Your proposed task list\n\nAsk the subagent to answer ONLY these questions:\n1. Does every spec requirement have at least one task covering it? List any gaps.\n2. Are any tasks too big for a junior dev to complete in one sitting? Which ones?\n3. Are any tasks two tasks disguised as one? Which ones?\n4. Is the task count reasonable for this spec complexity? (1 task per ~50 lines of expected code)\n5. Are the acceptance criteria testable? List any that aren't.\n\n### Phase 3: Revise\n\nRead the critic's feedback. Revise your task list:\n- Split tasks the critic flagged as too big\n- Add tasks for any spec gaps the critic found\n- Refine ACs that aren't testable\n- Merge tasks if over-decomposed\n\n### Phase 4: Dispatch via kanban_chains\n\nCall `kanban_chains` with the revised task list.\n- One chain per task (or sequential steps for dependent tasks)\n- Each chain step: {assignee: \"developer\", title: \"[task] <title>\", body: \"<acceptance criteria>\"}\n- Your card auto-blocks. Do NOT call kanban_complete.\n\nAfter auto-promotion: read verifier summaries. Complete with plan metadata.\n\n**Completion metadata:**\n```\n{plan_complete: true, task_count: N, task_ids: [\"t_xxx\", ...], critic_findings: N, critic_revisions: N, sizing_summary: \"small:N medium:N large:N\"}\n```",
+      "title_template": "[tl-c] Plan: ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
@@ -24,7 +24,9 @@
           "properties": {
             "plan_complete": {"type": "boolean"},
             "task_count": {"type": "integer"},
-            "phases_converged": {"type": "integer"},
+            "task_ids": {"type": "array", "items": {"type": "string"}},
+            "critic_findings": {"type": "integer"},
+            "critic_revisions": {"type": "integer"},
             "sizing_summary": {"type": "string"}
           }
         }
@@ -35,7 +37,7 @@
       "profile": "verifier",
       "skill": "adversarial-review",
       "body_template": "## Adversarial Behavior Verification\n\n**Spec card:** ${trigger.card_id}\n**Tasks completed:** ${nodes.plan.output.task_count}\n\nYour goal: TRY TO BREAK the integrated code. Prove the developer's claims are true by EXECUTING behavior tests — not by reading code.\n\n### Phase 1: Spec → Behavior Test Matrix\n\nRead the spec. Extract EVERY requirement. For each, write a BEHAVIOR test that proves it works through the PUBLIC INTERFACE:\n- CLI tools: pipe input, check stdout/stderr/exit code\n- REST APIs: HTTP requests, check status codes + response bodies\n- Libraries: import and call public functions, check return values\n\nDo NOT test implementation details. Test BEHAVIOR. Write all behavior tests to a file.\n\n### Phase 2: Execute — Break It\n\nRun ALL tests: developer's AND your new behavior tests. Any failure is a finding.\n\nTry inputs the developer didn't anticipate: empty input, huge input, special characters, boundary values, production-mode testing, error paths.\n\n### Phase 3: Do NOT Edit Dev Code\n\n**Verdict:**\n- PASS: ALL behavior tests passed.\n- FAIL: One or more behavior tests failed.\n- ESCALATE: spec ambiguous or impossible to test.\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"ESCALATE\", findings_count: N, behavior_tests_total: N, behavior_tests_passed: N, behavior_test_file: \"path\", production_mode_tested: true}\n```",
-      "title_template": "[verify-b] Integration: ${trigger.title}",
+      "title_template": "[verify-c] Integration: ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
@@ -57,7 +59,7 @@
       "profile": "developer",
       "skill": "",
       "body_template": "## Fix findings from behavior verification\n\n**Behavior test file:** ${nodes.verify.output.behavior_test_file}\n\nThe verifier wrote behavior tests designed to break your code. Fix YOUR code so ALL tests pass. Do NOT modify the verifier's tests.\n\nRun ALL tests. Every test must pass.\n\n**Completion metadata:**\n```\n{fixed: true, findings_fixed: N, all_tests_pass: N, total_tests: N}\n```",
-      "title_template": "[fix-b] Behavior findings: ${trigger.title}",
+      "title_template": "[fix-c] Behavior findings: ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
@@ -76,7 +78,7 @@
       "profile": "verifier",
       "skill": "adversarial-review",
       "body_template": "## Re-verify after fix\n\nRe-run behavior tests. Every previously-failing test must PASS. Write NEW attack vectors. Do NOT edit dev code.\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"ESCALATE\", findings_count: N, behavior_tests_total: N, behavior_tests_passed: N}\n```",
-      "title_template": "[re-verify-b] Integration: ${trigger.title}",
+      "title_template": "[re-verify-c] Integration: ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
@@ -95,7 +97,7 @@
       "profile": "tech-lead",
       "skill": "loops-engineering",
       "body_template": "## Close\n\n**Plan:** ${nodes.plan.output.task_count} tasks planned\nRead verify: ${nodes.verify.output.verdict}\nIf fix→re-verify ran: ${nodes.re-verify.output.verdict}\n\n- verify/re-verify PASSED: write journal, complete with verdict=merged\n- ESCALATED: classify, complete with verdict=escalated\n\n**Completion metadata:**\n```\n{verdict: \"merged\"|\"escalated\", tasks_planned: ${nodes.plan.output.task_count}, tasks_completed: ${nodes.plan.output.task_count}, escalate_reason: \"\"}\n```",
-      "title_template": "[tl-b] Close: ${trigger.title}",
+      "title_template": "[tl-c] Close: ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
