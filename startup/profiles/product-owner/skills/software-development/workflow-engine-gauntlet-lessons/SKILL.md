@@ -1,6 +1,6 @@
 ---
 name: workflow-engine-gauntlet-lessons
-description: "Proven pitfalls and fixes from live-testing workflow templates with kanban_chains, loop_engine, and dynamic dev cards. Load when debugging a template that deadlocks, fires too early, crashes on ESCALATE verdicts, produces false PASS results, leaks active instances after close, spawns duplicate instances, or when designing decomposition/planning-phase experiments. 30 lessons from 16+ gauntlet rounds across 5 templates, including TWO completed 5-board unbiased livetests (10 specs, 292 behavior tests, average 7.6/10 black-box score), parallel A/B/C via trigger-prefix isolation (#9), the adversarial behavior-test verify paradigm (#27), the claimed-vs-actual score gap (#28), decomposition as a gauntlet axis with phase-scoped testing (#29), the measured A/B/C decomposition results (B=loop_engine best quality, C=critic most granular, A=most reliable), and the meta-lesson that PO agents fabricate scores AND agree-without-verifying just like verifiers inflate counts (#30). User iteration cap preference: 10 (not 3)."
+description: "Proven pitfalls and fixes from 16+ gauntlet rounds of live-testing workflow templates. Load when debugging deadlocks, false PASS, ESCALATE crashes, instance leaks, or designing decomposition experiments. 30 lessons: adversarial behavior-test verify (#27), claimed-vs-actual score gap (#28), A/B/C decomposition (pure loop_engine B fixed the dispatch bug, 3-4 phases per spec), PO agents fabricate scores (#30). Cap: 10 iterations. Do NOT mix orchestration systems."
 ---
 
 # Workflow Engine Gauntlet Lessons
@@ -707,6 +707,43 @@ most reliable but under-decomposes. The two bugs are fixable:
   tasks (not just the first chain)
 - C's premature completion: critic subagent shouldn't have kanban tool
   access (use role=leaf or restrict toolset)
+
+**PURE LOOP_ENGINE B (no kanban_chains) — dispatch bug FIXED:**
+
+Rewrote B so the plan node calls `loop_engine` with `phases` array (one
+phase per task, each with execution=developer + verifier=verifier).
+loop_engine handles ALL card creation, iteration, and convergence
+internally. NO kanban_chains, NO kanban_create in the plan phase.
+
+Results (decomposition only, dev phase stopped early per phase-scoped
+testing):
+
+| Spec | Previous B (mixed) | Pure loop_engine B |
+|------|:------------------:|:------------------:|
+| Markdown Table | 1 dispatched | **4 phases** (core CLI → alignment → escaping → errors) |
+| JSON Diff | 1 dispatched | **3 phases** (diff engine+CLI → output+types → array-by-id+ignore+errors) |
+| Unit Converter | 1 dispatched (missing format+convert_batch!) | **4 phases** (registry+linear+list_units → temperature → convert_batch → format) |
+
+The B3 dispatch bug is FIXED. Unit Converter now has 4 phases covering
+ALL 10 spec requirements. The split-by-concern guideline in the plan body
+worked — temperature correctly separated from linear (non-linear vs linear
+math), and all 4 API functions got their own phase.
+
+**Wide-spec decomposition insight:** Unit Converter scored low across ALL
+approaches (A=6.2, old-B=6.0, C=6.0). Root cause: it's a "wide" spec —
+many independent concerns (4 API functions, 2 math types, 4 categories)
+sharing infrastructure. "One file = one task" (version A's heuristic)
+fails because independent concerns within a file need separate tasks.
+All approaches defaulted to serial chains even when concerns were
+independent. Pure loop_engine B fixed this by splitting into 4 phases
+with the split-by-concern guideline.
+
+**The "do NOT mix systems" proof (lesson reinforced):** Previous B mixed
+loop_engine (convergence) with kanban_chains (dispatch) — the handoff
+lost tasks. Pure loop_engine B uses ONE system end-to-end. No handoff,
+no lost tasks. The user explicitly said: "why use kanban_chains when I
+told you to use loop_engine?" — when the user says one system, use that
+one system throughout.
 
 Full experiment record (version designs, critic questions, atomicity
 definition, test specs, stop conditions): `references/decomposition-abc-experiment.md`.
