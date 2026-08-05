@@ -11,14 +11,19 @@ _REAL_EXECUTE = _sqlite3.Connection.execute
 _REAL_EXECUTEMANY = _sqlite3.Connection.executemany
 _REAL_COMMIT = _sqlite3.Connection.commit
 
-_PROTECTED_PATTERNS = ('kanban', 'workflow-state', 'workflow_state')
 _WRITE_KEYWORDS = ('insert', 'update', 'delete', 'drop', 'alter', 'create', 'replace', 'attach', 'detach')
+_REAL_KANBAN_HOME = _os.path.expanduser("~/.hermes-teams/startup/kanban")
 
 def _is_protected_path(db_path):
     if not db_path or db_path == ':memory:':
         return False
-    p = str(db_path).lower()
-    return any(pat in p for pat in _PROTECTED_PATTERNS)
+    p = str(db_path)
+    # Only protect the REAL kanban/workflow databases under the hermes home.
+    # Test databases in /tmp or other locations are not protected.
+    if _REAL_KANBAN_HOME not in p:
+        return False
+    p_lower = p.lower()
+    return ('kanban' in p_lower or 'workflow-state' in p_lower or 'workflow_state' in p_lower)
 
 class _GuardedConnection(_sqlite3.Connection):
     _protected = False

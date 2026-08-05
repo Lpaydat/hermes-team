@@ -3132,6 +3132,11 @@ class Engine:
             elif key == "title_prefix":
                 if not (card.title or "").startswith(expected):
                     return False
+            elif key == "title_prefix_any":
+                # Accept a list of prefixes — match if ANY starts.
+                prefixes = expected if isinstance(expected, list) else [expected]
+                if not any((card.title or "").startswith(p) for p in prefixes):
+                    return False
             elif key == "title_not_prefix" or key.startswith("title_not_prefix"):
                 # Handle title_not_prefix, title_not_prefix2, etc.
                 if (card.title or "").startswith(expected):
