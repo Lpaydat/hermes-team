@@ -22,7 +22,11 @@
       "schedule_display": "30 */3 * * *",
       "repeat": {
         "times": null,
+<<<<<<< Updated upstream
         "completed": 235
+=======
+        "completed": 227
+>>>>>>> Stashed changes
       },
       "enabled": true,
       "state": "scheduled",
@@ -30,7 +34,11 @@
       "paused_reason": null,
       "created_at": "2026-07-03T13:08:22.790689+07:00",
       "next_run_at": "2026-08-05T03:30:00+07:00",
+<<<<<<< Updated upstream
       "last_run_at": "2026-08-04T21:30:02.059044+07:00",
+=======
+      "last_run_at": "2026-08-05T00:48:03.616558+07:00",
+>>>>>>> Stashed changes
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -74,7 +82,11 @@
       "paused_reason": null,
       "created_at": "2026-07-03T13:08:28.575542+07:00",
       "next_run_at": "2026-08-05T05:00:00+07:00",
+<<<<<<< Updated upstream
       "last_run_at": "2026-08-03T22:48:49.470849+07:00",
+=======
+      "last_run_at": "2026-08-05T00:48:03.642160+07:00",
+>>>>>>> Stashed changes
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -116,9 +128,15 @@
       "paused_reason": null,
       "created_at": "2026-07-03T13:08:28.935656+07:00",
       "next_run_at": "2026-08-05T02:00:00+07:00",
+<<<<<<< Updated upstream
       "last_run_at": "2026-08-04T20:01:34.900202+07:00",
       "last_status": "ok",
       "last_error": null,
+=======
+      "last_run_at": "2026-08-02T02:00:16.445277+07:00",
+      "last_status": "error",
+      "last_error": "RuntimeError: Skipped to prevent unintended spend: global inference config drifted since this job was created (model 'glm-5.2' -> 'glm-4.6'), and this job is unpinned. No inference call was made. To run on the new config, pin it explicitly: `cronjob action=update job_id=7872dbc93ab1 provider=<provider> model=<model>` (or pin the original values to keep them). See #44585.",
+>>>>>>> Stashed changes
       "last_delivery_error": null,
       "deliver": "local",
       "origin": null,
@@ -162,7 +180,11 @@
       "paused_reason": null,
       "created_at": "2026-07-23T17:39:46.560337+07:00",
       "next_run_at": "2026-08-05T06:00:00+07:00",
+<<<<<<< Updated upstream
       "last_run_at": "2026-08-05T00:00:03.807744+07:00",
+=======
+      "last_run_at": "2026-08-02T00:00:15.204350+07:00",
+>>>>>>> Stashed changes
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -175,5 +197,9 @@
       "fire_claim": null
     }
   ],
+<<<<<<< Updated upstream
   "updated_at": "2026-08-05T00:30:03.432622+07:00"
+=======
+  "updated_at": "2026-08-05T00:48:03.642526+07:00"
+>>>>>>> Stashed changes
 }
