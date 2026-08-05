@@ -29,8 +29,6 @@ from .kanban_adapter import (
     get_card_metadata,
     find_cards_by_idempotency_key,
     find_recent_completions,
-    find_recent_ready,
-    block_card_for_workflow,
     validate_output,
     validate_against_schema,
     board_db_path,
@@ -3029,57 +3027,6 @@ class Engine:
                                 conn.close()
                                 continue
                             conn.close()
-
-                            actions += self._start_from_trigger(wf, board, card)
-
-            elif wf.trigger.source == "card_ready":
-                boards = self._boards_to_check()
-                for board in boards:
-                    now = int(time.time())
-                    since = now - TRIGGER_LOOKBACK_SECS
-
-                    all_ready = find_recent_ready(board, since)
-                    for card in all_ready:
-                        # Skip engine-created cards (same logic as card_completed)
-                        if card.idempotency_key:
-                            parent_wf_id = _extract_parent_workflow(card.idempotency_key)
-                            if parent_wf_id is not None:
-                                if parent_wf_id == wf.id:
-                                    continue
-                                parent_wf = self.store.load(parent_wf_id)
-                                if parent_wf and parent_wf.edges:
-                                    continue
-
-                        if self._matches_trigger(card, wf.trigger.condition):
-                            trig_key = f"trig-ready:{wf.id}:{card.id}"
-
-                            conn = _db_connect(self.state.db_path)
-                            try:
-                                existing = conn.execute(
-                                    "SELECT 1 FROM trigger_keys WHERE key = ?", (trig_key,)
-                                ).fetchone()
-                                if existing:
-                                    conn.close()
-                                    continue
-
-                                conn.execute(
-                                    "INSERT OR IGNORE INTO trigger_keys (key, created_at) VALUES (?, ?)",
-                                    (trig_key, int(time.time())),
-                                )
-                                conn.commit()
-                            except sqlite3.OperationalError as e:
-                                log.warning("trigger dedup check failed: %s", e)
-                                conn.close()
-                                continue
-                            conn.close()
-
-                            # Block the original card so the dispatcher
-                            # never spawns a worker on it. The workflow
-                            # owns it now.
-                            block_card_for_workflow(
-                                board, card.id,
-                                f"Workflow {wf.id} claimed this card for processing."
-                            )
 
                             actions += self._start_from_trigger(wf, board, card)
 
