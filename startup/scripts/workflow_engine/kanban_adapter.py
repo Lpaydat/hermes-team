@@ -205,6 +205,52 @@ def find_recent_completions(board: str, since_ts: int) -> list[CardInfo]:
         return cards
 
 
+def find_recent_ready(board: str, since_ts: int) -> list[CardInfo]:
+    """Find cards in 'ready' status since a timestamp (Unix epoch seconds).
+
+    Used by the card_ready trigger source so workflows can claim cards
+    BEFORE the Hermes dispatcher spawns a worker on them.
+    """
+    db = board_db_path(board)
+    if not db.exists():
+        return []
+
+    with _connect(db) as conn:
+        rows = conn.execute(
+            """SELECT id, title, assignee, status, idempotency_key,
+                      created_at, '' as metadata, '' as summary
+               FROM tasks
+               WHERE status = 'ready' AND created_at > ?
+               ORDER BY created_at DESC
+               LIMIT 200""",
+            (since_ts,),
+        ).fetchall()
+        cards = []
+        for r in rows:
+            cards.append(
+                CardInfo(
+                    id=r["id"],
+                    title=r["title"],
+                    assignee=r["assignee"],
+                    status=r["status"],
+                    idempotency_key=r["idempotency_key"],
+                    completed_at=r["created_at"],
+                    metadata=_parse_metadata(r["metadata"]),
+                    summary=r["summary"] or "",
+                )
+            )
+        return cards
+
+
+def block_card_for_workflow(board: str, card_id: str, reason: str) -> bool:
+    """Block a card to prevent the dispatcher from spawning a worker on it.
+
+    Uses hermes kanban CLI to ensure proper event emission + recompute_ready.
+    """
+    ok, out = run_kanban(board, ["block", card_id, "--kind", "dependency", "--reason", reason])
+    return ok
+
+
 def validate_against_schema(instance: dict, schema: dict) -> tuple[bool, str]:
     """Validate a dict against a JSON Schema.
 
