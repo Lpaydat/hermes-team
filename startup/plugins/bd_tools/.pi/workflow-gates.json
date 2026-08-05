@@ -1,0 +1,10 @@
+{
+  "lastArchitectureReview": null,
+  "lastTriage": null,
+  "pendingLinesChanged": 0,
+  "lastCheckedCommit": "1cf3e62",
+  "config": {
+    "architectureLineThreshold": 500,
+    "triageBacklogThreshold": 5
+  }
+}

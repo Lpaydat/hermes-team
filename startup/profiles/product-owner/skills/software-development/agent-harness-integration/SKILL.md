@@ -123,6 +123,16 @@ ngin with beads, Hermes with kanban. ngin does NOT modify or replace Hermes.
 
 These are modifications to existing proven Rust code, not new subsystems.
 
+**Important sequencing note (verified 2026-08-05):** The harness trait (item 1)
+is NOT a hard dependency for graph walk or workflow engine work. The existing
+`ProcessSpawner` + `RunnerEnv` traits in `spawn.rs` already provide the
+abstraction graph walk dispatches through. Graph walk (plan unit 2.2) can be
+built and tested against `ProcessSpawner` today. Harness unification is a
+mechanical refactor that lands with workspace + worker-config (0.4+0.5), not a
+prerequisite that blocks the engine. See
+[`references/ngin-build-plan-dependency-analysis.md`](references/ngin-build-plan-dependency-analysis.md)
+for the full dependency verification.
+
 ## Hard Rule: daemon spawns, agents NEVER poll
 
 **The daemon owns dispatch.** It claims an issue, spawns the agent process, and
@@ -176,13 +186,17 @@ checkpointing, tree visualization — live in the **worker** (TypeScript
 `executeFlow()`, ~700 lines of control-flow logic).
 
 This matters for any steps[]→graph migration. The daemon's `FlowConfig.steps`
-is already a format-agnostic blob; the migration question is really "who owns
-step sequencing?" Keeping graph parsing in the worker (graph config passed
-through as opaque JSON) is low-risk. Moving graph traversal into the daemon
-(per-node process spawning) is high-risk — it forces the daemon to reimplement
-the worker's entire control-flow engine.
+is already a format-agnostic blob. However, the architectural decision
+(ADR-0004) is that the daemon OWNS the graph walk — it parses graph JSON,
+evaluates node activation, dispatches ready nodes, and handles back-edge loops.
+The worker's step sequencing becomes dead code. The daemon reuses its existing
+claim→spawn→reap lifecycle for each node's execution. The worker becomes a
+simple task executor — it receives one task per dispatch and never sequences
+nodes.
 
 **Full data contract, dual checkpoint model, step failure behavior, and migration analysis**: [`references/ngin-flow-execution-architecture.md`](references/ngin-flow-execution-architecture.md)
+
+**Build plan dependency analysis (2026-08-05)**: [`references/ngin-build-plan-dependency-analysis.md`](references/ngin-build-plan-dependency-analysis.md) — verified the 21-unit IMPLEMENTATION-PLAN against actual source code. Key findings: harness trait is NOT a hard dependency for graph walk (graph walk uses existing `ProcessSpawner`, not the unbuilt `AgentHarness`); triggers (2.5) have a hidden dependency on the graph parser (1.1) the plan misses; critical path is the 6-unit engine spine 1.1→1.2→2.1→2.2→2.3→2.4. Read when sequencing ngin dev tickets or deciding parallelism.
 
 ## Pitfalls
 
@@ -239,6 +253,126 @@ the worker's entire control-flow engine.
   rewrite as "provides the X layer (same role as Y)" and remove all migration,
   cutover, backward compat, and legacy references. The system is built complete
   from the first build.
+- **Spec-writing: remove ALL backward compat and migration language.** The user's
+  hard line: "we don't need any backward compatibility, we don't need migration
+  code. this should be complete from the first build." This means: no "existing
+  tables (keep)", no "already exists in bd.rs", no "port from Hermes", no
+  "migration path" in analysis doc references, no "users start fresh", no
+  "cutover" anywhere. The spec describes a complete system — not a delta from
+  an existing one. When referencing research docs that have "migration" in
+  their filename, describe what they contain (e.g. "feature gap analysis")
+  rather than using the migration-flavored filename description.
+- **Design drift: the wrong pattern keeps resurfacing in new wrappers.** When
+  designing a parallel system, the source system's architecture bleeds into
+  your thinking. "Agents poll bd ready" was proposed three times: as "decoupled
+  via beads", as "harness translates kanban→beads", and as "gateway polls
+  beads." Each was the same wrong pattern in different clothing. The fix is not
+  just "don't propose polling" — it's to actively check every new proposal
+  against the hard rules (ADR-0002: daemon spawns, agents receive) before
+  presenting it. When you catch yourself designing how the agent DISCOVERS work,
+  stop — the agent never discovers work. The daemon hands it work.
+- **PO decomposes specs into tickets.** The PO owns decomposition via
+  to-tickets. The PO reads the spec, creates `[ticket-]`-prefixed ticket cards
+  assigned to tech-lead. Each ticket triggers tech-lead-execute's
+  plan→verify→fix→close pipeline independently (via `title_prefix_any` trigger
+  matching `[spec]` and `[ticket-]`). When the PO assigned a raw spec directly
+  to tech-lead, the user caught it: "why you delegate spec to tech-lead
+  instead of PO to make it create tickets?" The PO's job is decomposition —
+  then tickets go to tech-lead for the workflow pipeline.
+- **Kanban card bodies should be minimal — stop overcomplicating.** When
+  creating ticket cards, include only the spec path, ADR paths, and context
+  docs — NOT elaborate guidance or implementation hints. The user corrected
+  this: "just create kanban card with the spec and docs and assign to PO.
+  just this. no more, no less than this. stop overcomplicated things already."
+  Tech-lead reads the spec and writes its own contract.
+- **Dependency links require kanban_link tool — NOT raw SQL inserts.**
+  Inserting into `task_links` via `conn.execute("INSERT INTO task_links ...")`
+  bypasses `recompute_ready()` in kanban_db.py (line 4135). The dispatcher's
+  `dispatch_once` finds all `ready` cards and claims them — it does NOT check
+  task_links for unfinished parents. Without recompute_ready, children with
+  unfinished parents stay `ready` and the dispatcher claims them immediately.
+  ALL dependency edges are silently ignored. This was discovered when 21 ngin
+  tickets with 20 dependency edges ALL went to `running` simultaneously.
+  Fix: use the `kanban_link` tool API (which calls recompute_ready), or call
+  `recompute_ready(conn)` manually after any raw SQL insert.
+- **Board cleanup requires cleaning BOTH databases.** When killing a workflow
+  run, you must clean both `kanban/boards/<board>/kanban.db` (archive cards)
+  AND `kanban/workflow-state.db` (delete instances, trigger_keys,
+  trigger_watermark). Archiving cards alone leaves stale trigger state —
+  the engine re-fires on old triggers or dedup-blocks new ones. Kill worker
+  processes too: `pkill -f "hermes.*<board>"`.
+- **Ticket review: run subagents to validate before publishing.** When the PO
+  drafted 16 tickets, 3 subagents found 5 real issues (missing blocking edge,
+  2 oversized tickets, 2 missing tickets, 7 orphaned stories). The review
+  caught blocking edge bugs, sizing problems, and hidden dependencies before
+  any work was dispatched. Always validate a ticket breakdown against the spec
+  and ADRs before publishing.
+- **Gateway config is read once at startup — restart after changes.** The
+  `max_in_progress_per_profile` and `max_in_progress` settings in
+  `profiles/<name>/config.yaml` are loaded when the gateway process starts. If
+  you change the config while the gateway is already running, it will NOT
+  enforce the new limits until restarted. This caused 7 tickets to spawn
+  simultaneously when the limit was 3 — the gateway had been running for 10
+  hours before the config was added. Always `systemctl --user restart
+  hermes-gateway-<profile>` after setting concurrency limits, and BEFORE
+  creating cards that depend on the cap.
+- **NEVER bypass kanban tools with raw SQL — now enforced by sqlite3 guard.**
+  The agent repeatedly took shortcuts by writing directly to kanban.db and
+  workflow-state.db via Python `sqlite3.connect()` instead of using the
+  kanban_* tools. EVERY shortcut broke something: dependency gating failed
+  (raw `INSERT INTO task_links` skips `recompute_ready`), stale workflow
+  instances persisted, orphan cards accumulated across boards. The user had
+  to build a two-layer sqlite3 guard (CLI wrapper at `/usr/bin/sqlite3` +
+  Python `sitecustomize.py`) to block direct writes to `*kanban*.db` and
+  `*workflow-state.db`. If you hit the guard, use the kanban tool — do NOT
+  try to work around it. The guard blocks INSERT/UPDATE/DELETE/DROP/ALTER/
+  CREATE/REPLACE. Reads (SELECT, PRAGMA) pass through.
+- **Always check before answering — never answer from memory.** The user
+  asked "is this scope creep?" about 4 tickets. The PO answered immediately
+  from memory: "yes, scope creep." Then the user asked "did you check?"
+  Answer: NO. All 4 were in the approved spec. The user's words: "why not
+  check it now instead of keep lied and apologize?" The pattern the user
+  hates: answer fast from memory → get caught → apologize → repeat. The
+  apology is worthless — it's the same shortcut as the raw SQL. Rule:
+  when asked a factual question about the spec, the code, or the state of
+  the board, READ THE SOURCE before opening your mouth. Use `read_file`,
+  `search_files`, or `kanban_list` — not your memory.
+- **The workflow pipeline has a specific card-routing order — follow it.**
+  The Hermes dev pipeline is: `[spec] card assigned to product-owner → PO
+  decomposes via to-tickets → creates ticket cards → dev-dispatch routes
+  → tech-lead-execute per ticket → qa-gate`. The PO tried to skip this by
+  assigning the raw spec directly to tech-lead. That bypasses decomposition
+  entirely. The user caught it: "why you delegate spec to tech-lead instead
+  of PO?" Then the PO tried to create cards assigned to product-owner but
+  the tech-lead-execute template fires on `[spec]` prefix + tech-lead
+  assignee — so the routing chain broke. Always: PO decomposes FIRST, then
+  tech-lead executes each ticket.
+- **Atomic card creation with parents=[] prevents the dispatcher race.**
+  When creating cards with dependencies, use `kanban_create` with
+  `parents=[...]` — the card AND its parent edges are set in one call, and
+  the child starts as `todo` (blocked). NEVER create cards first and link
+  later: the window between creation and linking lets the dispatcher claim
+  children before the parent gate exists. This caused all 21 tickets to go
+  to `running` simultaneously because `task_links` were inserted after the
+  cards were already `ready`.
+- **Scope discipline: don't invent features. But don't cut approved spec
+  features either.** Every ticket must map to an approved spec story. When
+  the user asks "is this scope creep?", CHECK THE SPEC BEFORE ANSWERING.
+  The PO was asked about scope creep, answered from memory that Mermaid,
+  subworkflow, foreach, and observability were scope creep — then verified
+  and found ALL of them were explicitly in the approved spec (stories 27,
+  28, 14, 15, 39, 36). The user caught the lie: "you only agree with me
+  without checking or you really check them already?" Answer: did NOT
+  check. Rule: if a feature is in the approved spec, it is NOT scope creep.
+  Period. Do not override the user's spec decisions.
+- **Check if a repo is archived before writing ADRs about it.** When writing
+  ADR-0006 ("work in ngin repo"), the PO didn't check if the repo was actually
+  active. The tech-lead agent found `SUPERSEDED.md` stating the repo was archived
+  read-only per tau ADR-0029, with code moved to `~/workspace/personal/pir/`.
+  The tech-lead correctly blocked with `needs_input`. Always check for
+  `SUPERSEDED.md`, `ARCHIVED.md`, or README archival notices before committing
+  to a repo in an ADR. If the user says "un-archive it", remove the
+  `SUPERSEDED.md`, commit, and push — then unblock the card.
 
 ## References
 
@@ -252,3 +386,4 @@ the worker's entire control-flow engine.
 - **ngin daemon state_machine.rs**: `~/workspace/ngin/daemon/src/state_machine.rs`
 - **Full gap analysis**: `~/workspace/ngin-vs-hermes-gap-analysis.md`
 - **Paperclip dispatch research**: [`references/paperclip-dispatch-research.md`](references/paperclip-dispatch-research.md) — condensed research from reading the Paperclip codebase: 14 adapter types, heartbeat/liveness model, regex classifiers, runtime config, watchdog system. Read when designing heartbeat, liveness classification, or adapter selection.
+- **Kanban board operations**: [`references/kanban-board-operations.md`](references/kanban-board-operations.md) — correct patterns for atomic card creation with dependencies, board cleanup, sqlite3 guard interaction, dispatcher board scanning, and the workflow pipeline card-routing order. Read when creating ticket cards, cleaning up failed runs, or debugging dispatch issues.

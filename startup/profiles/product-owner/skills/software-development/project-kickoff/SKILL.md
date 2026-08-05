@@ -44,6 +44,8 @@ When the user says "build X that does what Y does," the natural temptation is to
 
 **The rule:** When proposing a new system that provides the same capabilities as an existing one, use "extracts" or "provides an alternative to" — never "replaces" or "retires." Both systems coexist. Migration is a user choice, not a project goal. Add a hard rule to CONTEXT.md: "Do NOT touch [existing system] code."
 
+**The user's exact framing for extraction projects:** "ngin is our program that extract hermes kanban, dispatcher, our workflow engine that wrote for hermes kanban. to make it harness agnostic workflow orchestration that work with any harness that support heartbeat. we extract one of hermes capability to make it workable with other harness. just that." The project's reason for existing is the extraction thesis — state it in the opening paragraph of CONTEXT.md.
+
 ## Verify code behavior BEFORE proposing architecture
 
 During grill sessions, the PO may need to describe how an existing system works to inform design decisions. NEVER describe system behavior from memory — read the actual code first. If subagents have already analyzed the system, read their output before proposing anything.
@@ -62,6 +64,75 @@ When the PO makes the same architectural mistake multiple times in a session (e.
 
 If the mistake recurs, point at the ADR number. No argument.
 
+## Spec review: built complete, no backward compat
+
+Specs for extraction/parallel projects are built complete from the first build.
+No backward compatibility, no migration code, no legacy support, no "port from
+old format." The user's exact words: "we don't need any backward compatibility,
+we don't need migration code. this should be complete from the first build."
+
+When reviewing a spec before publishing, scan for:
+- "replaces" / "retires" / "obsoletes" → rewrite as "provides the X layer"
+- "migration" / "cutover" / "port from" → remove entirely
+- "existing tables (keep)" / "already exists" → state as definitive schema
+- "backward compat" / "legacy" → remove
+- "migration path" in research doc references → describe content, not migration
+
+**Automated review catches what manual review misses.** Write a Python script
+that scans for backward-compat/migration/legacy/replacement language. Manual
+review said "no issues" twice; automated scan found 12 hits the third time. The
+script doesn't get tired or pattern-match on expected outcomes. Use:
+`grep -rn "replace\|legacy\|migration\|cutover\|backward" spec.md` as a final
+gate before publishing. Then verify story numbering is sequential, phase
+boundaries are clean (no Phase 2 concepts in Phase 1), and the harness contract
+is complete.
+
+## Dispatching specs to the pipeline
+
+When the user says "let's use the workflow to implement this" or "feed the spec
+to the pipeline," the answer is YES — create a spec card and let it run. Don't
+invent concerns about which task tracker to use during development, don't
+propose manual ticket breakdowns, don't overthink it.
+
+The proven procedure:
+
+```bash
+# Create a fresh board for the project
+hermes kanban boards create <slug>
+
+# Create the spec card — assign to product-owner for decomposition
+hermes kanban --board <slug> create "[spec] <title>" \
+  --assignee product-owner \
+  --body "$(cat <spec-file>.md)" \
+  --priority 10 \
+  --json
+```
+
+**Who gets the spec card?** The PRODUCT-OWNER, not tech-lead. The PO
+decomposes the spec into tracer-bullet tickets, then dispatches each ticket
+to tech-lead. Skipping the PO and assigning directly to tech-lead was a
+real mistake (2026-08-05): "I don't understand why you delegate spec to
+tech-lead instead of PO to make it create tickets and follow the workflow.
+why skip to techlead directly?"
+
+For small, single-purpose specs (build a Markdown converter), tech-lead-execute
+can handle decomposition internally. For large platform specs (40+ stories),
+the PO must decompose first.
+
+**Board detection is automatic.** The Hermes dispatcher enumerates ALL boards
+on disk every tick (`_kb.list_boards(include_archived=False)`). New boards are
+picked up without restart. The `_default_spawn` function injects
+`HERMES_KANBAN_BOARD` into the worker env. Workers cannot accidentally land on
+the wrong board. No manual board injection needed.
+
+**Engine tick CLI syntax:** `python3 workflow_engine/main.py --verbose tick`
+(NOT `tick --board X`). The engine scans all boards by default.
+
+**Don't overcomplicate dispatch.** When the user wants to use the pipeline,
+create the card and step back. Don't add guidance, don't manually decompose,
+don't create tickets by hand. The spec IS the guidance — let the pipeline
+interpret it.
+
 ## Grill-with-docs: maintain CONTEXT.md and ADRs inline
 
 When running a grill session using the `grill-with-docs` skill, capture decisions as they crystallize — not at the end:
@@ -71,3 +142,37 @@ When running a grill session using the `grill-with-docs` skill, capture decision
 - **Hard rules** (never do X) → add to CONTEXT.md Hard Rules section
 
 This produces a living design document that the spec synthesis (Part 2) can reference directly. See `references/ngin-grill-session.md` for a complete example of this pattern applied to a real project.
+
+## Check repo is archived before writing ADRs
+
+Before writing an ADR that says "work in repo X," check if repo X has a `SUPERSEDED.md` or is archived. If it is, you need a user decision: un-archive it, or work in the new location.
+
+**Real failure (2026-08-05):** The PO wrote ADR-0006 ("work in ngin repo") without checking `~/workspace/ngin/SUPERSEDED.md`. The tech-lead agent discovered the repo was archived read-only and blocked the spec card with `needs_input`. The archive said code moved to `~/workspace/personal/pir/crates/tau-dispatch`. The PO had to un-archive the repo, delete SUPERSEDED.md, push, and unblock the card — wasting a full dispatch cycle.
+
+**The check:** Before any ADR references a repo path:
+```bash
+ls <repo>/SUPERSEDED.md 2>/dev/null && echo "REPO IS ARCHIVED — get user decision"
+git -C <repo> log --oneline -1  # verify it's not read-only
+```
+
+## Workflow pipeline dispatch: use a dedicated board
+
+When feeding a spec to the workflow pipeline, create a dedicated board for the project — don't reuse `hermes-hq`. This keeps the project's cards isolated and makes monitoring cleaner.
+
+```bash
+hermes kanban boards create <slug>
+hermes kanban --board <slug> create "[spec] <title>" \
+  --assignee product-owner --body "$(cat spec.md)" --priority 10 --json
+```
+
+**Stale state cleanup:** If a previous dispatch was killed mid-run, clean ALL state before re-dispatching:
+```python
+# Delete workflow instances, trigger keys, trigger watermarks for the board
+wdb.execute("DELETE FROM workflow_instances WHERE board='<slug>'")
+wdb.execute("DELETE FROM trigger_keys WHERE key LIKE '%<old-card-ids>%'")
+wdb.execute("DELETE FROM trigger_watermark WHERE board='<slug>'")
+# Archive all cards on the board
+db.execute("UPDATE tasks SET status='archived' WHERE status != 'archived'")
+```
+
+If you don't clean trigger keys, the engine will think the spec card was already processed and won't start a new workflow instance.

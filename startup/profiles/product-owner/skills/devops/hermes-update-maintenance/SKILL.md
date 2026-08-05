@@ -262,7 +262,25 @@ git push ours "our/v$(hermes --version 2>&1 | grep -oP 'v[\d.]+' | head -1)-debr
   (test_prompt_builder.py + test_prompt_caching.py = 98 tests). Running only
   `test_prompt_builder.py` gives 79 tests. The 19-test difference is exactly
   the caching tests — not lost tests, just a narrower glob. Always use the
-  full `test_prompt*.py` glob for complete verification.
+  full `test_prompt*.py` glob for complete verification. When the user notices
+  a test count drop, explain honestly: "I changed the glob" — don't try to
+  paper over it.
+
+- **De-branding scan must be the FIRST thing after update, not an afterthought.**
+  During the v0.20.0 update, I initially called the system prompt rewrites
+  "cosmetic" and skipped them, then applied only 2 of 8 LLM-facing files. The
+  user corrected: "system prompts... are the most critical one" and "that is
+  what you should do in the first place." The correct sequence: update →
+  scan ALL 8 LLM-facing files → fix tests → commit → restart gateways. The
+  scan script in this skill finds them all — USE IT before reporting done.
+
+- **Reset to upstream then re-apply cleanly when commits got mixed.** When
+  de-branding and non-branding changes (prompt rewrites, review-required fix,
+  delegate tool blocking) got mixed into one commit, `git reset --hard
+  <upstream-sha>` to start clean, then re-apply ONLY the changes that belong
+  in each logical patch. The user caught this: "revert the earlier changes
+  that not related to de-branding back too." Keep commits clean — one logical
+  patch per commit.
 
 - **Private repo setup: don't use `gh repo create --source=.`** The `--source=.`
   flag tries to add an `origin` remote, which already exists (upstream

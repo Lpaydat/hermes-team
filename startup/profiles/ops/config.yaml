@@ -82,6 +82,6 @@ plugins:
       allow_tool_override: false
 kanban:
   max_in_progress_per_profile: 3
-  max_in_progress: 3
+  max_in_progress: 6
 skill_enforcer:
   mandatory: []
