@@ -372,12 +372,12 @@ def test_double_encoded_json_via_store_handled():
 
 def test_double_encoded_json_from_dict_raises():
     """Direct from_dict on a double-encoded payload: the outer json.loads yields
-    a str, and str has no .get → AttributeError."""
+    a str, and str has no [] subscript → TypeError."""
     inner = json.dumps({"id": "x", "name": "y"})
     double = json.dumps(inner)  # now a JSON string
     decoded = json.loads(double)  # → a str
     assert isinstance(decoded, str)
-    with pytest.raises(AttributeError):
+    with pytest.raises(TypeError):
         Workflow.from_dict(decoded)
 
 
@@ -556,16 +556,19 @@ def test_1000_nodes_via_store():
     # NOTE: '!=' IS supported by evaluate_condition
     ("${x} != 'a'", "neq_supported", {"x": "b"}, True),
     # Unsupported operators → evaluate_condition returns False (no crash)
-    ("${x} >= '5'", "ge_unsupported", {"x": "9"}, False),
     ("${x} contains 'abc'", "contains_unsupported", {"x": "abc"}, False),
     ("${x} ~= 'abc'", "regex_unsupported", {"x": "abc"}, False),
-    ("${x} < '5'", "lt_unsupported", {"x": "1"}, False),
     ("${x} in ['a','b']", "in_unsupported", {"x": "a"}, False),
+    # NOTE: <, <=, >, >= ARE supported (numeric-aware comparison)
+    ("${x} >= '5'", "ge_supported", {"x": "9"}, True),
+    ("${x} >= '5'", "ge_supported_false", {"x": "3"}, False),
+    ("${x} < '5'", "lt_supported", {"x": "1"}, True),
+    ("${x} < '5'", "lt_supported_false", {"x": "9"}, False),
 ])
 def test_condition_operators(cond, var, ctx, expected):
-    """evaluate_condition supports only ==, !=, exists, is empty. Anything else
-    (>=, contains, ~=, <, in) returns False — never raises. The node simply
-    never fires, which is a silent no-op, not a crash."""
+    """evaluate_condition supports ==, !=, exists, is empty, <, <=, >, >=.
+    Unsupported operators (contains, ~=, in) return False — never raises.
+    The node simply never fires, which is a silent no-op, not a crash."""
     assert evaluate_condition(cond, ctx) is expected, (
         f"condition {cond!r} with ctx {ctx} should be {expected}")
 
