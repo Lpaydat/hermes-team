@@ -245,9 +245,11 @@ def find_recent_ready(board: str, since_ts: int) -> list[CardInfo]:
 def block_card_for_workflow(board: str, card_id: str, reason: str) -> bool:
     """Block a card to prevent the dispatcher from spawning a worker on it.
 
-    Uses hermes kanban CLI to ensure proper event emission + recompute_ready.
+    Uses kind=needs_input so the card stays blocked (dependency auto-promotes
+    when there are no parents). The workflow engine will complete the card
+    itself when processing is done.
     """
-    ok, out = run_kanban(board, ["block", card_id, "--kind", "dependency", "--reason", reason])
+    ok, _ = run_kanban(board, ["block", card_id, "--kind", "needs_input"])
     return ok
 
 
