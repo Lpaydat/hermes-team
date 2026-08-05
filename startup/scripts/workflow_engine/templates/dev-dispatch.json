@@ -112,24 +112,62 @@
     },
     {
       "id": "route-tech-lead",
-      "profile": "tech-lead",
-      "body_template": "## Source card\n\nCard: ${trigger.card_id}\nTitle: ${trigger.title}\n\nRead the source card body for full requirements.\n\nThis is a trigger card. Complete this card immediately.\nDo NOT implement. Do NOT delegate. Do NOT decompose.\nThe next workflow handles all execution.\n\nComplete with metadata:\n```\n{type: \"feature\"}\n```",
-      "title_template": "[spec] ${trigger.title}",
-      "output_schema": {
-        "type": "object",
-        "required": [
-          "type"
-        ],
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": [
-              "feature",
-              "bug",
-              "research",
-              "ops",
-              "architecture"
-            ]
+      "profile": "product-owner",
+      "skill": "to-tickets",
+      "body_template": "## Pure decomposition — create ticket cards\n\n**Spec card:** ${trigger.card_id}\n**Title:** ${trigger.title}\n\nYou are the product-owner. DO NOT implement. DO NOT execute. Your ONLY job is to decompose this spec into atomic ticket cards.\n\n### Phase 1: Decompose\n\nRead the spec (the source card body + any linked docs). Load your `to-tickets` skill. Decompose into atomic tasks. Each task needs: title, acceptance criteria (testable), dependencies on other tasks.\n\nGuidelines for atomic tasks:\n- A junior dev can complete it in one sitting\n- It has clear, testable acceptance criteria\n- It can be verified independently\n- It's not two tasks disguised as one\n- Split by independent concern, not by technical layer\n- For wide specs (many independent features), create separate tasks per feature\n- Wide refactors use expand–contract sequencing\n\nThis is FULLY AUTOMATIC. Skip the user-quiz step. Decompose and create cards directly.\n\n### Phase 2: Create ticket cards (CRITICAL)\n\nFor EACH task, create a card via `kanban_create`:\n- `title`: \"[ticket-NN] <task title>\"\n- `assignee`: \"tech-lead\"\n- `body`: the task's acceptance criteria + constraints (what to build, NOT how)\n- `parents`: list of ticket card ids this task depends on (express dependencies)\n\nEach ticket fires tech-lead-execute independently when tech-lead completes it.\n\nDO NOT call kanban_chains. DO NOT call loop_engine. DO NOT implement anything. You are decomposing, not executing.\n\n### Completion metadata\n\nAfter creating ALL ticket cards, complete this card with:\n```\n{decomposed: true, ticket_count: N, ticket_ids: [\"<id1>\", \"<id2>\", ...]}\n```",
+      "title_template": "[decompose] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "decomposed",
+            "ticket_count",
+            "ticket_ids"
+          ],
+          "properties": {
+            "decomposed": {
+              "type": "boolean"
+            },
+            "ticket_count": {
+              "type": "integer"
+            },
+            "ticket_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "route-tickets",
+      "profile": "product-owner",
+      "skill": "",
+      "body_template": "## Parse pre-made tickets — create cards with dependencies\n\n**Source card:** ${trigger.card_id}\n**Title:** ${trigger.title}\n\nYou are the product-owner. DO NOT decompose. DO NOT plan. DO NOT implement. Your ONLY job is to parse the ticket definitions from the source card body and create one kanban card per ticket with correct dependencies.\n\n### Phase 1: Parse\n\nRead the source card body. It contains pre-made ticket definitions in this format:\n\n```\n## Ticket NN — <title>\n**Blocked by:** NN, NN (or \"none\")\n**Body:** <what to build>\n```\n\nParse each ticket block. Extract: number, title, blocked-by list, body text.\n\n### Phase 2: Create cards (CRITICAL)\n\nFor EACH ticket, create a card via `kanban_create`:\n- `title`: \"[ticket-NN] <ticket title>\"\n- `assignee`: \"tech-lead\"\n- `body`: the ticket's body text (what to build)\n- `parents`: list of ticket card ids for each \"Blocked by\" entry\n\nCREATE IN DEPENDENCY ORDER: Layer 0 (no blockers) first, then Layer 1, etc. This ensures parent card ids exist before children reference them in `parents`.\n\nEach ticket fires tech-lead-execute independently when tech-lead completes it.\n\nDO NOT call kanban_chains. DO NOT call loop_engine. DO NOT decompose. DO NOT implement.\n\n### Completion metadata\n\nAfter creating ALL ticket cards, complete this card with:\n```\n{decomposed: true, ticket_count: N, ticket_ids: [\"<id1>\", \"<id2>\", ...]}\n```",
+      "title_template": "[dispatch] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "decomposed",
+            "ticket_count",
+            "ticket_ids"
+          ],
+          "properties": {
+            "decomposed": {
+              "type": "boolean"
+            },
+            "ticket_count": {
+              "type": "integer"
+            },
+            "ticket_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         }
       }
@@ -158,8 +196,13 @@
     },
     {
       "from": "entry",
+      "to": "route-tickets",
+      "condition": "${trigger.type} == 'tickets'"
+    },
+    {
+      "from": "entry",
       "to": "route-tech-lead",
-      "condition": "${trigger.type} != 'bug' AND ${trigger.type} != 'research' AND ${trigger.type} != 'ops' AND ${trigger.type} != 'architecture'"
+      "condition": "${trigger.type} != 'bug' AND ${trigger.type} != 'research' AND ${trigger.type} != 'ops' AND ${trigger.type} != 'architecture' AND ${trigger.type} != 'tickets'"
     }
   ]
 }
