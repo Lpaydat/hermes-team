@@ -442,6 +442,93 @@ def test_subworkflow_idempotent():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# TEST 8: Subworkflow child card TITLE resolves input_mapping vars
+# (regression: debug-fix.json title_template used bare ${bug_title} not
+#  ${trigger.bug_title}; commit 85b6465 fixed body_template but missed title)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_subworkflow_child_title_resolves_mapping():
+    """A subworkflow child card's title_template must resolve input_mapping vars.
+
+    The child's _build_ctx stores input_mapping values under ``trigger.{key}``
+    (runtime.py _build_ctx). A title_template that references the bare ``${key}``
+    (instead of ``${trigger.key}``) resolves to empty — the child card is born
+    with a blank title. This mirrors the merge-test → debug-fix flow where a
+    ``bug_title`` mapping produced card titles like ``[bug] Fix failing tests:``
+    with the trailing variable empty.
+    """
+    world = FakeWorld()
+
+    # Child: title_template references a mapped var via the trigger. namespace
+    # (the only correct prefix, since _build_ctx stores trigger.{key}).
+    world.add_template({
+        "id": "child-title",
+        "name": "Child Title",
+        "nodes": [
+            {"id": "echo", "profile": "qa", "skill": "live-testing",
+             "title_template": "[bug] Fix: ${trigger.bug_title}",
+             "body_template": "Repo: ${trigger.repo}"},
+        ],
+    })
+
+    world.add_template({
+        "id": "parent-title",
+        "name": "Parent Title",
+        "nodes": [
+            {"id": "start", "profile": "developer", "skill": "developer-loop",
+             "body_template": "Start"},
+            {"id": "call_child", "profile": "qa", "skill": "",
+             "body_template": "",
+             "type": "subworkflow",
+             "workflow_ref": "child-title",
+             "depends_on": ["start"],
+             "input_mapping": {
+                 "bug_title": "${trigger.original_title}",
+                 "repo": "${trigger.original_repo}",
+             }},
+        ],
+    })
+
+    world.start("parent-title", context={
+        "original_title": "EXT-DBG3 full test",
+        "original_repo": "/tmp/repo-x",
+    })
+
+    # Tick: dispatch start
+    world.tick()
+    start_card = None
+    conn = sqlite3.connect(str(world.board_db))
+    row = conn.execute("SELECT id FROM tasks WHERE assignee='developer'").fetchone()
+    if row:
+        start_card = row[0]
+    conn.close()
+    world.complete_card(start_card, metadata={})
+
+    # Tick: start done → dispatch subworkflow node (spawns child instance)
+    world.tick()
+    # Tick: child instance dispatches its echo card
+    world.tick()
+
+    # Read back the child's echo card — assert its TITLE rendered the mapped var.
+    conn = sqlite3.connect(str(world.board_db))
+    # The child card is the qa card created by the child instance; exclude the
+    # parent's call_child placeholder (which has no body dispatch). The child
+    # echo card carries the idempotency key wf:<parent>:...:sw or is simply the
+    # qa-assigned card with the templated title.
+    rows = conn.execute(
+        "SELECT title, body FROM tasks WHERE assignee='qa'"
+    ).fetchall()
+    conn.close()
+
+    echo_titles = [r[0] for r in rows]
+    assert any("EXT-DBG3 full test" in t for t in echo_titles), \
+        f"Child card title should contain the mapped bug_title, got: {echo_titles}"
+
+    world.cleanup()
+    print("OK: test_subworkflow_child_title_resolves_mapping")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # RUN ALL TESTS
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -454,6 +541,7 @@ if __name__ == "__main__":
         test_subworkflow_missing_ref,
         test_nested_subworkflow_3_levels,
         test_subworkflow_idempotent,
+        test_subworkflow_child_title_resolves_mapping,
     ]
 
     passed = 0

@@ -8,7 +8,7 @@
       "profile": "debugger",
       "skill": "debug-loop",
       "body_template": "## Bug: tests failing after merge\n\n**Repo:** ${trigger.repo}\n**Failing tests:** ${trigger.failing_tests}\n**Context:** ${trigger.context}\n\nInvestigate the root cause. Run your debug-loop (reproduce → fix → converge). Write a regression test. Fix the root cause.\n\nThe repo is at: ${trigger.repo}\nWork on the current branch (do NOT create a new branch — the code is already on master).\n\nComplete with metadata:\n```\n{verdict: \"fixed\"|\"escalated-design\"|\"blocked-hitl\", fix_commit: \"<sha>\", root_cause_summary: \"<one-line>\", changed_files: [\"...\"]}\n```",
-      "title_template": "[bug] Fix failing tests: ${bug_title}",
+      "title_template": "[bug] Fix failing tests: ${trigger.bug_title}",
       "output": {
         "schema": {
           "type": "object",
@@ -45,7 +45,7 @@
       "profile": "verifier",
       "skill": "adversarial-review",
       "body_template": "## Verify the debugger's fix\n\n**Repo:** ${trigger.repo}\n**Debugger verdict:** ${nodes.debug.output.verdict}\n**Fix commit:** ${nodes.debug.output.fix_commit}\n**Root cause:** ${nodes.debug.output.root_cause_summary}\n\nThe debugger claims the bug is fixed. Verify independently:\n\n1. Run ALL tests at ${trigger.repo}: `pytest -q`\n2. Check the regression test the debugger wrote actually fails without the fix (mutation check)\n3. Falsify: try to break the fix with edge cases\n\nComplete with metadata:\n```\n{verdict: \"PASS\"|\"FAIL\", evidence: \"command + exit code\", all_tests: N}\n```",
-      "title_template": "[verify] Debug fix: ${bug_title}",
+      "title_template": "[verify] Debug fix: ${trigger.bug_title}",
       "output": {
         "schema": {
           "type": "object",
