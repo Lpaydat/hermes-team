@@ -1,6 +1,6 @@
 {
-  "id": "dev-dispatch",
-  "name": "Dev Dispatch — tree builder (decompose→review convergence loop)",
+  "id": "dev-dispatch-d",
+  "name": "Version D: decompose + scope/coverage review node",
   "description": "When a spec card completes, route it to the right profile: bugs to debugger, research to scout, ops to ops, architecture to architect, everything else to tech-lead. Replaces the old cron-based dispatch.",
   "trigger": {
     "source": "card_completed",
@@ -114,7 +114,7 @@
       "id": "route-tech-lead",
       "profile": "product-owner",
       "skill": "to-tickets",
-      "body_template": "## Tree builder — decompose→review convergence loop\n\n**Spec card:** ${trigger.card_id}\n**Title:** ${trigger.title}\n\nYou are the product-owner. DO NOT implement. Your job is to decompose this spec into atomic tickets using loop_engine for convergence.\n\n### Phase 1: Call loop_engine (CRITICAL)\n\nCall `loop_engine` with these parameters:\n\n- `goal`: \"Decompose spec into complete, atomic ticket plan: ${trigger.title}\"\n- `runner`: \"product-owner\"\n- `max_iterations`: 3\n\n- `execution`: {\n    title: \"[plan-exec] Decompose spec into ticket plan\",\n    body: \"Read the spec from source card ${trigger.card_id}. Load your to-tickets skill. Produce a TICKET PLAN: a numbered list of tickets. For each ticket include: title, what-to-build (acceptance criteria), and blocked-by (dependency numbers). This is iteration ${iteration} — if a review from a previous iteration exists, UPDATE the plan based on the review findings: (1) ADD tickets for missing features the review identified, (2) REMOVE or flag tickets the review called scope creep, (3) BREAK DOWN tickets the review said are too big into smaller sub-tickets. Do NOT start from scratch — refine the existing plan. Output the complete updated ticket plan.\",\n    assignee: \"product-owner\",\n    skill: \"to-tickets\"\n  }\n\n- `verifier`: {\n    title: \"[plan-review] Review ticket plan\",\n    body: \"You are reviewing a ticket plan decomposed from a spec. Read the original spec from source card ${trigger.card_id}, then read the ticket plan produced by the execution card. Check THREE dimensions and return a dod_verdict:\n\nDIMENSION 1 — MISSING FEATURES: Does every requirement in the spec have at least one ticket implementing it? List any spec requirements with no corresponding ticket.\n\nDIMENSION 2 — SCOPE CREEP: Does every ticket trace back to a spec requirement? List any tickets that implement something the spec does NOT ask for.\n\nDIMENSION 3 — NEED BREAKDOWN: Is every ticket truly atomic? For each ticket check: (a) Can a junior dev complete it in one sitting? (b) Does it have testable acceptance criteria? (c) Is it a single concern? List any ticket that is too big.\n\nVERDICT: Return dod_met=true ONLY if ALL three dimensions are clean (no missing features, no scope creep, no oversized tickets). Otherwise return dod_met=false with the specific gaps listed so the execution card can fix them on the next iteration.\",\n    assignee: \"verifier\",\n    metric_type: \"proxy\",\n    battery: [\"Does every spec requirement have a corresponding ticket?\", \"Does every ticket trace to a spec requirement?\", \"Is every ticket single-concern and independently completable?\"]\n  }\n\nloop_engine will: decompose → review → update plan → review → repeat until all three dimensions pass (max 3 iterations).\n\n### Phase 2: Create ticket cards\n\nAfter loop_engine converges (you auto-promote), read the final ticket plan from the last execution card. For EACH ticket, create a card via `kanban_create`:\n- `title`: \"[ticket-NN] <ticket title>\"\n- `assignee`: \"tech-lead\"\n- `body`: the ticket's what-to-build (acceptance criteria)\n- `parents`: list of ticket card ids for each blocked-by dependency\n\nCreate in dependency order (Layer 0 first) so parent card ids exist before children reference them.\n\nDO NOT call kanban_chains. DO NOT implement anything.\n\n### Completion metadata\n\nAfter creating ALL ticket cards, complete with:\n```\n{decomposed: true, ticket_count: N, ticket_ids: [\"<id1>\", \"<id2>\", ...], converged: true, iterations: N}\n```",
+      "body_template": "## Pure decomposition — create ticket cards\n\n**Spec card:** ${trigger.card_id}\n**Title:** ${trigger.title}\n\nYou are the product-owner. DO NOT implement. DO NOT execute. Your ONLY job is to decompose this spec into atomic ticket cards.\n\n### Phase 1: Decompose\n\nRead the spec (the source card body + any linked docs). Load your `to-tickets` skill. Decompose into atomic tasks. Each task needs: title, acceptance criteria (testable), dependencies on other tasks.\n\nGuidelines for atomic tasks:\n- A junior dev can complete it in one sitting\n- It has clear, testable acceptance criteria\n- It can be verified independently\n- It's not two tasks disguised as one\n- Split by independent concern, not by technical layer\n- For wide specs (many independent features), create separate tasks per feature\n- Wide refactors use expand–contract sequencing\n\nThis is FULLY AUTOMATIC. Skip the user-quiz step. Decompose and create cards directly.\n\n### Phase 2: Create ticket cards (CRITICAL)\n\nFor EACH task, create a card via `kanban_create`:\n- `title`: \"[ticket-NN] <task title>\"\n- `assignee`: \"tech-lead\"\n- `body`: the task's acceptance criteria + constraints (what to build, NOT how)\n- `parents`: list of ticket card ids this task depends on (express dependencies)\n\nEach ticket fires tech-lead-execute independently when tech-lead completes it.\n\nDO NOT call kanban_chains. DO NOT call loop_engine. DO NOT implement anything. You are decomposing, not executing.\n\n### Completion metadata\n\nAfter creating ALL ticket cards, complete this card with:\n```\n{decomposed: true, ticket_count: N, ticket_ids: [\"<id1>\", \"<id2>\", ...]}\n```",
       "title_template": "[decompose] ${trigger.title}",
       "output": {
         "schema": {
@@ -136,12 +136,6 @@
               "items": {
                 "type": "string"
               }
-            },
-            "converged": {
-              "type": "boolean"
-            },
-            "iterations": {
-              "type": "integer"
             }
           }
         }
@@ -177,6 +171,53 @@
           }
         }
       }
+    },
+    {
+      "id": "scope-review",
+      "profile": "product-owner",
+      "skill": "adversarial-review",
+      "body_template": "## Scope review — missing features or scope creep\n\n**Spec card:** ${trigger.card_id}\n**Tickets created:** ${nodes.route-tech-lead.output.ticket_count}\n\nYou are the product-owner. Your job is to review the decomposed tickets against the ORIGINAL spec for completeness and scope creep.\n\n### Phase 1: Coverage check\n\nRead the original spec. List ALL requirements/features it describes. Then read all ticket titles and bodies. Map each spec requirement to the ticket(s) that implement it.\n\n### Phase 2: Missing features check\n\nIdentify any spec requirements that have NO corresponding ticket. These are gaps — features the spec requires but decomposition missed.\n\n### Phase 3: Scope creep check\n\nIdentify any tickets that implement something NOT in the spec. These are scope creep — work the spec doesn't require.\n\n### Phase 4: Verdict\n\n- PASS: All spec requirements covered, no scope creep.\n- FAIL: Missing features OR scope creep found.\n\nIf FAIL: create additional tickets for missing features, or comment on scope-creep tickets to flag them.\n\n### Completion metadata\n\n```\n{verdict: \"PASS\"|\"FAIL\", spec_requirements: N, tickets_covering: N, missing_features: N, scope_creep: N, missing_list: [\"<feature>\", ...]}\n```",
+      "title_template": "[scope-review] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "verdict",
+            "spec_requirements",
+            "tickets_covering"
+          ],
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL"
+              ]
+            },
+            "spec_requirements": {
+              "type": "integer"
+            },
+            "tickets_covering": {
+              "type": "integer"
+            },
+            "missing_features": {
+              "type": "integer"
+            },
+            "scope_creep": {
+              "type": "integer"
+            },
+            "missing_list": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "depends_on": [
+        "route-tech-lead"
+      ]
     }
   ],
   "edges": [
@@ -209,6 +250,10 @@
       "from": "entry",
       "to": "route-tech-lead",
       "condition": "${trigger.type} != 'bug' AND ${trigger.type} != 'research' AND ${trigger.type} != 'ops' AND ${trigger.type} != 'architecture' AND ${trigger.type} != 'tickets'"
+    },
+    {
+      "from": "route-tech-lead",
+      "to": "scope-review"
     }
   ]
 }
