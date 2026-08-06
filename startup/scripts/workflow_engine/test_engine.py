@@ -22,8 +22,22 @@ sys.path.insert(0, str(SCRIPTS))
 
 from workflow_engine.model import Workflow, Node, resolve_template, evaluate_condition
 from workflow_engine.store import TemplateStore
+import workflow_engine.kanban_adapter as _ka
+import workflow_engine.runtime as _rt
 from workflow_engine.kanban_adapter import board_db_path, KANBAN_HOME
 from workflow_engine.runtime import Engine, StateDB, NodeStatus, WorkflowInstance, NodeState
+
+# Capture the TRUE originals exactly once, at module import — before ANY FakeWorld
+# is constructed. FakeWorld monkey-patches module globals (rt.create_card,
+# ka.KANBAN_HOME) in __init__ and restores them in cleanup(). If a test raises
+# before cleanup(), the patch leaks to the rest of the process, and the next
+# FakeWorld's cleanup() restores to the *leaked* value (not the real one) —
+# poisoning every subsequent test (TypeError on dead tmpdirs, cascading asserts).
+# Restoring to these module-level captures breaks that chain: cleanup() always
+# returns the globals to their immutable import-time truths regardless of what a
+# prior (misbehaving) test left behind.
+_REAL_CREATE_CARD = _rt.create_card
+_REAL_KANBAN_HOME = _ka.KANBAN_HOME
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -155,7 +169,13 @@ def count_cards(board_db: Path) -> int:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class FakeWorld:
-    """Test fixture: temp dir, fake board, engine, state DB."""
+    """Test fixture: temp dir, fake board, engine, state DB.
+
+    Usable as ``with FakeWorld() as world:`` (hermetic teardown via __exit__)
+    or constructed manually + ``world.cleanup()``. Either way, cleanup() restores
+    the patched module globals to their import-time truths (see _REAL_* captures
+    above), so a prior test that leaked its patch cannot poison this one.
+    """
 
     def __init__(self):
         self.tmpdir = Path(tempfile.mkdtemp(prefix="wf-test-"))
@@ -164,20 +184,30 @@ class FakeWorld:
         self.templates_dir = self.tmpdir / "templates"
         self.templates_dir.mkdir(parents=True)
 
-        # Monkey-patch KANBAN_HOME so kanban_adapter uses our fake board
-        import workflow_engine.kanban_adapter as ka
-        self._orig_home = ka.KANBAN_HOME
-        ka.KANBAN_HOME = self.tmpdir / "boards"
+        # Monkey-patch KANBAN_HOME so kanban_adapter uses our fake board.
+        # _orig_home is the immutable import-time truth, NOT the live (possibly
+        # already-patched) global — so cleanup() always restores the real value.
+        self._orig_home = _REAL_KANBAN_HOME
+        _ka.KANBAN_HOME = self.tmpdir / "boards"
 
         # Create engine with temp state DB
         self.state_db_path = self.tmpdir / "state.db"
         self.engine = Engine(self.templates_dir)
         self.engine.state = StateDB(self.state_db_path)
 
-        # Monkey-patch engine's kanban create to write to our fake board
-        import workflow_engine.runtime as rt
-        self._orig_create = rt.create_card
-        rt.create_card = self._fake_create_card
+        # Monkey-patch engine's kanban create to write to our fake board.
+        # Same rationale: capture the true original, not a leaked patch.
+        self._orig_create = _REAL_CREATE_CARD
+        _rt.create_card = self._fake_create_card
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        # Always run teardown, even when the body raised — the whole point of the
+        # context-manager form is that a failing test cannot leak the patch.
+        self.cleanup()
+        return False  # do not suppress exceptions
 
     def _fake_create_card(self, board, title, assignee, body="", idempotency_key=None,
                           priority=None, workspace=None, parent=None):
@@ -242,10 +272,13 @@ class FakeWorld:
         return state
 
     def cleanup(self):
-        import workflow_engine.kanban_adapter as ka
-        import workflow_engine.runtime as rt
-        ka.KANBAN_HOME = self._orig_home
-        rt.create_card = self._orig_create
+        # Restore the patched module globals. We deliberately restore to the
+        # immutable import-time truths (_REAL_*) rather than self._orig_*: if a
+        # *previous* test leaked its own patch, self._orig_* would already be that
+        # leaked value (captured in __init__), and "restoring" to it would
+        # perpetuate the leak. Restoring to _REAL_* always resets to ground truth.
+        _ka.KANBAN_HOME = _REAL_KANBAN_HOME
+        _rt.create_card = _REAL_CREATE_CARD
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -259,6 +292,62 @@ def test_empty_tick():
     assert actions == [], f"Expected no actions, got: {actions}"
     world.cleanup()
     print("OK: test_empty_tick")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# REGRESSION: FakeWorld teardown must not leak monkey-patches when a test body
+# raises before cleanup(). Before the fix, __init__ captured the *live* (possibly
+# already-patched) module globals as "originals", so a leaked patch from test A
+# became test B's notion of "original" — cleanup() then restored to A's leaked
+# value, poisoning every subsequent test (TypeError on dead tmpdirs, cascading
+# assertion failures). The fix captures the true originals once at import time
+# (_REAL_*) and cleanup() always restores to those.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_fakeworld_teardown_survives_leaked_predecessor():
+    """A prior FakeWorld that leaked (no cleanup) must not poison this one.
+
+    Simulates a failing test: construct FakeWorld A and 'forget' cleanup(),
+    then construct + clean up FakeWorld B normally. After B.cleanup(), the
+    module globals must be the REAL functions, not A's leaked patches.
+    """
+    import workflow_engine.runtime as rt
+    import workflow_engine.kanban_adapter as ka
+    real_create = _REAL_CREATE_CARD
+    real_home = _REAL_KANBAN_HOME
+
+    leaked = FakeWorld()          # no cleanup() — simulates a raise mid-test
+    assert rt.create_card is not real_create  # patch is live (not the real fn)
+    try:
+        clean = FakeWorld()
+        clean.cleanup()           # must restore to REAL, not to A's leak
+        assert rt.create_card is real_create, \
+            "cleanup() restored to a leaked patch, not the real create_card"
+        assert ka.KANBAN_HOME is real_home, \
+            "cleanup() restored KANBAN_HOME to a leaked value, not the real one"
+    finally:
+        leaked.cleanup()          # tidy up so this test itself is hermetic
+    print("OK: test_fakeworld_teardown_survives_leaked_predecessor")
+
+
+def test_fakeworld_context_manager_is_exception_safe():
+    """The `with FakeWorld()` form must restore globals even when the body raises."""
+    import workflow_engine.runtime as rt
+    real_create = _REAL_CREATE_CARD
+    real_home = _REAL_KANBAN_HOME
+
+    try:
+        with FakeWorld() as world:
+            raise RuntimeError("simulated test-body failure before cleanup")
+    except RuntimeError:
+        pass
+
+    import workflow_engine.kanban_adapter as ka
+    assert rt.create_card is real_create, \
+        "context-manager teardown leaked create_card after an exception"
+    assert ka.KANBAN_HOME is real_home, \
+        "context-manager teardown leaked KANBAN_HOME after an exception"
+    print("OK: test_fakeworld_context_manager_is_exception_safe")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
