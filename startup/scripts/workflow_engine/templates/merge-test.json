@@ -1,7 +1,6 @@
 {
   "id": "merge-test",
-  "name": "Merge verify focus test",
-  "description": "Focus test: close+merge-verify under adversarial conditions",
+  "name": "Merge verify + debug-fix focus test",
   "trigger": {
     "source": "card_completed",
     "condition": {
@@ -17,7 +16,7 @@
       "id": "close",
       "profile": "tech-lead",
       "skill": "loops-engineering",
-      "body_template": "## Close — merge ticket branch into master\n\n**Ticket:** ${trigger.title}\n\nThe ticket's code lives on branch `ticket-focus` in the repo at `${trigger.card_body}`.\n\n### Step 1: Merge\n\n```bash\ncd ${trigger.card_body}\ngit checkout master\ngit merge --no-ff ticket-focus\n```\n\nIf merge conflicts: resolve them.\n\n### Step 2: Run tests\n\n```bash\npytest -q\n```\n\n- If ANY test fails: do NOT fix it yourself. Complete with verdict=test_failure and record the failing test names and error output in failing_tests. The workflow will route to the debugger.\n- If ALL tests pass: proceed to step 3\n\n### Step 3: Verify no lost work\n\n```bash\ngit log master..ticket-focus\n```\n\nShould output nothing. If commits appear: ESCALATE.\n\n### Complete\n\n**Completion metadata:**\n{verdict: \"merged\"|\"test_failure\"|\"escalated\", merged_to: \"master\", all_tests_pass: true|false, task_count: 2, failing_tests: \"\"}",
+      "body_template": "## Close — merge ticket branch into master\n\n**Ticket:** ${trigger.title}\n**Repo:** ${trigger.card_body}\n\n### Step 1: Merge\n\n```bash\ncd ${trigger.card_body}\ngit checkout master\ngit merge --no-ff ticket-focus\n```\n\n### Step 2: Run tests\n\n```bash\npytest -q\n```\n\n- If ANY test fails: do NOT fix it. Complete with verdict=test_failure and record failing test names in failing_tests.\n- If ALL tests pass: proceed.\n\n### Step 3: Verify no lost work\n\n```bash\ngit log master..ticket-focus\n```\n\nShould output nothing.\n\n**Completion metadata:**\n{verdict: \"merged\"|\"test_failure\"|\"escalated\", merged_to: \"master\", all_tests_pass: true|false, task_count: 2, failing_tests: \"\"}",
       "title_template": "[close] ${trigger.title}",
       "output": {
         "schema": {
@@ -48,14 +47,13 @@
             }
           }
         }
-      },
-      "depends_on": []
+      }
     },
     {
       "id": "merge-verify",
       "profile": "verifier",
       "skill": "adversarial-review",
-      "body_template": "## Merge verification — mechanical git + test check\n\n**Ticket:** ${trigger.title}\n**Close verdict:** ${nodes.close.output.verdict}\n\n### Your job: PROVE the merge is real, not just claimed.\n\nThe repo is at `${trigger.card_body}`. Run these checks.\n\n### Check 1: Branch fully merged\n\n```bash\ncd ${trigger.card_body}\ngit log master..ticket-focus\n```\n\nMust output NOTHING. If any commits appear — FAIL.\n\n### Check 2: No dangling commits\n\n```bash\ngit fsck --unreachable 2>/dev/null | grep commit\n```\n\nIf ANY commits show up containing 'ticket' or 'fix' — FAIL.\n\n### Check 3: Tests pass on merged master\n\n```bash\ngit checkout master\npytest -q\n```\n\nALL tests must pass. ANY failure — FAIL.\n\n### Check 4: No stray worktrees\n\n```bash\ngit worktree list\ngit stash list\n```\n\nIf unmerged ticket work exists — FAIL.\n\n### Verdict\n\n- ALL checks pass: verdict=PASS\n- ANY check fails: verdict=FAIL with specific evidence\n\n**Completion metadata:**\n{verdict: \"PASS\"|\"FAIL\", branch_merged: true|false, no_dangling: true|false, tests_pass: true|false, all_tests: N, findings: [\"...\"]}",
+      "body_template": "## Merge verification\n\n**Repo:** ${trigger.card_body}\n\nProve the merge is real:\n1. git log master..ticket-focus (must be empty)\n2. git fsck --unreachable (no ticket/fix commits)\n3. pytest -q (all pass)\n4. git worktree list / git stash list (no stray work)\n\n**Completion metadata:**\n{verdict: \"PASS\"|\"FAIL\", branch_merged: true|false, no_dangling: true|false, tests_pass: true|false, all_tests: N, findings: []}",
       "title_template": "[merge-verify] ${trigger.title}",
       "output": {
         "schema": {
@@ -102,7 +100,7 @@
       "skill": "debug-loop",
       "type": "subworkflow",
       "workflow_ref": "debug-fix",
-      "body_template": "noop — subworkflow node",
+      "body_template": "noop",
       "title_template": "[debug-fix] ${trigger.title}",
       "input_mapping": {
         "repo": "${trigger.card_body}",
@@ -146,7 +144,7 @@
       "id": "re-merge",
       "profile": "tech-lead",
       "skill": "loops-engineering",
-      "body_template": "## Re-merge after debug fix\n\n**Ticket:** ${trigger.title}\n**Debug verdict:** ${nodes.debug-fix.output.verdict}\n**Fix commit:** ${nodes.debug-fix.output.fix_commit}\n\nThe debugger fixed the failing tests. Re-verify:\n\n```bash\ncd ${trigger.card_body}\npytest -q\n```\n\n- ALL pass: complete with verdict=merged, all_tests_pass=true\n- ANY fail: complete with verdict=escalated\n\n**Completion metadata:**\n{verdict: \"merged\"|\"escalated\", all_tests_pass: true|false, debug_fixed: true}",
+      "body_template": "## Re-merge after debug fix\n\n**Repo:** ${trigger.card_body}\n**Debug verdict:** ${nodes.debug-fix.output.verdict}\n\n```bash\ncd ${trigger.card_body}\npytest -q\n```\n\n- ALL pass: verdict=merged\n- ANY fail: verdict=escalated\n\n**Completion metadata:**\n{verdict: \"merged\"|\"escalated\", all_tests_pass: true|false, debug_fixed: true}",
       "title_template": "[re-merge] ${trigger.title}",
       "output": {
         "schema": {
