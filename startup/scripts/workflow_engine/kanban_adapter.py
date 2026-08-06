@@ -29,6 +29,7 @@ class CardInfo:
     metadata: dict | None = None
     completed_at: int | None = None
     summary: str | None = None
+    body: str = ""
 
 
 def board_db_path(board: str) -> Path:
@@ -180,7 +181,7 @@ def find_recent_completions(board: str, since_ts: int) -> list[CardInfo]:
         with _connect(db) as conn:
             rows = conn.execute(
                 """SELECT t.id, t.title, t.assignee, t.status, t.idempotency_key,
-                          t.completed_at, r.metadata, r.summary
+                          t.completed_at, r.metadata, r.summary, t.body
                    FROM tasks t
                    JOIN task_runs r ON r.task_id = t.id AND r.outcome = 'completed'
                    WHERE t.status = 'done' AND t.completed_at > ?
@@ -209,6 +210,7 @@ def find_recent_completions(board: str, since_ts: int) -> list[CardInfo]:
                 completed_at=r["completed_at"],
                 metadata=meta,
                 summary=r["summary"] or "",
+                body=r["body"] if "body" in r.keys() else "",
             )
         )
     return cards

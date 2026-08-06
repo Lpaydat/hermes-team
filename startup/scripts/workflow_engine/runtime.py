@@ -3191,6 +3191,7 @@ class Engine:
 
         trigger_context = {
             "card_id": trigger_card.id,
+            "card_body": getattr(trigger_card, "body", "") or "",
             "board": board,
             "assignee": trigger_card.assignee,
             "title": trigger_card.title or "",
