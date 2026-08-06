@@ -1585,6 +1585,42 @@ def test_board_not_found():
     print("OK: test_board_not_found")
 
 
+def test_corrupt_board_db_does_not_crash_trigger_scan():
+    """A board whose kanban.db exists but is corrupt (e.g. interrupted init
+    leaving a 4 KB file with no `tasks` table) must not crash the cross-board
+    trigger scan. The engine iterates ALL boards in find_recent_completions;
+    one unreadable board should be skipped (return []), not raise and kill the
+    whole tick.
+
+    Regression: observed when a leftover `todo-app` board with an empty DB
+    made test_real_trigger_fires_workflow fail with 'no such table: tasks'."""
+    import sqlite3
+    import tempfile
+    from pathlib import Path
+    from workflow_engine import kanban_adapter
+    from workflow_engine.kanban_adapter import find_recent_completions
+
+    # A real SQLite file with NO tables — mimics interrupted board init.
+    corrupt_dir = Path(tempfile.mkdtemp()) / "corrupt-board"
+    corrupt_dir.mkdir()
+    corrupt_db = corrupt_dir / "kanban.db"
+    conn = sqlite3.connect(str(corrupt_db))
+    conn.execute("CREATE TABLE _unused (x)")  # valid SQLite, but no tasks table
+    conn.commit()
+    conn.close()
+    assert corrupt_db.exists()
+
+    original = kanban_adapter.board_db_path
+    try:
+        kanban_adapter.board_db_path = lambda board: corrupt_db
+        result = find_recent_completions("corrupt-board", 0)
+        assert result == [], f"Expected [] for corrupt board, got: {result}"
+    finally:
+        kanban_adapter.board_db_path = original
+
+    print("OK: test_corrupt_board_db_does_not_crash_trigger_scan")
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # ADVERSARIAL: Self-triggering infinite loop
 # ═══════════════════════════════════════════════════════════════════════════

@@ -51,6 +51,14 @@ class TemplateStore:
         except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
             log.error("Failed to read/parse template %s: %s", path, e)
             return None
+        except RecursionError:
+            # CPython's json decoder recurses for nested containers and hits the
+            # interpreter recursion limit (~1000 frames) on pathologically deep
+            # nesting (e.g. 5000-deep {"k": {...}}). This is a malformed/hostile
+            # template, not a valid workflow; honour the "never raises" contract
+            # by treating it as unreadable.
+            log.error("Template %s exceeds Python recursion limit; rejected", path)
+            return None
 
         if not isinstance(data, dict):
             log.error("Template %s: root is %s, expected dict", path, type(data).__name__)

@@ -473,29 +473,36 @@ def test_deeply_nested_json_parses():
 
 
 def test_extreme_nesting_handled_by_decoder():
-    """CPython's json *decoder* (json.loads) is iterative for nested objects and
-    does NOT hit RecursionError even at 5000 levels. So a deeply-nested template
-    FILE loaded via read_text()+json.loads is handled gracefully.
+    """Pathologically deep nesting (>~1000 levels) exceeds CPython's recursion
+    limit and the json decoder raises RecursionError — it is NOT iterative for
+    nested containers. A template file this deep must be rejected gracefully by
+    the engine's TemplateStore (its contract is "never raises"), not crash the
+    process.
 
-    Note: the json *encoder* (json.dumps) IS recursive and hits the limit at
-    ~1000 levels — but the engine only decodes template files from disk, never
-    encodes them, so this is not an engine risk. Documented here for clarity."""
-    import time as _time
-    # Build a 5000-deep nested dict and serialize it once (encoder limit is the
-    # boundary, so we build incrementally to avoid the encoder recursion).
-    nested = "leaf"
-    for _ in range(5000):
-        nested = {"k": nested}
-    # Serialize without json.dumps recursion: manual bracket writing
+    The json *encoder* (json.dumps) is also recursive; we build the payload with
+    manual bracket writing to avoid encoder recursion during setup.
+    """
+    import sys
+    import tempfile
+    # Build a 5000-deep nested object via manual bracket writing (avoids encoder
+    # recursion during setup; json.dumps itself recurses past ~1000 levels).
     deep_str = '{"k": ' * 5000 + '"leaf"' + '}' * 5000
-    t0 = _time.time()
-    decoded = json.loads(deep_str)  # decoder is iterative — no RecursionError
-    assert _time.time() - t0 < 5.0, "decoding 5000-deep JSON should be fast"
-    # decoded is the deeply nested dict; walk it a few levels to confirm integrity
-    node = decoded
-    for _ in range(100):
-        node = node["k"]
-    assert isinstance(node, dict)
+
+    # CPython's json decoder recurses for nested containers, so 5000 levels
+    # (> recursion limit, default 1000) raises RecursionError. This is the real
+    # CPython behaviour, not a bug.
+    with pytest.raises(RecursionError):
+        json.loads(deep_str)
+
+    # The engine must honour its "never raises" contract: a template file this
+    # deep is rejected (returns None) instead of crashing. Verify end-to-end
+    # against the real store + on-disk file.
+    store = TemplateStore(tempfile.mkdtemp())
+    template_path = Path(store.dir) / "deep.json"
+    template_path.write_text(deep_str, encoding="utf-8")
+    assert store.load("deep") is None
+    # Sanity: recursion limit is the boundary the test relies on.
+    assert sys.getrecursionlimit() <= 2000
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -62,6 +62,26 @@ from workflow_engine.runtime import (
     STATE_DB,
 )
 
+import pytest
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Skip guard: these tests create + own their own kanban boards. The hermes CLI
+# resolves a board's DB via kanban_db_path(), where HERMES_KANBAN_DB has the
+# highest precedence. When this env var is set (e.g. inside a dispatched kanban
+# worker, where the dispatcher pins the worker's own board), every `boards
+# create <new>` aliases the new board onto the pinned DB instead of creating an
+# isolated one — so the tests cannot own their boards and fail with spurious
+# "no such table: tasks". Skip the whole module in that context; the suite is
+# meant to run from a clean shell (see module docstring).
+# ═══════════════════════════════════════════════════════════════════════════
+if os.environ.get("HERMES_KANBAN_DB", "").strip():
+    pytestmark = pytest.skip(
+        "test_integration requires an unpinned board DB, but "
+        "HERMES_KANBAN_DB is set (running inside a kanban worker); "
+        "run from a clean shell.",
+        allow_module_level=True,
+    )
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Test result tracking
@@ -476,7 +496,14 @@ def test_real_trigger_detection():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_real_project_dir_mapping():
-    """Verify _board_to_project_dir works with real active-projects.json."""
+    """Verify _board_to_project_dir works with real active-projects.json.
+
+    This test is environment-conditional: it depends on a `crr-pos` board being
+    mapped in active-projects.json (and pointing at a specific project dir).
+    On machines where that mapping is absent, the test skips rather than
+    asserting a hardcoded path that only the original author's box satisfies.
+    """
+    import pytest
     # Create a real engine instance (uses real templates dir, but we only
     # need the _board_to_project_dir method)
     templates_dir = Path.home() / ".hermes-teams/startup/scripts/workflow_engine/templates"
@@ -484,6 +511,8 @@ def test_real_project_dir_mapping():
 
     # Test with a board that IS in active-projects.json (crr-pos → crr-pos-v2)
     project_dir = engine._board_to_project_dir("crr-pos")
+    if project_dir == "":
+        pytest.skip("crr-pos project not mapped in active-projects.json on this machine")
     assert project_dir == "/home/lpaydat/projects/crr-pos-v2", \
         f"Expected /home/lpaydat/projects/crr-pos-v2, got: {project_dir}"
 

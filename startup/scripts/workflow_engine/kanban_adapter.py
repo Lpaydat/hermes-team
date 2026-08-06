@@ -176,33 +176,42 @@ def find_recent_completions(board: str, since_ts: int) -> list[CardInfo]:
     if not db.exists():
         return []
 
-    with _connect(db) as conn:
-        rows = conn.execute(
-            """SELECT t.id, t.title, t.assignee, t.status, t.idempotency_key,
-                      t.completed_at, r.metadata, r.summary
-               FROM tasks t
-               JOIN task_runs r ON r.task_id = t.id AND r.outcome = 'completed'
-               WHERE t.status = 'done' AND t.completed_at > ?
-               ORDER BY t.completed_at DESC
-               LIMIT 200""",
-            (since_ts,),
-        ).fetchall()
-        cards = []
-        for r in rows:
-            meta = _parse_metadata(r["metadata"])
-            cards.append(
-                CardInfo(
-                    id=r["id"],
-                    title=r["title"],
-                    assignee=r["assignee"],
-                    status=r["status"],
-                    idempotency_key=r["idempotency_key"],
-                    completed_at=r["completed_at"],
-                    metadata=meta,
-                    summary=r["summary"] or "",
-                )
+    try:
+        with _connect(db) as conn:
+            rows = conn.execute(
+                """SELECT t.id, t.title, t.assignee, t.status, t.idempotency_key,
+                          t.completed_at, r.metadata, r.summary
+                   FROM tasks t
+                   JOIN task_runs r ON r.task_id = t.id AND r.outcome = 'completed'
+                   WHERE t.status = 'done' AND t.completed_at > ?
+                   ORDER BY t.completed_at DESC
+                   LIMIT 200""",
+                (since_ts,),
+            ).fetchall()
+    except sqlite3.OperationalError as e:
+        # A board DB may exist but be corrupt or uninitialized (e.g. an empty
+        # 4 KB file left when init was interrupted, lacking the `tasks` table).
+        # The trigger scan iterates ALL boards; one unreadable board must not
+        # crash the whole tick. Treat it as having no completions.
+        log.warning("Board %r DB unreadable (%s); skipping trigger scan", board, e)
+        return []
+
+    cards = []
+    for r in rows:
+        meta = _parse_metadata(r["metadata"])
+        cards.append(
+            CardInfo(
+                id=r["id"],
+                title=r["title"],
+                assignee=r["assignee"],
+                status=r["status"],
+                idempotency_key=r["idempotency_key"],
+                completed_at=r["completed_at"],
+                metadata=meta,
+                summary=r["summary"] or "",
             )
-        return cards
+        )
+    return cards
 
 
 def validate_against_schema(instance: dict, schema: dict) -> tuple[bool, str]:
