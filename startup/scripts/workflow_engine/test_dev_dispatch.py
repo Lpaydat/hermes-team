@@ -50,7 +50,7 @@ def _get_routed_cards(world, include_po=False):
     """Return list of (assignee, title) for routed cards.
 
     By default excludes product-owner (the spec card holder). Set include_po=True
-    to also see the [decompose] card (route-tech-lead, which is now a PO card).
+    to also see the [decompose] card (route-decompose, which is now a PO card).
     """
     conn = sqlite3.connect(str(world.board_db))
     if include_po:
@@ -168,7 +168,7 @@ def test_route_default_tech_lead():
         world.tick()
         world.tick()
         routed = _get_routed_cards(world, include_po=True)
-        # route-tech-lead is now a product-owner [decompose] card
+        # route-decompose is now a product-owner [decompose] card
         po_cards = [c for c in routed if c[1] == "product-owner"]
         assert len(po_cards) == 1, \
             f"Expected 1 PO decompose card, got: {routed}"
@@ -363,8 +363,8 @@ def test_non_matching_routes_skipped():
             f"route-bug should dispatch"
         assert any("SKIPPED" in a and "route-scout" in a for a in a2), \
             f"route-scout should be skipped"
-        assert any("SKIPPED" in a and "route-tech-lead" in a for a in a2), \
-            f"route-tech-lead should be skipped"
+        assert any("SKIPPED" in a and "route-decompose" in a for a in a2), \
+            f"route-decompose should be skipped"
         # Only 1 routed card
         routed = _get_routed_cards(world)
         assert len(routed) == 1, f"Only 1 card, got {len(routed)}"
