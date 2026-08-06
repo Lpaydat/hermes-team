@@ -3204,12 +3204,39 @@ class Engine:
         return [f"STARTED workflow {wf.id} ({inst.instance_id}) on {board} — triggered by card {trigger_card.id}"]
 
     def _boards_to_check(self) -> list[str]:
-        """Get list of boards to check for triggers."""
-        from .kanban_adapter import KANBAN_HOME
+        """Get list of boards to check for triggers.
+
+        Validates each board DB has the required ``tasks`` table before
+        including it. A corrupt or uninitialized board DB (missing tables,
+        0-byte file, locked) would otherwise crash the entire trigger scan
+        with ``no such table: tasks``, blocking ALL boards from processing.
+        Broken boards are logged at WARNING so they surface without halting
+        the engine.
+        """
+        from .kanban_adapter import KANBAN_HOME, _connect
         boards_dir = KANBAN_HOME
         if not boards_dir.exists():
             return []
-        return [p.name for p in boards_dir.iterdir() if p.is_dir() and (p / "kanban.db").exists()]
+        valid_boards: list[str] = []
+        for p in sorted(boards_dir.iterdir()):
+            if not p.is_dir() or not (p / "kanban.db").exists():
+                continue
+            db_path = p / "kanban.db"
+            # Skip 0-byte files (interrupted init)
+            if db_path.stat().st_size == 0:
+                log.warning("Board %r has 0-byte kanban.db; skipping", p.name)
+                continue
+            try:
+                with _connect(db_path) as conn:
+                    conn.execute("SELECT 1 FROM tasks LIMIT 1").fetchone()
+                valid_boards.append(p.name)
+            except Exception as e:
+                log.warning(
+                    "Board %r kanban.db unreadable (%s); skipping trigger scan. "
+                    "Run `hermes kanban boards delete %s` to remove if stale.",
+                    p.name, e, p.name,
+                )
+        return valid_boards
 
     def _board_to_project_dir(self, board: str) -> str:
         """Try to map a board name to a project directory."""
