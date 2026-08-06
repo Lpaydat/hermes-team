@@ -196,6 +196,48 @@
           }
         }
       }
+    },
+    {
+      "id": "merge-verify",
+      "profile": "verifier",
+      "skill": "adversarial-review",
+      "body_template": "## Merge verification — mechanical git + test check\n\n**Ticket:** ${trigger.title}\n**Close verdict:** ${nodes.close.output.verdict}\n\n### Your job: PROVE the merge is real, not just claimed.\n\nRun these checks. Each must PASS. Do NOT take the close node's word for it.\n\n### Check 1: Branch is fully merged\n\n```\ngit log master..<ticket-branch-name>\n```\n\nThis must output NOTHING (empty). If any commits appear, the branch was NOT merged — FAIL.\n\nIf you don't know the branch name, find it:\n```\ngit branch --list 'ticket-*'\n```\n\n### Check 2: No dangling/destroyed commits\n\n```\ngit fsck --unreachable 2>/dev/null | grep commit\n```\n\nIf this shows ANY commits containing 'ticket' or 'fix' in their message — FAIL. Work was destroyed.\n\n### Check 3: Tests pass on merged master\n\n```\ngit checkout master\npytest -q\n```\n\nALL tests must pass. ANY failure — FAIL.\n\n### Check 4: No stray worktrees with unmerged work\n\n```\ngit worktree list\ngit stash list\n```\n\nIf there are worktrees or stashes with ticket-related content that isn't in master — FAIL.\n\n### Verdict\n\n- ALL checks pass: verdict=PASS\n- ANY check fails: verdict=FAIL with specific evidence\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\", branch_merged: true|false, no_dangling: true|false, tests_pass: true|false, all_tests: N, findings: [\"specific issue 1\", ...]}\n```",
+      "title_template": "[merge-verify] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "verdict"
+          ],
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL"
+              ]
+            },
+            "branch_merged": {
+              "type": "boolean"
+            },
+            "no_dangling": {
+              "type": "boolean"
+            },
+            "tests_pass": {
+              "type": "boolean"
+            },
+            "all_tests": {
+              "type": "integer"
+            },
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "edges": [
@@ -230,6 +272,11 @@
       "to": "fix",
       "condition": "${nodes.re-verify.output.verdict} == 'FAIL'",
       "max_iterations": 10
+    },
+    {
+      "from": "close",
+      "to": "merge-verify",
+      "condition": "${nodes.plan.output.task_count} > 1"
     }
   ]
 }
