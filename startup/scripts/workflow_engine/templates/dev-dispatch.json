@@ -91,7 +91,9 @@
     {
       "id": "route-architect",
       "profile": "architect",
-      "body_template": "## Architecture decision needed\n\nSpec: ${trigger.card_id}\nTitle: ${trigger.title}\n\nAnswer in gate posture: weigh alternatives before deciding. Record the decision as an ADR.\n\nComplete this card with metadata {verdict: \"decided\", adr: \"ADR-NNN\"} when done.",
+      "skill": "architecture-gate",
+      "body_template": "## Architecture gate — triage spec before decomposition\n\n**Spec card:** ${trigger.card_id}\n**Title:** ${trigger.title}\n**Spec body:**\n\n${trigger.card_body}\n\nYou are the architect. Load your `architecture-gate` skill. Run the five-question blast-radius triage on this spec.\n\n### What to do\n\n1. Read the spec above (problem statement, user stories, acceptance criteria).\n2. Triage with the five-question rubric. Assign a tier (T0–T3).\n3. For T1+: decide the tech stack (use the paved road unless a constraint forces a deviation). Write an ADR if needed.\n4. Write the spec to a file at the project repo (extract the repo path from the spec body — look for `Repo:` or a filesystem path). Add `## Implementation Decisions` and `## Testing Decisions` sections with your architecture decisions. Append the stamp line.\n5. If no repo path is in the spec body, write the spec to `SPEC.md` in your workspace.\n\n### Complete with metadata\n\n```\n{verdict: \"stamped\", tier: \"T0|T1|T2\", artifacts: [\"ADR-001\", ...] or [], approval: \"waved-through|adr-recorded\", spec_file: \"<path to stamped spec file>\", tech_stack: \"<e.g. python3 + pytest + sqlite>\", testing_decisions: \"<one-line>\"}\n```\n\nFor T2/T3 escalation (needs human): block the card with reason `escalated-t2:` or `T3 handback-wayfinder:`.",
+      "title_template": "[architect] ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
@@ -102,9 +104,30 @@
             "verdict": {
               "type": "string",
               "enum": [
-                "decided",
+                "stamped",
                 "needs-more-info"
               ]
+            },
+            "tier": {
+              "type": "string"
+            },
+            "artifacts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "approval": {
+              "type": "string"
+            },
+            "spec_file": {
+              "type": "string"
+            },
+            "tech_stack": {
+              "type": "string"
+            },
+            "testing_decisions": {
+              "type": "string"
             }
           }
         }
@@ -197,18 +220,17 @@
     },
     {
       "from": "entry",
-      "to": "route-architect",
-      "condition": "${trigger.type} == 'architecture'"
-    },
-    {
-      "from": "entry",
       "to": "route-tickets",
       "condition": "${trigger.type} == 'tickets'"
     },
     {
       "from": "entry",
-      "to": "route-decompose",
-      "condition": "${trigger.type} != 'bug' AND ${trigger.type} != 'research' AND ${trigger.type} != 'ops' AND ${trigger.type} != 'architecture' AND ${trigger.type} != 'tickets'"
+      "to": "route-architect",
+      "condition": "${trigger.type} != 'bug' AND ${trigger.type} != 'research' AND ${trigger.type} != 'ops' AND ${trigger.type} != 'tickets'"
+    },
+    {
+      "from": "route-architect",
+      "to": "route-decompose"
     }
   ]
 }
