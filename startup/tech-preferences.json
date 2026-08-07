@@ -1,0 +1,347 @@
+{
+  "version": 1,
+  "philosophy": "Preferences, not mandates. Prefer these. Override if clearly better. Propose alternatives for important projects (T2+). Never silently drop a favorite — the ADR must state why it was rejected.",
+
+  "tools": [
+    {
+      "id": "python3",
+      "name": "Python 3",
+      "category": "language",
+      "description": "General-purpose language, stdlib-first",
+      "when_to_use": "Default choice for CLI tools, scripts, APIs, data processing",
+      "platforms": ["linux", "macos", "windows", "web"],
+      "tags": ["language", "backend", "cli", "scripting"],
+      "alternatives": ["typescript", "go", "rust"]
+    },
+    {
+      "id": "argparse",
+      "name": "argparse",
+      "category": "cli-framework",
+      "description": "Standard library command-line argument parser",
+      "when_to_use": "Python CLI tools with simple subcommand structure",
+      "platforms": ["linux", "macos", "windows"],
+      "tags": ["cli", "python", "stdlib"],
+      "alternatives": ["click", "typer"]
+    },
+    {
+      "id": "pytest",
+      "name": "pytest",
+      "category": "testing",
+      "description": "Python testing framework with fixtures and parametrization",
+      "when_to_use": "Always for Python projects",
+      "platforms": ["linux", "macos", "windows"],
+      "tags": ["testing", "python"],
+      "alternatives": ["unittest"]
+    },
+    {
+      "id": "ruff",
+      "name": "Ruff",
+      "category": "linting",
+      "description": "Fast Python linter and formatter written in Rust",
+      "when_to_use": "Always for Python projects. Replaces flake8 + black + isort",
+      "platforms": ["linux", "macos", "windows"],
+      "tags": ["linting", "formatting", "python"],
+      "alternatives": ["flake8", "pylint", "black"],
+      "config_files": ["configs/python/ruff.toml"]
+    },
+    {
+      "id": "json-storage",
+      "name": "JSON File Storage",
+      "category": "storage",
+      "description": "Single JSON file for local persistence, atomic writes",
+      "when_to_use": "Single-user, single-writer, small state. CLI tools, config files.",
+      "platforms": ["linux", "macos", "windows", "web"],
+      "tags": ["storage", "embedded", "simple"],
+      "alternatives": ["sqlite"]
+    },
+    {
+      "id": "sqlite",
+      "name": "SQLite",
+      "category": "storage",
+      "description": "Embedded relational database, zero-config, file-based",
+      "when_to_use": "When you need querying, multiple tables, or a second writer appears",
+      "platforms": ["linux", "macos", "windows", "web", "mobile"],
+      "tags": ["storage", "embedded", "database", "sql"],
+      "alternatives": ["json-storage", "postgres"]
+    },
+    {
+      "id": "mypy",
+      "name": "mypy",
+      "category": "type-checking",
+      "description": "Static type checker for Python",
+      "when_to_use": "Medium to large Python projects. Optional for small CLI tools.",
+      "platforms": ["linux", "macos", "windows"],
+      "tags": ["type-checking", "python"],
+      "alternatives": ["pyright"],
+      "config_files": ["configs/python/mypy.ini"]
+    },
+    {
+      "id": "fastapi",
+      "name": "FastAPI",
+      "category": "web-framework",
+      "description": "Modern Python web framework with automatic OpenAPI docs",
+      "when_to_use": "HTTP APIs, web services, backends",
+      "platforms": ["linux", "macos", "windows"],
+      "tags": ["web", "api", "backend", "python"],
+      "alternatives": ["flask", "django"]
+    },
+    {
+      "id": "typescript",
+      "name": "TypeScript",
+      "category": "language",
+      "description": "Typed superset of JavaScript",
+      "when_to_use": "Web frontends, mobile apps, Node.js backends",
+      "platforms": ["linux", "macos", "windows", "web"],
+      "tags": ["language", "frontend", "backend", "web"],
+      "alternatives": ["javascript"]
+    },
+    {
+      "id": "react",
+      "name": "React",
+      "category": "frontend-framework",
+      "description": "Component-based UI library",
+      "when_to_use": "Interactive web apps with complex state",
+      "platforms": ["web"],
+      "tags": ["frontend", "ui", "web"],
+      "alternatives": ["svelte", "vue", "solid"]
+    },
+    {
+      "id": "react-native",
+      "name": "React Native",
+      "category": "mobile-framework",
+      "description": "Cross-platform mobile app framework",
+      "when_to_use": "iOS + Android apps with shared codebase",
+      "platforms": ["ios", "android"],
+      "tags": ["mobile", "ui"],
+      "alternatives": ["flutter"]
+    },
+    {
+      "id": "expo",
+      "name": "Expo",
+      "category": "mobile-tooling",
+      "description": "React Native development platform and toolchain",
+      "when_to_use": "React Native apps — simplifies build, deploy, OTA updates",
+      "platforms": ["ios", "android"],
+      "tags": ["mobile", "tooling"],
+      "alternatives": []
+    },
+    {
+      "id": "rust",
+      "name": "Rust",
+      "category": "language",
+      "description": "Systems language with memory safety, zero-cost abstractions",
+      "when_to_use": "Performance-critical code, WASM targets, systems tools, CLIs needing speed",
+      "platforms": ["linux", "macos", "windows", "web"],
+      "tags": ["language", "systems", "performance", "wasm"],
+      "alternatives": ["c", "cpp"]
+    },
+    {
+      "id": "rust-wasm",
+      "name": "Rust WASM",
+      "category": "logic",
+      "description": "Rust compiled to WebAssembly for browser/performance logic",
+      "when_to_use": "Compute-heavy web logic (image processing, crypto, parsing, simulation)",
+      "platforms": ["web"],
+      "tags": ["logic", "wasm", "performance"],
+      "alternatives": ["assemblyscript"],
+      "requires": ["wasm-bindgen"]
+    },
+    {
+      "id": "wasm-bindgen",
+      "name": "wasm-bindgen",
+      "category": "wasm-tooling",
+      "description": "Bridge between Rust and JavaScript for WASM",
+      "when_to_use": "When using Rust in the browser via WASM",
+      "platforms": ["web"],
+      "tags": ["wasm", "bridge", "rust"],
+      "alternatives": []
+    },
+    {
+      "id": "vite",
+      "name": "Vite",
+      "category": "bundler",
+      "description": "Fast bundler and dev server for web projects",
+      "when_to_use": "Web projects needing bundling, HMR, or build optimization",
+      "platforms": ["web"],
+      "tags": ["bundler", "web", "build"],
+      "alternatives": ["webpack"]
+    },
+    {
+      "id": "vitest",
+      "name": "Vitest",
+      "category": "testing",
+      "description": "Testing framework for Vite projects",
+      "when_to_use": "TypeScript/JavaScript projects using Vite",
+      "platforms": ["web"],
+      "tags": ["testing", "typescript", "web"],
+      "alternatives": ["jest"]
+    },
+    {
+      "id": "eslint",
+      "name": "ESLint",
+      "category": "linting",
+      "description": "Pluggable JavaScript/TypeScript linter",
+      "when_to_use": "TypeScript/JavaScript projects",
+      "platforms": ["web", "mobile"],
+      "tags": ["linting", "typescript", "javascript"],
+      "alternatives": ["biome"]
+    },
+    {
+      "id": "prettier",
+      "name": "Prettier",
+      "category": "formatting",
+      "description": "Opinionated code formatter for JS/TS/CSS/HTML",
+      "when_to_use": "TypeScript/JavaScript projects",
+      "platforms": ["web", "mobile"],
+      "tags": ["formatting", "typescript", "javascript"],
+      "alternatives": ["biome"]
+    },
+    {
+      "id": "drizzle",
+      "name": "Drizzle ORM",
+      "category": "orm",
+      "description": "TypeScript SQL ORM with type-safe queries",
+      "when_to_use": "TypeScript projects needing database access",
+      "platforms": ["web", "mobile"],
+      "tags": ["orm", "database", "typescript"],
+      "alternatives": ["prisma"]
+    },
+    {
+      "id": "electric-sql",
+      "name": "ElectricSQL",
+      "category": "sync",
+      "description": "Local-first sync layer for SQLite",
+      "when_to_use": "Apps that work offline and sync when online",
+      "platforms": ["web", "mobile"],
+      "tags": ["sync", "offline", "local-first"],
+      "alternatives": ["power-sync"]
+    }
+  ],
+
+  "toolkits": [
+    {
+      "id": "python-cli",
+      "name": "Python CLI Basics",
+      "description": "Standard Python CLI tooling",
+      "when_to_use": "CLI tools, scripts, utilities",
+      "tools": ["python3", "argparse", "pytest", "ruff"],
+      "config_files": ["configs/python/"]
+    },
+    {
+      "id": "python-api",
+      "name": "Python API Service",
+      "description": "Python backend API with FastAPI",
+      "when_to_use": "HTTP APIs, web services, backends",
+      "tools": ["python3", "fastapi", "pytest", "ruff"],
+      "config_files": ["configs/python/"]
+    },
+    {
+      "id": "python-typecheck",
+      "name": "Python Type Checking",
+      "description": "Add mypy to a Python project",
+      "when_to_use": "Medium to large Python projects",
+      "tools": ["mypy"],
+      "requires_toolkit": ["python-cli"],
+      "config_files": ["configs/python/mypy.ini"]
+    },
+    {
+      "id": "local-db",
+      "name": "Local Database",
+      "description": "On-device SQLite with type-safe ORM",
+      "when_to_use": "Any app needing local persistence with querying",
+      "tools": ["sqlite", "drizzle"]
+    },
+    {
+      "id": "simple-storage",
+      "name": "Simple File Storage",
+      "description": "JSON file for local persistence",
+      "when_to_use": "CLI tools, config files, small single-user state",
+      "tools": ["json-storage"]
+    },
+    {
+      "id": "offline-sync",
+      "name": "Offline Sync Layer",
+      "description": "Sync local SQLite with remote, conflict resolution",
+      "when_to_use": "Apps that work offline and sync when online",
+      "tools": ["electric-sql"],
+      "requires_toolkit": ["local-db"]
+    },
+    {
+      "id": "react-web-ui",
+      "name": "React Web UI",
+      "description": "React frontend with Vite bundler",
+      "when_to_use": "Interactive web apps",
+      "tools": ["react", "typescript", "vite", "vitest", "eslint", "prettier"],
+      "config_files": ["configs/node/"]
+    },
+    {
+      "id": "rust-wasm-logic",
+      "name": "Rust WASM Logic",
+      "description": "Rust compiled to WASM, bridged to JS",
+      "when_to_use": "Performance-critical web logic",
+      "tools": ["rust-wasm", "wasm-bindgen"],
+      "requires_toolkit": ["react-web-ui"],
+      "config_files": ["configs/rust/"]
+    },
+    {
+      "id": "react-mobile-ui",
+      "name": "React Native Mobile UI",
+      "description": "Cross-platform mobile UI with Expo",
+      "when_to_use": "iOS + Android apps with shared codebase",
+      "tools": ["react-native", "typescript", "expo", "eslint", "prettier"],
+      "config_files": ["configs/node/"]
+    }
+  ],
+
+  "recipes": [
+    {
+      "id": "cli-tool",
+      "name": "CLI Tool",
+      "description": "Command-line tool or utility",
+      "match_keywords": ["cli", "command-line", "terminal", "script", "utility"],
+      "toolkits": ["python-cli"]
+    },
+    {
+      "id": "cli-tool-with-storage",
+      "name": "CLI Tool with Storage",
+      "description": "CLI tool that persists data locally",
+      "match_keywords": ["cli", "storage", "persist", "save"],
+      "toolkits": ["python-cli", "simple-storage"]
+    },
+    {
+      "id": "api-service",
+      "name": "API Service",
+      "description": "HTTP API or web backend",
+      "match_keywords": ["api", "service", "backend", "server", "http", "rest", "endpoint"],
+      "toolkits": ["python-api"]
+    },
+    {
+      "id": "web-app",
+      "name": "Web Application",
+      "description": "Interactive web app with React frontend",
+      "match_keywords": ["web", "app", "spa", "dashboard", "frontend"],
+      "toolkits": ["react-web-ui"]
+    },
+    {
+      "id": "web-app-heavy-compute",
+      "name": "Web App with Heavy Compute",
+      "description": "Web app with performance-critical client logic (Rust WASM)",
+      "match_keywords": ["web", "wasm", "compute", "performance", "browser"],
+      "toolkits": ["react-web-ui", "rust-wasm-logic"]
+    },
+    {
+      "id": "mobile-offline",
+      "name": "Offline-First Mobile App",
+      "description": "Mobile app that works offline with sync",
+      "match_keywords": ["mobile", "offline", "local-first", "sync", "react-native"],
+      "toolkits": ["react-mobile-ui", "local-db", "offline-sync"]
+    },
+    {
+      "id": "mobile-online",
+      "name": "Online Mobile App",
+      "description": "Mobile app that requires connectivity",
+      "match_keywords": ["mobile", "online", "api", "react-native"],
+      "toolkits": ["react-mobile-ui"]
+    }
+  ]
+}

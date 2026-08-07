@@ -134,6 +134,28 @@
       }
     },
     {
+      "id": "route-setup",
+      "profile": "tech-lead",
+      "skill": "",
+      "body_template": "## Project setup — scaffold tooling and hygiene files\n\n**Repo:** ${trigger.card_body}\n**Tech stack:** ${nodes.route-architect.output.tech_stack}\n**Spec file:** ${nodes.route-architect.output.spec_file}\n\nThe architect has decided the tech stack. Your job is to set up the project with proper tooling BEFORE any feature tickets start.\n\n### What to do\n\n1. Read the tech preferences at `startup/tech-preferences.json` (relative to the hermes-teams home at `~/.hermes-teams/startup/tech-preferences.json`).\n2. Read the spec file at `${nodes.route-architect.output.spec_file}` to confirm the tech stack.\n3. Based on the tech stack, copy the appropriate config files from `~/.hermes-teams/startup/scripts/workflow_engine/configs/` into the project repo.\n\n### For Python projects (paved road)\n\nCopy these files from `configs/python/` to the project root:\n- `pyproject.toml` — replace `${PROJECT_NAME}` with the project name from the spec title, `${PROJECT_DESCRIPTION}` with a one-line description\n- `ruff.toml` — linter/formatter config\n- `Makefile` — lint, format, test, check targets\n- `conftest.py` — shared pytest fixtures\n- `.gitignore` — Python ignore patterns\n\nAlso append the global patterns from `configs/_shared/.gitignore.global` to `.gitignore`.\n\n### For other stacks\n\nDetect the language from the tech stack. Apply the appropriate configs from `configs/<language>/`. If no configs exist for that language, create minimal ones following the same pattern.\n\n### Verify\n\nAfter copying, run:\n```bash\ncd <repo>\nmruff check . || true  # may have pre-existing issues\nruff format --check . || true\n```\n\nIf the repo already has a pyproject.toml or Makefile, MERGE your sections into the existing file rather than overwriting. Do not destroy existing config.\n\n### Completion metadata\n\n```\n{setup_done: true, files_created: [\"pyproject.toml\", \"ruff.toml\", ...], files_merged: [], linter: \"ruff\", formatter: \"ruff format\", test_runner: \"pytest\", has_gitignore: true}\n```",
+      "title_template": "[setup] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["setup_done", "files_created"],
+          "properties": {
+            "setup_done": {"type": "boolean"},
+            "files_created": {"type": "array", "items": {"type": "string"}},
+            "files_merged": {"type": "array", "items": {"type": "string"}},
+            "linter": {"type": "string"},
+            "formatter": {"type": "string"},
+            "test_runner": {"type": "string"},
+            "has_gitignore": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    {
       "id": "route-decompose",
       "profile": "product-owner",
       "skill": "to-tickets",
@@ -230,6 +252,10 @@
     },
     {
       "from": "route-architect",
+      "to": "route-setup"
+    },
+    {
+      "from": "route-setup",
       "to": "route-decompose"
     }
   ]

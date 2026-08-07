@@ -1,0 +1,7 @@
+# Global gitignore — applies to all projects
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
