@@ -321,8 +321,9 @@
       "id": "better-auth-ts",
       "name": "Better Auth (TypeScript)",
       "description": "MIT auth for TS backends, Expo plugin, passkey/SSO",
-      "when_to_use": "Primary auth for TS backends",
-      "tools": ["better-auth"]
+      "when_to_use": "Primary auth for TS-only backends",
+      "tools": ["better-auth"],
+      "incompatible_with": ["rust-api", "python-api"]
     },
     {
       "id": "logto-standalone",
@@ -458,7 +459,7 @@
       "name": "Offline-First Mobile App",
       "description": "Mobile app that works offline with local SQLite + sync",
       "match_keywords": ["mobile", "offline", "local-first", "sync", "react-native"],
-      "toolkits": ["react-mobile-ui", "sqlite-local", "better-auth-ts"]
+      "toolkits": ["react-mobile-ui", "sqlite-local", "logto-standalone"]
     },
     {
       "id": "mobile-online",
@@ -472,7 +473,7 @@
       "name": "Full-Stack SaaS",
       "description": "Web app + API + auth + payments + database",
       "match_keywords": ["saas", "fullstack", "platform", "dashboard", "billing"],
-      "toolkits": ["react-web-ui", "rust-api", "neon-serverless", "drizzle-ts-db", "better-auth-ts", "stripe-payments", "redis-cache"]
+      "toolkits": ["react-web-ui", "rust-api", "neon-serverless", "drizzle-ts-db", "logto-standalone", "stripe-payments", "redis-cache"]
     },
     {
       "id": "fullstack-saas-prototype",
