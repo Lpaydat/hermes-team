@@ -1,0 +1,8 @@
+# TypeScript/Node gitignore patterns
+node_modules/
+dist/
+.env
+.env.local
+*.tsbuildinfo
+.next/
+.cache/
