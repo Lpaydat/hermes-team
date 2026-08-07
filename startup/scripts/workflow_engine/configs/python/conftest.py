@@ -1,7 +1,7 @@
 """Pytest fixtures shared across all tests."""
+
 import os
 import tempfile
-from pathlib import Path
 
 import pytest
 
