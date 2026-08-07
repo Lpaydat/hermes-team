@@ -1,229 +1,105 @@
 {
-  "version": 1,
-  "philosophy": "Preferences, not mandates. Prefer these. Override if clearly better. Propose alternatives for important projects (T2+). Never silently drop a favorite — the ADR must state why it was rejected.",
+  "version": 2,
+  "philosophy": "Preferences, not mandates. Prefer these. Override if clearly better. Propose alternatives for important projects (T2+). Never silently drop a favorite — the ADR must state why it was rejected. All listed tools are free to use (OSS or free tier) for personal and commercial projects without paid subscriptions.",
 
   "tools": [
-    {
-      "id": "python3",
-      "name": "Python 3",
-      "category": "language",
-      "description": "General-purpose language, stdlib-first",
-      "when_to_use": "Default choice for CLI tools, scripts, APIs, data processing",
-      "platforms": ["linux", "macos", "windows", "web"],
-      "tags": ["language", "backend", "cli", "scripting"],
-      "alternatives": ["typescript", "go", "rust"]
-    },
-    {
-      "id": "argparse",
-      "name": "argparse",
-      "category": "cli-framework",
-      "description": "Standard library command-line argument parser",
-      "when_to_use": "Python CLI tools with simple subcommand structure",
-      "platforms": ["linux", "macos", "windows"],
-      "tags": ["cli", "python", "stdlib"],
-      "alternatives": ["click", "typer"]
-    },
-    {
-      "id": "pytest",
-      "name": "pytest",
-      "category": "testing",
-      "description": "Python testing framework with fixtures and parametrization",
-      "when_to_use": "Always for Python projects",
-      "platforms": ["linux", "macos", "windows"],
-      "tags": ["testing", "python"],
-      "alternatives": ["unittest"]
-    },
-    {
-      "id": "ruff",
-      "name": "Ruff",
-      "category": "linting",
-      "description": "Fast Python linter and formatter written in Rust",
-      "when_to_use": "Always for Python projects. Replaces flake8 + black + isort",
-      "platforms": ["linux", "macos", "windows"],
-      "tags": ["linting", "formatting", "python"],
-      "alternatives": ["flake8", "pylint", "black"],
-      "config_files": ["configs/python/ruff.toml"]
-    },
-    {
-      "id": "json-storage",
-      "name": "JSON File Storage",
-      "category": "storage",
-      "description": "Single JSON file for local persistence, atomic writes",
-      "when_to_use": "Single-user, single-writer, small state. CLI tools, config files.",
-      "platforms": ["linux", "macos", "windows", "web"],
-      "tags": ["storage", "embedded", "simple"],
-      "alternatives": ["sqlite"]
-    },
-    {
-      "id": "sqlite",
-      "name": "SQLite",
-      "category": "storage",
-      "description": "Embedded relational database, zero-config, file-based",
-      "when_to_use": "When you need querying, multiple tables, or a second writer appears",
-      "platforms": ["linux", "macos", "windows", "web", "mobile"],
-      "tags": ["storage", "embedded", "database", "sql"],
-      "alternatives": ["json-storage", "postgres"]
-    },
-    {
-      "id": "mypy",
-      "name": "mypy",
-      "category": "type-checking",
-      "description": "Static type checker for Python",
-      "when_to_use": "Medium to large Python projects. Optional for small CLI tools.",
-      "platforms": ["linux", "macos", "windows"],
-      "tags": ["type-checking", "python"],
-      "alternatives": ["pyright"],
-      "config_files": ["configs/python/mypy.ini"]
-    },
-    {
-      "id": "fastapi",
-      "name": "FastAPI",
-      "category": "web-framework",
-      "description": "Modern Python web framework with automatic OpenAPI docs",
-      "when_to_use": "HTTP APIs, web services, backends",
-      "platforms": ["linux", "macos", "windows"],
-      "tags": ["web", "api", "backend", "python"],
-      "alternatives": ["flask", "django"]
-    },
-    {
-      "id": "typescript",
-      "name": "TypeScript",
-      "category": "language",
-      "description": "Typed superset of JavaScript",
-      "when_to_use": "Web frontends, mobile apps, Node.js backends",
-      "platforms": ["linux", "macos", "windows", "web"],
-      "tags": ["language", "frontend", "backend", "web"],
-      "alternatives": ["javascript"]
-    },
-    {
-      "id": "react",
-      "name": "React",
-      "category": "frontend-framework",
-      "description": "Component-based UI library",
-      "when_to_use": "Interactive web apps with complex state",
-      "platforms": ["web"],
-      "tags": ["frontend", "ui", "web"],
-      "alternatives": ["svelte", "vue", "solid"]
-    },
-    {
-      "id": "react-native",
-      "name": "React Native",
-      "category": "mobile-framework",
-      "description": "Cross-platform mobile app framework",
-      "when_to_use": "iOS + Android apps with shared codebase",
-      "platforms": ["ios", "android"],
-      "tags": ["mobile", "ui"],
-      "alternatives": ["flutter"]
-    },
-    {
-      "id": "expo",
-      "name": "Expo",
-      "category": "mobile-tooling",
-      "description": "React Native development platform and toolchain",
-      "when_to_use": "React Native apps — simplifies build, deploy, OTA updates",
-      "platforms": ["ios", "android"],
-      "tags": ["mobile", "tooling"],
-      "alternatives": []
-    },
-    {
-      "id": "rust",
-      "name": "Rust",
-      "category": "language",
-      "description": "Systems language with memory safety, zero-cost abstractions",
-      "when_to_use": "Performance-critical code, WASM targets, systems tools, CLIs needing speed",
-      "platforms": ["linux", "macos", "windows", "web"],
-      "tags": ["language", "systems", "performance", "wasm"],
-      "alternatives": ["c", "cpp"]
-    },
-    {
-      "id": "rust-wasm",
-      "name": "Rust WASM",
-      "category": "logic",
-      "description": "Rust compiled to WebAssembly for browser/performance logic",
-      "when_to_use": "Compute-heavy web logic (image processing, crypto, parsing, simulation)",
-      "platforms": ["web"],
-      "tags": ["logic", "wasm", "performance"],
-      "alternatives": ["assemblyscript"],
-      "requires": ["wasm-bindgen"]
-    },
-    {
-      "id": "wasm-bindgen",
-      "name": "wasm-bindgen",
-      "category": "wasm-tooling",
-      "description": "Bridge between Rust and JavaScript for WASM",
-      "when_to_use": "When using Rust in the browser via WASM",
-      "platforms": ["web"],
-      "tags": ["wasm", "bridge", "rust"],
-      "alternatives": []
-    },
-    {
-      "id": "vite",
-      "name": "Vite",
-      "category": "bundler",
-      "description": "Fast bundler and dev server for web projects",
-      "when_to_use": "Web projects needing bundling, HMR, or build optimization",
-      "platforms": ["web"],
-      "tags": ["bundler", "web", "build"],
-      "alternatives": ["webpack"]
-    },
-    {
-      "id": "vitest",
-      "name": "Vitest",
-      "category": "testing",
-      "description": "Testing framework for Vite projects",
-      "when_to_use": "TypeScript/JavaScript projects using Vite",
-      "platforms": ["web"],
-      "tags": ["testing", "typescript", "web"],
-      "alternatives": ["jest"]
-    },
-    {
-      "id": "eslint",
-      "name": "ESLint",
-      "category": "linting",
-      "description": "Pluggable JavaScript/TypeScript linter",
-      "when_to_use": "TypeScript/JavaScript projects",
-      "platforms": ["web", "mobile"],
-      "tags": ["linting", "typescript", "javascript"],
-      "alternatives": ["biome"]
-    },
-    {
-      "id": "prettier",
-      "name": "Prettier",
-      "category": "formatting",
-      "description": "Opinionated code formatter for JS/TS/CSS/HTML",
-      "when_to_use": "TypeScript/JavaScript projects",
-      "platforms": ["web", "mobile"],
-      "tags": ["formatting", "typescript", "javascript"],
-      "alternatives": ["biome"]
-    },
-    {
-      "id": "drizzle",
-      "name": "Drizzle ORM",
-      "category": "orm",
-      "description": "TypeScript SQL ORM with type-safe queries",
-      "when_to_use": "TypeScript projects needing database access",
-      "platforms": ["web", "mobile"],
-      "tags": ["orm", "database", "typescript"],
-      "alternatives": ["prisma"]
-    },
-    {
-      "id": "electric-sql",
-      "name": "ElectricSQL",
-      "category": "sync",
-      "description": "Local-first sync layer for SQLite",
-      "when_to_use": "Apps that work offline and sync when online",
-      "platforms": ["web", "mobile"],
-      "tags": ["sync", "offline", "local-first"],
-      "alternatives": ["power-sync"]
-    }
+    {"id": "rust", "name": "Rust", "category": "language", "description": "Systems language with memory safety, zero-cost abstractions, best compiler for AI-generated code", "when_to_use": "Top priority for everything possible. Performance-critical code, WASM targets, systems tools, CLIs, servers.", "platforms": ["linux", "macos", "windows", "web"], "tags": ["language", "systems", "performance", "wasm", "server", "cli"], "alternatives": ["go"], "notes": "Best compiler feedback loop for AI agents — strong type system catches bugs at compile time"},
+    {"id": "python3", "name": "Python 3", "category": "language", "description": "General-purpose language, stdlib-first", "when_to_use": "Prototyping, internal tools, quick builds, data processing, AI/ML", "platforms": ["linux", "macos", "windows", "web"], "tags": ["language", "backend", "cli", "scripting", "ai"], "alternatives": ["typescript"], "notes": "Fast iteration, huge ecosystem, best for AI/ML integration"},
+    {"id": "typescript", "name": "TypeScript", "category": "language", "description": "Typed superset of JavaScript", "when_to_use": "Web frontends, React, React Native, Svelte/SvelteKit, Node.js backends", "platforms": ["linux", "macos", "windows", "web"], "tags": ["language", "frontend", "backend", "web"], "alternatives": ["javascript"]},
+    {"id": "go", "name": "Go", "category": "language", "description": "Simple, fast compilation, excellent concurrency", "when_to_use": "When Go has a clear ecosystem advantage or specific tooling is Go-native (e.g. Dgraph, Terraform plugins)", "platforms": ["linux", "macos", "windows"], "tags": ["language", "backend", "systems"], "alternatives": ["rust"]},
+
+    {"id": "clippy", "name": "Clippy", "category": "linting", "description": "Rust linter with 700+ lints, built into cargo", "when_to_use": "Always for Rust projects", "platforms": ["linux", "macos", "windows"], "tags": ["linting", "rust"], "alternatives": []},
+    {"id": "rustfmt", "name": "rustfmt", "category": "formatting", "description": "Rust code formatter, built into cargo", "when_to_use": "Always for Rust projects", "platforms": ["linux", "macos", "windows"], "tags": ["formatting", "rust"], "alternatives": []},
+    {"id": "cargo-test", "name": "cargo test", "category": "testing", "description": "Rust built-in test runner", "when_to_use": "Always for Rust projects", "platforms": ["linux", "macos", "windows"], "tags": ["testing", "rust"], "alternatives": []},
+
+    {"id": "ruff", "name": "Ruff", "category": "linting", "description": "Fast Python linter and formatter written in Rust", "when_to_use": "Always for Python projects. Replaces flake8 + black + isort", "platforms": ["linux", "macos", "windows"], "tags": ["linting", "formatting", "python"], "alternatives": ["flake8", "pylint", "black"], "config_files": ["configs/python/ruff.toml"]},
+    {"id": "pytest", "name": "pytest", "category": "testing", "description": "Python testing framework with fixtures and parametrization", "when_to_use": "Always for Python projects", "platforms": ["linux", "macos", "windows"], "tags": ["testing", "python"], "alternatives": ["unittest"]},
+    {"id": "mypy", "name": "mypy", "category": "type-checking", "description": "Static type checker for Python", "when_to_use": "Medium to large Python projects. Optional for small CLI tools.", "platforms": ["linux", "macos", "windows"], "tags": ["type-checking", "python"], "alternatives": ["pyright"], "config_files": ["configs/python/mypy.ini"]},
+    {"id": "argparse", "name": "argparse", "category": "cli-framework", "description": "Standard library command-line argument parser", "when_to_use": "Python CLI tools with simple subcommand structure", "platforms": ["linux", "macos", "windows"], "tags": ["cli", "python", "stdlib"], "alternatives": ["click", "typer"]},
+    {"id": "fastapi", "name": "FastAPI", "category": "web-framework", "description": "Modern Python web framework with automatic OpenAPI docs", "when_to_use": "HTTP APIs, web services, backends", "platforms": ["linux", "macos", "windows"], "tags": ["web", "api", "backend", "python"], "alternatives": ["flask", "django"]},
+
+    {"id": "biome", "name": "Biome", "category": "linting", "description": "Rust-based JS/TS linter and formatter, 25x faster than ESLint+Prettier", "when_to_use": "Always for TypeScript/JavaScript projects", "platforms": ["linux", "macos", "windows"], "tags": ["linting", "formatting", "typescript", "javascript"], "alternatives": ["eslint", "prettier"]},
+    {"id": "vitest", "name": "Vitest", "category": "testing", "description": "Testing framework for Vite projects", "when_to_use": "TypeScript/JavaScript projects using Vite", "platforms": ["web"], "tags": ["testing", "typescript", "web"], "alternatives": ["jest"]},
+    {"id": "playwright", "name": "Playwright", "category": "testing", "description": "Cross-browser E2E testing", "when_to_use": "Web apps needing full integration tests", "platforms": ["web"], "tags": ["testing", "e2e", "web"], "alternatives": ["cypress"]},
+    {"id": "vite", "name": "Vite", "category": "bundler", "description": "Fast bundler and dev server for web projects", "when_to_use": "Web projects needing bundling, HMR, or build optimization", "platforms": ["web"], "tags": ["bundler", "web", "build"], "alternatives": ["webpack"]},
+    {"id": "tailwind", "name": "Tailwind CSS", "category": "styling", "description": "Utility-first CSS framework", "when_to_use": "All web and mobile projects. Foundation for shadcn/ui, gluestack, shadcn-svelte.", "platforms": ["web", "mobile"], "tags": ["styling", "css", "web", "mobile"], "alternatives": []},
+
+    {"id": "shadcn-ui", "name": "shadcn/ui", "category": "ui-library", "description": "Radix + Tailwind, copy-paste components you own", "when_to_use": "React web apps", "platforms": ["web"], "tags": ["ui", "components", "react", "tailwind"], "alternatives": ["mantine", "radix"]},
+    {"id": "gluestack", "name": "gluestack v5", "category": "ui-library", "description": "shadcn-pattern on NativeWind for React Native", "when_to_use": "React Native / Expo mobile apps", "platforms": ["ios", "android"], "tags": ["ui", "components", "react-native", "tailwind"], "alternatives": ["tamagui", "react-native-reusables"]},
+    {"id": "shadcn-svelte", "name": "shadcn-svelte", "category": "ui-library", "description": "bits-ui + Tailwind for Svelte, copy-paste components", "when_to_use": "Svelte/SvelteKit web apps", "platforms": ["web"], "tags": ["ui", "components", "svelte", "tailwind"], "alternatives": ["skeleton"]},
+
+    {"id": "react", "name": "React", "category": "frontend-framework", "description": "Component-based UI library", "when_to_use": "Interactive web apps with complex state", "platforms": ["web"], "tags": ["frontend", "ui", "web"], "alternatives": ["svelte", "vue", "solid"]},
+    {"id": "svelte", "name": "Svelte + SvelteKit", "category": "frontend-framework", "description": "Compiler-based UI framework with SSR", "when_to_use": "Web apps, content sites, when you want less boilerplate than React", "platforms": ["web"], "tags": ["frontend", "ui", "web", "ssr"], "alternatives": ["react"]},
+    {"id": "react-native", "name": "React Native", "category": "mobile-framework", "description": "Cross-platform mobile app framework", "when_to_use": "iOS + Android apps with shared codebase", "platforms": ["ios", "android"], "tags": ["mobile", "ui"], "alternatives": ["flutter"]},
+    {"id": "expo", "name": "Expo", "category": "mobile-tooling", "description": "React Native development platform — build, deploy, OTA updates", "when_to_use": "React Native apps — simplifies everything", "platforms": ["ios", "android"], "tags": ["mobile", "tooling"], "alternatives": []},
+    {"id": "tauri", "name": "Tauri", "category": "desktop-framework", "description": "Desktop apps with Rust backend + web frontend", "when_to_use": "Cross-platform desktop apps (Windows/Mac/Linux)", "platforms": ["linux", "macos", "windows"], "tags": ["desktop", "rust", "webview"], "alternatives": ["electron"]},
+    {"id": "ratatui", "name": "ratatui", "category": "tui-framework", "description": "Rust terminal UI framework", "when_to_use": "Terminal user interfaces in Rust", "platforms": ["linux", "macos", "windows"], "tags": ["tui", "terminal", "rust"], "alternatives": []},
+
+    {"id": "drizzle", "name": "Drizzle ORM", "category": "orm", "description": "TypeScript SQL ORM — schema IS the type system, no codegen", "when_to_use": "TypeScript projects needing database access. Single source of truth for schema + types.", "platforms": ["web", "mobile"], "tags": ["orm", "database", "typescript"], "alternatives": ["kysely", "prisma"], "notes": "Schema definition is the type system — no codegen step, no drift. Best migration tooling (drizzle-kit)."},
+    {"id": "drizzle-kit", "name": "Drizzle Kit", "category": "migration-tool", "description": "Schema diff migration generator for Drizzle", "when_to_use": "Always with Drizzle — generates SQL migrations from schema changes", "platforms": ["web", "mobile"], "tags": ["migration", "database", "typescript"], "alternatives": ["kysely-codegen"]},
+
+    {"id": "axum", "name": "axum", "category": "web-framework", "description": "Rust web framework with ergonomic async, built on hyper/tokio", "when_to_use": "Rust HTTP APIs and web services", "platforms": ["linux", "macos", "windows"], "tags": ["web", "api", "backend", "rust"], "alternatives": ["actix-web"]},
+
+    {"id": "postgresql", "name": "PostgreSQL", "category": "database", "description": "Production relational database, ACID, feature-rich", "when_to_use": "Production backends, multi-writer, SaaS, when you need real SQL power", "platforms": ["linux", "macos", "windows", "web"], "tags": ["database", "sql", "relational"], "alternatives": ["sqlite", "mysql"]},
+    {"id": "neon", "name": "Neon", "category": "database", "description": "Serverless PostgreSQL with branching, scale-to-zero, autoscaling", "when_to_use": "Serverless Postgres for web apps, when you want branching for preview environments", "platforms": ["web"], "tags": ["database", "sql", "postgres", "serverless"], "alternatives": ["supabase"]},
+    {"id": "sqlite", "name": "SQLite", "category": "database", "description": "Embedded relational database, zero-config, file-based", "when_to_use": "Local-first apps, mobile, CLI tools, prototyping, small services. Use sqlite-vec for vectors and GraphQLite for graph.", "platforms": ["linux", "macos", "windows", "web", "mobile"], "tags": ["database", "embedded", "sql"], "alternatives": ["postgresql"]},
+    {"id": "supabase", "name": "Supabase", "category": "database", "description": "Postgres + auth + realtime + storage, open-source Firebase alternative", "when_to_use": "When you need Postgres + auth + realtime + storage without building each separately", "platforms": ["web", "mobile"], "tags": ["database", "baas", "postgres", "auth", "realtime"], "alternatives": ["pocketbase"]},
+    {"id": "pocketbase", "name": "Pocketbase", "category": "database", "description": "Self-hosted BaaS with embedded SQLite, auth, realtime", "when_to_use": "Self-hosted alternative to Supabase. Single binary, simpler.", "platforms": ["linux", "macos", "windows", "web"], "tags": ["database", "baas", "sqlite", "auth"], "alternatives": ["supabase"]},
+    {"id": "mongodb", "name": "MongoDB", "category": "database", "description": "Document database with flexible schema", "when_to_use": "When schema is genuinely unknown or rapidly evolving, content management, event logs", "platforms": ["linux", "macos", "windows", "web"], "tags": ["database", "document", "nosql"], "alternatives": ["postgresql"]},
+    {"id": "qdrant", "name": "Qdrant", "category": "database", "description": "Vector database for AI/RAG, HNSW + quantization, scales to billions", "when_to_use": "Production vector search at scale, RAG, semantic search beyond what sqlite-vec can handle", "platforms": ["linux", "macos", "windows", "web"], "tags": ["database", "vector", "ai", "rag"], "alternatives": ["sqlite-vec"]},
+    {"id": "sqlite-vec", "name": "sqlite-vec", "category": "database", "description": "SQLite extension for vector search, pure C, runs in WASM/browser/mobile", "when_to_use": "Embedded/local-first vector search up to ~1M vectors. Brute-force KNN — fine for small sets.", "platforms": ["linux", "macos", "windows", "web", "mobile"], "tags": ["database", "vector", "embedded", "ai"], "alternatives": ["qdrant"]},
+
+    {"id": "surrealdb", "name": "SurrealDB", "category": "database", "description": "Multi-model: document + graph + vector + key-value in one engine. SurrealQL. Rust.", "when_to_use": "When you need multiple data models in one engine (graph + doc + vector). Runs embedded (like SQLite), in WASM/browser, or as server. BSL 1.1 (converts to Apache 2.0 in 2030).", "platforms": ["linux", "macos", "windows", "web"], "tags": ["database", "multi-model", "graph", "document", "vector", "embedded", "wasm"], "alternatives": ["postgresql", "arangodb"]},
+    {"id": "dgraph", "name": "Dgraph", "category": "database", "description": "Distributed graph DB that auto-generates GraphQL APIs. Apache 2.0. Go.", "when_to_use": "When you want native GraphQL backend from schema, distributed scale. Fully Apache 2.0 — safest license.", "platforms": ["linux", "macos", "windows"], "tags": ["database", "graph", "graphql", "distributed"], "alternatives": ["neo4j", "falkordb"]},
+    {"id": "neo4j", "name": "Neo4j Community Edition", "category": "database", "description": "Most mature graph DB. Cypher. Native graph storage. GPLv3.", "when_to_use": "When you need the most mature graph ecosystem, Cypher expertise, GDS library, or GraphRAG. CE = single instance, no clustering. GPLv3 is SaaS-safe (not AGPL).", "platforms": ["linux", "macos", "windows"], "tags": ["database", "graph", "cypher", "mature"], "alternatives": ["memgraph", "falkordb"]},
+    {"id": "memgraph", "name": "Memgraph", "category": "database", "description": "In-memory graph DB, sub-ms multi-hop, Cypher, GraphRAG. C++.", "when_to_use": "Real-time graph analytics, GraphRAG, when latency matters most. BSL 1.1 (converts to Apache 2.0 in 2030). In-memory — bounded by RAM.", "platforms": ["linux", "macos", "windows"], "tags": ["database", "graph", "in-memory", "real-time", "cypher"], "alternatives": ["neo4j"]},
+    {"id": "falkordb", "name": "FalkorDB", "category": "database", "description": "Graph DB using GraphBLAS sparse matrix math, Redis-compatible. Rust. SSPL-1.0.", "when_to_use": "When you already run Redis, need ultra-low-latency graph traversal, Cypher queries. SSPL — fine for SaaS, can't offer as hosted service.", "platforms": ["linux", "macos", "windows"], "tags": ["database", "graph", "redis", "matrix", "cypher"], "alternatives": ["memgraph"]},
+    {"id": "graphqlite", "name": "GraphQLite", "category": "database", "description": "SQLite extension for graph DB with Cypher, algorithms built-in. C.", "when_to_use": "Embedded/local-first graph on top of SQLite. The only client-side graph option. 97.7% openCypher conformance. Built-in PageRank, Louvain, Dijkstra.", "platforms": ["linux", "macos", "windows", "mobile"], "tags": ["database", "graph", "embedded", "sqlite", "cypher"], "alternatives": []},
+    {"id": "arangodb", "name": "ArangoDB", "category": "database", "description": "Multi-model: graph + document + key-value in one engine. AQL query language. C++.", "when_to_use": "When you want one database for graph + documents + key-value. BSL 1.1.", "platforms": ["linux", "macos", "windows"], "tags": ["database", "multi-model", "graph", "document"], "alternatives": ["surrealdb"]},
+
+    {"id": "cloudflare-d1", "name": "Cloudflare D1", "category": "database", "description": "Serverless SQLite on Cloudflare's edge network", "when_to_use": "When backend is on Cloudflare Workers/Pages. SQLite-compatible.", "platforms": ["web"], "tags": ["database", "sqlite", "serverless", "edge"], "alternatives": ["turso"]},
+    {"id": "cloudflare-queues", "name": "Cloudflare Queues", "category": "queue", "description": "Managed message queues on Cloudflare edge", "when_to_use": "When backend is on Cloudflare Workers and you need async task processing", "platforms": ["web"], "tags": ["queue", "serverless", "edge"], "alternatives": ["rabbitmq"]},
+
+    {"id": "redis", "name": "Redis", "category": "cache", "description": "In-memory key-value store, caching, pub/sub, rate limiting", "when_to_use": "Caching, session storage, rate limiting, pub/sub. Almost every SaaS needs it.", "platforms": ["linux", "macos", "windows"], "tags": ["cache", "queue", "pubsub"], "alternatives": ["valkey"]},
+    {"id": "rabbitmq", "name": "RabbitMQ", "category": "queue", "description": "Message broker for async task processing", "when_to_use": "Reliable async task queues, event-driven architectures, work distribution", "platforms": ["linux", "macos", "windows"], "tags": ["queue", "message-broker"], "alternatives": ["redis", "bullmq"]},
+    {"id": "bullmq", "name": "BullMQ", "category": "queue", "description": "TypeScript job queue on Redis", "when_to_use": "TypeScript background job processing, when you already have Redis", "platforms": ["web"], "tags": ["queue", "typescript", "redis"], "alternatives": ["rabbitmq"]},
+
+    {"id": "better-auth", "name": "Better Auth", "category": "auth", "description": "MIT-licensed, TypeScript-native auth, self-hosted, unlimited, passkey/SSO/OIDC plugins", "when_to_use": "Primary auth for TypeScript backends. Run as TS service, validate JWTs in Python/Rust backends.", "platforms": ["web", "mobile"], "tags": ["auth", "oss", "typescript"], "alternatives": ["logto", "supertokens"], "notes": "MIT license. First-class Expo plugin."},
+    {"id": "logto", "name": "Logto", "category": "auth", "description": "Standalone OIDC server, native TS + Python SDKs, Expo support", "when_to_use": "When you need a standalone auth server with native Python SDK. Apache 2.0.", "platforms": ["web", "mobile"], "tags": ["auth", "oss", "oidc"], "alternatives": ["better-auth"]},
+    {"id": "supertokens", "name": "SuperTokens", "category": "auth", "description": "Auth with native Python/FastAPI SDK. Self-hosted, free.", "when_to_use": "When backend is Python/FastAPI and you want native SDK auth", "platforms": ["web", "mobile"], "tags": ["auth", "oss", "python"], "alternatives": ["better-auth"]},
+
+    {"id": "stripe", "name": "Stripe", "category": "payments", "description": "Payment processing, subscriptions, billing", "when_to_use": "SaaS billing, ecommerce, subscription management", "platforms": ["web", "mobile"], "tags": ["payments", "billing", "saas"], "alternatives": ["lemon-squeezy"]},
+
+    {"id": "ai-sdk", "name": "Vercel AI SDK", "category": "ai", "description": "TypeScript SDK for building AI apps, streaming, tool calling", "when_to_use": "TypeScript AI applications, streaming responses, tool calling", "platforms": ["web"], "tags": ["ai", "typescript", "llm"], "alternatives": ["mastra"]},
+    {"id": "mastra", "name": "Mastra", "category": "ai", "description": "TypeScript agent framework", "when_to_use": "Building AI agents in TypeScript", "platforms": ["web"], "tags": ["ai", "typescript", "agent"], "alternatives": ["ai-sdk"]},
+    {"id": "rust-genai", "name": "rust-genai", "category": "ai", "description": "Rust crate for LLM API calls, multi-provider", "when_to_use": "Rust projects needing LLM integration", "platforms": ["linux", "macos", "windows"], "tags": ["ai", "rust", "llm"], "alternatives": []},
+    {"id": "pydantic-ai", "name": "pydantic-ai", "category": "ai", "description": "Python AI agent framework with type safety", "when_to_use": "Python AI agents with type-safe tool calling", "platforms": ["linux", "macos", "windows"], "tags": ["ai", "python", "agent"], "alternatives": ["langgraph"]},
+    {"id": "langgraph", "name": "LangGraph", "category": "ai", "description": "Python graph-based agent orchestration", "when_to_use": "Complex multi-agent orchestration in Python", "platforms": ["linux", "macos", "windows"], "tags": ["ai", "python", "agent", "orchestration"], "alternatives": ["pydantic-ai"]},
+    {"id": "openai-compatible", "name": "OpenAI-compatible APIs", "category": "ai", "description": "Any LLM provider with OpenAI-compatible API surface", "when_to_use": "Top priority for all AI/LLM work. Always prefer OpenAI-compatible providers first for portability.", "platforms": ["web"], "tags": ["ai", "llm", "api"], "alternatives": [], "notes": "Always prioritize OpenAI-compatible APIs for portability across providers"},
+
+    {"id": "temporal", "name": "Temporal", "category": "workflow", "description": "Durable execution engine for long-running workflows", "when_to_use": "Complex multi-step workflows, saga patterns, process orchestration", "platforms": ["linux", "macos", "windows"], "tags": ["workflow", "durable", "orchestration"], "alternatives": ["inngest"]},
+    {"id": "inngest", "name": "Inngest", "category": "workflow", "description": "TypeScript-first durable workflows, simpler than Temporal", "when_to_use": "TypeScript projects needing durable workflows, background jobs, retries", "platforms": ["web"], "tags": ["workflow", "durable", "typescript"], "alternatives": ["temporal"]},
+
+    {"id": "pi-coding-agent", "name": "pi coding agent SDK", "category": "agent", "description": "SDK for building coding agents", "when_to_use": "Building AI coding assistants and code-aware agents", "platforms": ["web"], "tags": ["agent", "coding", "sdk"], "alternatives": []},
+
+    {"id": "golangci-lint", "name": "golangci-lint", "category": "linting", "description": "Go meta-linter aggregating multiple linters", "when_to_use": "Always for Go projects", "platforms": ["linux", "macos", "windows"], "tags": ["linting", "go"], "alternatives": []},
+    {"id": "gofmt", "name": "gofmt", "category": "formatting", "description": "Go code formatter, built-in", "when_to_use": "Always for Go projects", "platforms": ["linux", "macos", "windows"], "tags": ["formatting", "go"], "alternatives": []}
   ],
 
   "toolkits": [
     {
+      "id": "rust-cli",
+      "name": "Rust CLI Basics",
+      "description": "Standard Rust CLI tooling",
+      "when_to_use": "CLI tools, systems utilities, when performance matters",
+      "tools": ["rust", "clippy", "rustfmt", "cargo-test"],
+      "config_files": ["configs/rust/"]
+    },
+    {
       "id": "python-cli",
       "name": "Python CLI Basics",
       "description": "Standard Python CLI tooling",
-      "when_to_use": "CLI tools, scripts, utilities",
+      "when_to_use": "Quick CLI tools, scripts, utilities, prototyping",
       "tools": ["python3", "argparse", "pytest", "ruff"],
       "config_files": ["configs/python/"]
     },
@@ -245,51 +121,257 @@
       "config_files": ["configs/python/mypy.ini"]
     },
     {
-      "id": "local-db",
-      "name": "Local Database",
-      "description": "On-device SQLite with type-safe ORM",
-      "when_to_use": "Any app needing local persistence with querying",
-      "tools": ["sqlite", "drizzle"]
-    },
-    {
-      "id": "simple-storage",
-      "name": "Simple File Storage",
-      "description": "JSON file for local persistence",
-      "when_to_use": "CLI tools, config files, small single-user state",
-      "tools": ["json-storage"]
-    },
-    {
-      "id": "offline-sync",
-      "name": "Offline Sync Layer",
-      "description": "Sync local SQLite with remote, conflict resolution",
-      "when_to_use": "Apps that work offline and sync when online",
-      "tools": ["electric-sql"],
-      "requires_toolkit": ["local-db"]
+      "id": "rust-api",
+      "name": "Rust API Service",
+      "description": "Rust backend with axum",
+      "when_to_use": "High-performance HTTP APIs, when Rust is preferred over Python",
+      "tools": ["rust", "axum", "clippy", "rustfmt", "cargo-test"],
+      "config_files": ["configs/rust/"]
     },
     {
       "id": "react-web-ui",
       "name": "React Web UI",
-      "description": "React frontend with Vite bundler",
+      "description": "React + Vite + Tailwind + shadcn/ui",
       "when_to_use": "Interactive web apps",
-      "tools": ["react", "typescript", "vite", "vitest", "eslint", "prettier"],
+      "tools": ["react", "typescript", "vite", "tailwind", "shadcn-ui", "vitest", "biome"],
       "config_files": ["configs/node/"]
     },
     {
-      "id": "rust-wasm-logic",
-      "name": "Rust WASM Logic",
-      "description": "Rust compiled to WASM, bridged to JS",
-      "when_to_use": "Performance-critical web logic",
-      "tools": ["rust-wasm", "wasm-bindgen"],
-      "requires_toolkit": ["react-web-ui"],
-      "config_files": ["configs/rust/"]
+      "id": "svelte-web-ui",
+      "name": "Svelte Web UI",
+      "description": "SvelteKit + Tailwind + shadcn-svelte",
+      "when_to_use": "Web apps with less boilerplate than React, content sites",
+      "tools": ["svelte", "typescript", "vite", "tailwind", "shadcn-svelte", "vitest", "biome"],
+      "config_files": ["configs/node/"]
     },
     {
       "id": "react-mobile-ui",
       "name": "React Native Mobile UI",
-      "description": "Cross-platform mobile UI with Expo",
+      "description": "React Native + Expo + NativeWind + gluestack",
       "when_to_use": "iOS + Android apps with shared codebase",
-      "tools": ["react-native", "typescript", "expo", "eslint", "prettier"],
+      "tools": ["react-native", "typescript", "expo", "tailwind", "gluestack", "biome"],
       "config_files": ["configs/node/"]
+    },
+    {
+      "id": "rust-desktop",
+      "name": "Rust Desktop App",
+      "description": "Tauri desktop with Rust backend + web frontend",
+      "when_to_use": "Cross-platform desktop apps",
+      "tools": ["tauri", "rust", "clippy", "rustfmt", "cargo-test"],
+      "config_files": ["configs/rust/"]
+    },
+    {
+      "id": "rust-tui",
+      "name": "Rust TUI",
+      "description": "Terminal UI with ratatui",
+      "when_to_use": "Terminal user interfaces",
+      "tools": ["rust", "ratatui", "clippy", "rustfmt", "cargo-test"],
+      "config_files": ["configs/rust/"]
+    },
+    {
+      "id": "rust-wasm-logic",
+      "name": "Rust WASM Logic",
+      "description": "Rust compiled to WASM for browser performance logic",
+      "when_to_use": "Performance-critical web logic",
+      "tools": ["rust"],
+      "requires_toolkit": ["react-web-ui"],
+      "config_files": ["configs/rust/"]
+    },
+    {
+      "id": "drizzle-ts-db",
+      "name": "TypeScript Database Layer",
+      "description": "Drizzle ORM for type-safe SQL in TypeScript",
+      "when_to_use": "TypeScript projects needing database access (Postgres, SQLite, MySQL)",
+      "tools": ["drizzle", "drizzle-kit", "typescript"]
+    },
+    {
+      "id": "postgres-db",
+      "name": "PostgreSQL Database",
+      "description": "Production Postgres with Neon for serverless",
+      "when_to_use": "Production backends, SaaS, multi-writer, real querying",
+      "tools": ["postgresql"]
+    },
+    {
+      "id": "neon-serverless",
+      "name": "Serverless Postgres (Neon)",
+      "description": "Neon for serverless Postgres with branching and scale-to-zero",
+      "when_to_use": "Serverless web apps, preview environments, when you need Postgres without managing servers",
+      "tools": ["neon"]
+    },
+    {
+      "id": "sqlite-local",
+      "name": "SQLite Local Storage",
+      "description": "Embedded SQLite for local-first apps",
+      "when_to_use": "Local-first apps, mobile, CLI tools, offline-first, prototyping",
+      "tools": ["sqlite"]
+    },
+    {
+      "id": "sqlite-vector",
+      "name": "SQLite Vector Search",
+      "description": "SQLite + sqlite-vec for embedded vector search",
+      "when_to_use": "Local-first AI/RAG up to ~1M vectors",
+      "tools": ["sqlite", "sqlite-vec"]
+    },
+    {
+      "id": "sqlite-graph",
+      "name": "SQLite Graph Database",
+      "description": "SQLite + GraphQLite for embedded graph queries with Cypher",
+      "when_to_use": "Local-first knowledge graphs, client-side graph processing, mobile graph apps",
+      "tools": ["sqlite", "graphqlite"]
+    },
+    {
+      "id": "qdrant-vector",
+      "name": "Production Vector Search",
+      "description": "Qdrant for scalable vector search",
+      "when_to_use": "Production RAG, semantic search at scale, beyond sqlite-vec capacity",
+      "tools": ["qdrant"]
+    },
+    {
+      "id": "supabase-baas",
+      "name": "Supabase BaaS",
+      "description": "Postgres + auth + realtime + storage",
+      "when_to_use": "Rapid MVP, when you need auth + DB + realtime without building each",
+      "tools": ["supabase"]
+    },
+    {
+      "id": "pocketbase-baas",
+      "name": "Pocketbase BaaS",
+      "description": "Self-hosted BaaS with embedded SQLite",
+      "when_to_use": "Self-hosted alternative to Supabase, single binary, simpler",
+      "tools": ["pocketbase"]
+    },
+    {
+      "id": "surrealdb-multi",
+      "name": "SurrealDB Multi-Model",
+      "description": "Document + graph + vector + key-value in one engine",
+      "when_to_use": "When you need multiple data models in one engine without separate databases",
+      "tools": ["surrealdb"]
+    },
+    {
+      "id": "graph-neo4j",
+      "name": "Neo4j Graph Database",
+      "description": "Most mature graph DB, Cypher, GDS library",
+      "when_to_use": "Complex graph analytics, knowledge graphs, when maturity matters. CE = single instance.",
+      "tools": ["neo4j"]
+    },
+    {
+      "id": "graph-memgraph",
+      "name": "Memgraph Real-Time Graph",
+      "description": "In-memory graph for sub-ms traversals, GraphRAG",
+      "when_to_use": "Real-time graph analytics, GraphRAG, when latency matters",
+      "tools": ["memgraph"]
+    },
+    {
+      "id": "graph-falkordb",
+      "name": "FalkorDB Redis Graph",
+      "description": "GraphBLAS sparse matrix, Redis-compatible",
+      "when_to_use": "When you already run Redis and need graph queries",
+      "tools": ["falkordb"]
+    },
+    {
+      "id": "graph-dgraph",
+      "name": "Dgraph GraphQL Graph",
+      "description": "Distributed graph DB with auto-generated GraphQL APIs",
+      "when_to_use": "When you want native GraphQL backend from schema, distributed scale, Apache 2.0 license",
+      "tools": ["dgraph"]
+    },
+    {
+      "id": "graph-arangodb",
+      "name": "ArangoDB Multi-Model Graph",
+      "description": "Graph + document + key-value in one engine",
+      "when_to_use": "When you want one database for graph and documents",
+      "tools": ["arangodb"]
+    },
+    {
+      "id": "redis-cache",
+      "name": "Redis Cache + Queue",
+      "description": "Caching, pub/sub, rate limiting, session storage",
+      "when_to_use": "Almost every SaaS. Caching, session storage, rate limiting.",
+      "tools": ["redis"]
+    },
+    {
+      "id": "rabbitmq-queue",
+      "name": "RabbitMQ Message Queue",
+      "description": "Reliable async task processing and event-driven architecture",
+      "when_to_use": "Event-driven architectures, work distribution, reliable async jobs",
+      "tools": ["rabbitmq"]
+    },
+    {
+      "id": "bullmq-queue",
+      "name": "BullMQ TypeScript Queue",
+      "description": "TypeScript job queue on Redis",
+      "when_to_use": "TypeScript background job processing when you already have Redis",
+      "tools": ["bullmq", "redis"]
+    },
+    {
+      "id": "cf-edge",
+      "name": "Cloudflare Edge Stack",
+      "description": "Cloudflare Workers + D1 + Queues for serverless edge",
+      "when_to_use": "Serverless-first projects. Always prefer Cloudflare for serverless.",
+      "tools": ["cloudflare-d1", "cloudflare-queues"]
+    },
+    {
+      "id": "stripe-payments",
+      "name": "Stripe Payments",
+      "description": "Payment processing, subscriptions, billing",
+      "when_to_use": "SaaS billing, ecommerce, subscription management",
+      "tools": ["stripe"]
+    },
+    {
+      "id": "better-auth-ts",
+      "name": "Better Auth (TypeScript)",
+      "description": "MIT auth for TS backends, Expo plugin, passkey/SSO",
+      "when_to_use": "Primary auth for TS backends",
+      "tools": ["better-auth"]
+    },
+    {
+      "id": "logto-standalone",
+      "name": "Logto Standalone Auth",
+      "description": "Standalone OIDC server with native TS + Python SDKs",
+      "when_to_use": "When you need standalone auth server with Python SDK",
+      "tools": ["logto"]
+    },
+    {
+      "id": "supertokens-python",
+      "name": "SuperTokens (Python)",
+      "description": "Auth with native Python/FastAPI SDK",
+      "when_to_use": "When backend is Python/FastAPI",
+      "tools": ["supertokens"]
+    },
+    {
+      "id": "ai-ts",
+      "name": "TypeScript AI Stack",
+      "description": "AI SDK + Mastra for TS AI apps",
+      "when_to_use": "Building AI apps and agents in TypeScript",
+      "tools": ["ai-sdk", "mastra", "openai-compatible"]
+    },
+    {
+      "id": "ai-rust",
+      "name": "Rust AI Stack",
+      "description": "rust-genai for Rust LLM integration",
+      "when_to_use": "Rust projects needing LLM integration",
+      "tools": ["rust-genai", "openai-compatible"]
+    },
+    {
+      "id": "ai-python",
+      "name": "Python AI Stack",
+      "description": "pydantic-ai / LangGraph for Python AI agents",
+      "when_to_use": "Python AI agents, type-safe tool calling, multi-agent orchestration",
+      "tools": ["pydantic-ai", "langgraph", "openai-compatible"]
+    },
+    {
+      "id": "temporal-workflows",
+      "name": "Temporal Durable Workflows",
+      "description": "Long-running workflow orchestration",
+      "when_to_use": "Complex multi-step workflows, saga patterns, process orchestration",
+      "tools": ["temporal"]
+    },
+    {
+      "id": "inngest-workflows",
+      "name": "Inngest TypeScript Workflows",
+      "description": "TS-first durable workflows, simpler than Temporal",
+      "when_to_use": "TypeScript durable workflows, background jobs, retries",
+      "tools": ["inngest"]
     }
   ],
 
@@ -299,28 +381,49 @@
       "name": "CLI Tool",
       "description": "Command-line tool or utility",
       "match_keywords": ["cli", "command-line", "terminal", "script", "utility"],
+      "toolkits": ["rust-cli"]
+    },
+    {
+      "id": "cli-tool-prototype",
+      "name": "CLI Tool (Quick Prototype)",
+      "description": "Python CLI for fast iteration",
+      "match_keywords": ["cli", "prototype", "quick", "script", "internal"],
       "toolkits": ["python-cli"]
     },
     {
       "id": "cli-tool-with-storage",
       "name": "CLI Tool with Storage",
       "description": "CLI tool that persists data locally",
-      "match_keywords": ["cli", "storage", "persist", "save"],
-      "toolkits": ["python-cli", "simple-storage"]
+      "match_keywords": ["cli", "storage", "persist", "save", "local"],
+      "toolkits": ["rust-cli", "sqlite-local"]
     },
     {
-      "id": "api-service",
-      "name": "API Service",
-      "description": "HTTP API or web backend",
-      "match_keywords": ["api", "service", "backend", "server", "http", "rest", "endpoint"],
-      "toolkits": ["python-api"]
+      "id": "tui-app",
+      "name": "Terminal UI App",
+      "description": "Full-screen terminal user interface",
+      "match_keywords": ["tui", "terminal-ui", "ncurses", "dashboard"],
+      "toolkits": ["rust-tui"]
     },
     {
-      "id": "web-app",
-      "name": "Web Application",
-      "description": "Interactive web app with React frontend",
-      "match_keywords": ["web", "app", "spa", "dashboard", "frontend"],
+      "id": "desktop-app",
+      "name": "Desktop App",
+      "description": "Cross-platform desktop application",
+      "match_keywords": ["desktop", "native", "electron", "tauri", "gui"],
+      "toolkits": ["rust-desktop", "react-web-ui"]
+    },
+    {
+      "id": "web-app-react",
+      "name": "Web App (React)",
+      "description": "Interactive web app with React",
+      "match_keywords": ["web", "app", "spa", "dashboard", "react"],
       "toolkits": ["react-web-ui"]
+    },
+    {
+      "id": "web-app-svelte",
+      "name": "Web App (Svelte)",
+      "description": "Interactive web app with SvelteKit",
+      "match_keywords": ["web", "app", "svelte", "ssr", "content"],
+      "toolkits": ["svelte-web-ui"]
     },
     {
       "id": "web-app-heavy-compute",
@@ -330,18 +433,109 @@
       "toolkits": ["react-web-ui", "rust-wasm-logic"]
     },
     {
+      "id": "static-site",
+      "name": "Static Site / Content Site",
+      "description": "Blog, docs, marketing site",
+      "match_keywords": ["static", "blog", "docs", "marketing", "content", "astro"],
+      "toolkits": ["svelte-web-ui"]
+    },
+    {
+      "id": "api-service",
+      "name": "API Service",
+      "description": "HTTP API or web backend",
+      "match_keywords": ["api", "service", "backend", "server", "http", "rest", "endpoint"],
+      "toolkits": ["rust-api"]
+    },
+    {
+      "id": "api-service-prototype",
+      "name": "API Service (Quick Prototype)",
+      "description": "Python FastAPI for fast iteration",
+      "match_keywords": ["api", "prototype", "python", "fastapi"],
+      "toolkits": ["python-api"]
+    },
+    {
       "id": "mobile-offline",
       "name": "Offline-First Mobile App",
-      "description": "Mobile app that works offline with sync",
+      "description": "Mobile app that works offline with local SQLite + sync",
       "match_keywords": ["mobile", "offline", "local-first", "sync", "react-native"],
-      "toolkits": ["react-mobile-ui", "local-db", "offline-sync"]
+      "toolkits": ["react-mobile-ui", "sqlite-local", "better-auth-ts"]
     },
     {
       "id": "mobile-online",
       "name": "Online Mobile App",
       "description": "Mobile app that requires connectivity",
       "match_keywords": ["mobile", "online", "api", "react-native"],
-      "toolkits": ["react-mobile-ui"]
+      "toolkits": ["react-mobile-ui", "better-auth-ts"]
+    },
+    {
+      "id": "fullstack-saas",
+      "name": "Full-Stack SaaS",
+      "description": "Web app + API + auth + payments + database",
+      "match_keywords": ["saas", "fullstack", "platform", "dashboard", "billing"],
+      "toolkits": ["react-web-ui", "rust-api", "neon-serverless", "drizzle-ts-db", "better-auth-ts", "stripe-payments", "redis-cache"]
+    },
+    {
+      "id": "fullstack-saas-prototype",
+      "name": "Full-Stack SaaS (Quick Prototype)",
+      "description": "Python FastAPI + React for fast SaaS MVP",
+      "match_keywords": ["saas", "mvp", "prototype", "python", "fast"],
+      "toolkits": ["react-web-ui", "python-api", "supabase-baas", "better-auth-ts", "stripe-payments"]
+    },
+    {
+      "id": "ai-app",
+      "name": "AI Application",
+      "description": "App with AI/LLM integration",
+      "match_keywords": ["ai", "llm", "chatbot", "agent", "rag", "gpt"],
+      "toolkits": ["react-web-ui", "ai-ts", "qdrant-vector"]
+    },
+    {
+      "id": "ai-app-local",
+      "name": "Local-First AI App",
+      "description": "AI app with local vector search and RAG",
+      "match_keywords": ["ai", "local", "offline", "rag", "embedding"],
+      "toolkits": ["sqlite-vector"]
+    },
+    {
+      "id": "graph-app",
+      "name": "Graph Database App",
+      "description": "App needing graph relationships and traversals",
+      "match_keywords": ["graph", "knowledge-graph", "relationship", "network", "cypher"],
+      "toolkits": ["graph-neo4j"]
+    },
+    {
+      "id": "graph-app-local",
+      "name": "Local-First Graph App",
+      "description": "Embedded graph on SQLite via GraphQLite",
+      "match_keywords": ["graph", "local", "embedded", "mobile", "offline"],
+      "toolkits": ["sqlite-graph"]
+    },
+    {
+      "id": "serverless-edge",
+      "name": "Serverless Edge App",
+      "description": "Cloudflare Workers + D1 + Queues",
+      "match_keywords": ["serverless", "edge", "cloudflare", "workers"],
+      "toolkits": ["cf-edge", "react-web-ui"]
+    },
+    {
+      "id": "library-sdk",
+      "name": "Library / SDK",
+      "description": "Importable package, not runnable",
+      "match_keywords": ["library", "sdk", "package", "module", "importable"],
+      "toolkits": ["rust-cli"]
+    },
+    {
+      "id": "ecommerce",
+      "name": "Ecommerce",
+      "description": "Web app + payments + inventory",
+      "match_keywords": ["ecommerce", "shop", "store", "cart", "product"],
+      "toolkits": ["react-web-ui", "rust-api", "postgres-db", "drizzle-ts-db", "stripe-payments"]
+    },
+    {
+      "id": "game",
+      "name": "Game",
+      "description": "Mobile or web game",
+      "match_keywords": ["game", "gaming", "play", "engine"],
+      "toolkits": ["react-web-ui"]
     }
   ]
 }
