@@ -1,0 +1,124 @@
+{
+  "id": "refactor-cycle",
+  "name": "Refactor cycle — scan, review, decompose (one pass per trigger)",
+  "description": "Autonomous tech-debt cleanup pass. Scans codebase for deepening opportunities, fans out reviewers to validate findings against real code, decomposes validated candidates into refactor tickets that fire tech-lead-execute. Trigger once per milestone. When scan finds no non-trivial candidates, workflow completes without creating tickets.",
+  "trigger": {
+    "source": "card_completed",
+    "condition": {
+      "assignee": "product-owner",
+      "status": "done",
+      "title_prefix_any": ["[refactor-request]"]
+    }
+  },
+  "nodes": [
+    {
+      "id": "scan",
+      "profile": "tech-lead",
+      "skill": "codebase-design",
+      "body_template": "## Architecture scan — find deepening opportunities\n\n**Repo:** ${trigger.card_body}\n\nYou are scanning an existing codebase for architectural friction.\n\n### What to do\n\n1. Read the codebase at the repo path above. Walk every Python module.\n2. Use the `codebase-design` vocabulary: module, interface, depth, seam, adapter, leverage, locality.\n3. Apply the **deletion test** to anything you suspect is shallow: would deleting it concentrate complexity, or just move it?\n4. Look for: shallow modules (interface nearly as complex as implementation), duplicated transaction lifecycles, missing seams, test layers that bypass clean production interfaces, tight coupling.\n5. Do NOT open a browser. Do NOT write an HTML report. Do NOT ask the user to pick.\n6. If a `REFACTOR.md` file exists in the repo, read it — these candidates were already identified in a prior pass. Mark items that have been addressed as done. Do not re-report fixed items.\n\n### Output: ranked candidates\n\nFor EACH candidate found, output a structured entry. Be honest — if the codebase is clean, say so and return an empty list.\n\n### Completion metadata (REQUIRED)\n\n```\n{candidates: [{id: \"C1\", files: [\"path/to/file.py\"], problem: \"<why current architecture causes friction>\", solution: \"<what would change>\", benefits: \"<locality/leverage gains>\", strength: \"Strong\"|\"Worth exploring\"|\"Speculative\", deletion_test: \"<concentrates or just moves>\"}], codebase_clean: true|false, total_strong: N, total_worth_exploring: N, scan_summary: \"<one-line>\"}\n```\n\n- `candidates`: empty array `[]` if codebase is clean.\n- `codebase_clean`: true if zero Strong and zero Worth exploring candidates.\n- `total_strong`: count of candidates with strength=Strong.\n- `total_worth_exploring`: count with strength=Worth exploring.",
+      "title_template": "[refactor-scan] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["candidates", "codebase_clean"],
+          "properties": {
+            "candidates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "files", "problem", "solution", "benefits", "strength"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "files": {"type": "array", "items": {"type": "string"}},
+                  "problem": {"type": "string"},
+                  "solution": {"type": "string"},
+                  "benefits": {"type": "string"},
+                  "strength": {"type": "string", "enum": ["Strong", "Worth exploring", "Speculative"]},
+                  "deletion_test": {"type": "string"}
+                }
+              }
+            },
+            "codebase_clean": {"type": "boolean"},
+            "total_strong": {"type": "integer"},
+            "total_worth_exploring": {"type": "integer"},
+            "scan_summary": {"type": "string"}
+          }
+        }
+      }
+    },
+    {
+      "id": "review",
+      "profile": "verifier",
+      "skill": "adversarial-review",
+      "body_template": "## Validate scan candidates against real codebase\n\n**Repo:** ${trigger.card_body}\n\nThe scanner found ${nodes.scan.output.total_strong} Strong and ${nodes.scan.output.total_worth_exploring} Worth exploring candidates.\n\n### Your job\n\nFor EACH candidate from the scan, verify it against the ACTUAL codebase. The scanner is an LLM — it produces false positives. Your job is to filter them.\n\nCall `kanban_chains` to fan out one reviewer card per candidate:\n\n```\nkanban_chains(\n  goal: \"Validate refactor candidates against real codebase\",\n  chains: [\n    // one chain per candidate — build this list dynamically from the scan output\n    [{assignee: \"verifier\", title: \"[refactor-review] C1: <short problem>\", body: \"Verify this refactor candidate against the real codebase at ${trigger.card_body}.\\n\\nCandidate: <problem>\\nSolution: <solution>\\nFiles: <files>\\nStrength: <strength>\\n\\nCheck:\\n1. Is the friction REAL? Read the actual code at the file paths listed.\\n2. Is the proposed deepening correct? Would it actually improve depth or locality?\\n3. Would the deletion test actually concentrate complexity?\\n\\nComplete with metadata: {valid: true|false, severity: \\\"Strong\\\"|\\\"Worth exploring\\\"|\\\"Speculative\\\", evidence: \\\"file:line — what you found\\\", adjusted_solution: \\\"if the original solution needs correction\\\"}\"}]\n  ]\n)\n```\n\nBuild one chain per candidate. Each chain has a single step (the reviewer).\n\n### After fan-in (when all reviewers complete)\n\nRead all reviewer verdicts. Synthesize:\n1. Filter out invalid candidates (valid=false).\n2. Keep only Strong and Worth exploring (drop Speculative unless the reviewer upgraded it).\n3. Order by severity (Strong first).\n4. Write the validated list to `REFACTOR.md` in the repo root.\n\n### Completion metadata (REQUIRED)\n\n```\n{verdict: \"continue\"|\"stop\", valid_candidates: [{id, problem, solution, severity, evidence}], dropped_candidates: [{id, reason}], refactor_file: \"<path>\"}\n```\n\n- `verdict`: \"stop\" if zero valid candidates remain, \"continue\" if any do.\n- `valid_candidates`: only the ones that passed review.\n- `dropped_candidates`: ones the reviewers rejected, with reasons.\n- `refactor_file`: path to the REFACTOR.md file you wrote.\n\n### Stop condition\n\nIf zero candidates passed review, set verdict=stop. The workflow ends here — no tickets created.",
+      "title_template": "[refactor-review] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict", "valid_candidates"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["continue", "stop"]},
+            "valid_candidates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "problem", "solution", "severity"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "problem": {"type": "string"},
+                  "solution": {"type": "string"},
+                  "severity": {"type": "string", "enum": ["Strong", "Worth exploring"]},
+                  "evidence": {"type": "string"}
+                }
+              }
+            },
+            "dropped_candidates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "reason"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "reason": {"type": "string"}
+                }
+              }
+            },
+            "refactor_file": {"type": "string"}
+          }
+        }
+      },
+      "depends_on": ["scan"]
+    },
+    {
+      "id": "decompose",
+      "profile": "product-owner",
+      "skill": "to-tickets",
+      "body_template": "## Decompose validated refactor candidates into tickets\n\n**Repo:** ${trigger.card_body}\n**Refactor plan:** ${nodes.review.output.refactor_file}\n\nThe reviewer validated the candidates in the REFACTOR.md file at the path above.\n\n### What to do\n\nFor each valid candidate, create a refactor ticket via `kanban_create`:\n\n```\nkanban_create(\n  title: \"[ticket-refactor-NN] <candidate id>: <short description>\",\n  assignee: \"tech-lead\",\n  body: \"This is a trigger card. Complete this card IMMEDIATELY. Do NOT implement. Do NOT delegate. Do NOT call kanban_chains or loop_engine. The next workflow (tech-lead-execute) handles all execution.\\n\\n---\\n\\n## Refactor task\\n\\n**Problem:** <candidate problem>\\n**Solution:** <candidate solution>\\n**Evidence:** <reviewer evidence>\\n**Severity:** <candidate severity>\\n\\n**Constraint:** This is a REFACTOR. Existing tests MUST pass before AND after your change. Behavior MUST be preserved. Do NOT add new features.\"\n)\n```\n\nCreate in dependency order if candidates depend on each other.\n\n### Completion metadata (REQUIRED)\n\n```\n{decomposed: true, ticket_count: N, ticket_ids: [\"<id1>\", ...], refactor_file: \"<path>\"}\n```",
+      "title_template": "[refactor-decompose] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["decomposed", "ticket_count"],
+          "properties": {
+            "decomposed": {"type": "boolean"},
+            "ticket_count": {"type": "integer"},
+            "ticket_ids": {"type": "array", "items": {"type": "string"}},
+            "refactor_file": {"type": "string"}
+          }
+        }
+      },
+      "depends_on": ["review"]
+    }
+  ],
+  "edges": [
+    {
+      "from": "scan",
+      "to": "review"
+    },
+    {
+      "from": "review",
+      "to": "decompose",
+      "condition": "${nodes.review.output.verdict} == 'continue'"
+    }
+  ]
+}
