@@ -1,6 +1,6 @@
 ---
 name: architecture-gate
-description: The architecture gate the architect runs between map completion and to-tickets (and on any change before it is cut into tracer beads). Carries the five-question blast-radius triage rubric (T0–T3), the design-doc anatomy checklist, the paved-road approved stack, the spec-authorship split, and the queryable completion contract. Force-loaded onto a gate card via its skills field together with the design skills; never invoked by slash command.
+description: The architecture gate the architect runs between map completion and to-tickets (and on any change before it is cut into tracer beads). Carries the five-question blast-radius triage rubric (T0–T3), the design-doc anatomy checklist, the preferred stack from tech-preferences.json, the spec-authorship split, and the queryable completion contract. Force-loaded onto a gate card via its skills field together with the design skills; never invoked by slash command.
 ---
 
 # Architecture gate — triage by blast radius, ceremony that scales with it
@@ -133,18 +133,31 @@ change actually moves). At T2 it is **mandatory** and complete. The sixteen sect
 - **alternatives** — options weighed and why rejected.
 - **risks** — what could still go wrong.
 
-## Paved road (the approved stack)
+## Preferred stack (from tech-preferences.json)
 
-The ventures run a deliberately small stack; default to it and you need no justification:
+The user's preferred tools, toolkits, and recipes live in `~/.hermes-teams/startup/tech-preferences.json`. Read it before deciding the tech stack.
 
-- **Language/runtime:** `python3`, standard library first (`stdlib`-first).
-- **Tests:** `pytest`.
-- **Storage:** JSON files for small state; `sqlite` when a second writer or real querying
-  appears. No network dependency for bundled data.
+The file has three levels:
+- **Tools** — individual favorites with `when_to_use`, `alternatives`, `tags`
+- **Toolkits** — small composable groups for one concern (e.g. `rust-cli`, `python-cli`, `react-web-ui`)
+- **Recipes** — project types mapped to toolkit combinations (e.g. `cli-tool`, `api-service`, `web-app-react`)
 
-This is a *paved road*, not a fence. Deviations are legitimate — but any deviation MUST
-be justified in the ADR that introduces it (name the constraint that forces it and the
-option it beats). An unjustified deviation is a finding, not a decision.
+### How to decide the stack
+
+1. Read the spec. Match it to a **recipe** by keywords in `match_keywords`.
+2. The recipe's **toolkits** tell you the preferred stack.
+3. Check each toolkit's tools for `when_to_use` — confirm the fit.
+4. If the spec needs something not in the recipe's toolkits, compose additional toolkits.
+5. If a tool has `incompatible_with` on any selected toolkit, resolve the conflict by swapping the toolkit.
+
+### Deviation rules
+
+This is a *preference*, not a mandate. Deviations are legitimate — but any deviation MUST be justified in the ADR that introduces it (name the constraint that forces it and the option it beats). An unjustified deviation is a finding, not a decision.
+
+The philosophy field in tech-preferences.json states the override rules:
+- Prefer these tools. Override if clearly better.
+- Propose alternatives for important projects (T2+).
+- Never silently drop a favorite — the ADR must state why it was rejected.
 
 ## Spec-authorship split (never cross the line)
 
@@ -177,8 +190,17 @@ structured completion metadata EXACTLY in this shape — it is queryable at the 
 is how downstream to-tickets inherits your verdict:
 
 ```json
-{"tier": "T0|T1|T2", "artifacts": ["ADR-001", ...] or [], "approval": "waved-through|adr-recorded|human-approved", "gate_bead": "<gate-bead-id>"}
+{"tier": "T0|T1|T2", "adrs": ["ADR-001", ...] or [], "approval": "waved-through|adr-recorded|human-approved", "gate_bead": "<gate-bead-id>"}
 ```
+
+**IMPORTANT — key naming:** the ADR-number list goes under the key `adrs`, NEVER
+`artifacts`. The `kanban_complete` tool path-validates any key named `artifacts` —
+both the top-level `artifacts` param and an `artifacts` key nested inside `metadata`
+— and rejects values that are not existing file paths. Putting `["ADR-001"]` under
+`artifacts` makes the tool refuse the completion with
+"declared scratch artifact is unavailable or not a regular file: ADR-001". Use `adrs`
+inside `metadata` for the ADR-number list; reserve the top-level `artifacts` param
+exclusively for real deliverable file paths you want uploaded to the human.
 
 - `tier` — the triaged tier.
 - `artifacts` — the ADR **number** ids you produced (`ADR-001`, `ADR-002`, …), **never
@@ -199,7 +221,7 @@ verdict; they read the metadata JSON for a `done` verdict.
 `candidates` (the design-candidate card ids), and `synthesis` (the synthesis card id):
 
 ```json
-{"tier": "T2", "artifacts": ["ADR-001", ...], "approval": "human-approved", "approval_citation": "<quoted human answer>", "candidates": ["<card id>", ...], "synthesis": "<card id>", "gate_bead": "<gate-bead-id>"}
+{"tier": "T2", "adrs": ["ADR-001", ...], "approval": "human-approved", "approval_citation": "<quoted human answer>", "candidates": ["<card id>", ...], "synthesis": "<card id>", "gate_bead": "<gate-bead-id>"}
 ```
 
 Do NOT `bd close` the gate bead yourself. On a **T0/T1** the card is completed **done**;
