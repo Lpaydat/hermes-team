@@ -1,0 +1,331 @@
+{
+  "id": "milestone-gate",
+  "name": "Milestone Gate — QA test integrated milestone + refactor scan",
+  "description": "Fires when a milestone card completes (all tickets merged). QA tests the integrated functionality, then refactor scan cleans up accumulated tech debt. QA FAIL routes bugs to debugger. QA PASS proceeds to refactor. Replaces qa-gate + refactor-cycle as a single unified workflow.",
+  "trigger": {
+    "source": "card_completed",
+    "condition": {
+      "assignee": "product-owner",
+      "status": "done",
+      "title_prefix_any": ["[milestone-", "[refactor-request]"]
+    }
+  },
+  "nodes": [
+    {
+      "id": "qa-receive",
+      "profile": "qa",
+      "skill": "live-testing",
+      "body_template": "## QA Phase 0+1 — Receive, Plan, Size\n\n**Milestone:** ${trigger.title}\n**Milestone body:** ${trigger.card_body}\n\nYou are QA. All tickets in this milestone have been implemented, verified, and merged. Your job is to test the INTEGRATED functionality — not individual tickets (that was the verifier's job), but the milestone as a whole.\n\n**Your task:**\n1. **Receive** — read the milestone body. Identify what was built, artifact type (CLI/API/webapp/daemon/library), scope. Read the spec at the repo to understand what the milestone should deliver.\n2. **Plan + Size** — extract every spec feature into testable claims. Risk-rank each P0-P4. Decide sizing: small (<10 claims, stateless), medium (10-20, stateful), large (20+, multi-service).\n\nComplete this card with metadata:\n```\n{plan_complete: true, artifact_type: \"<type>\", sizing: \"small|medium|large\",\n claims: [\"claim1\", \"claim2\", ...],\n risk_ranking: [{claim: \"...\", risk_level: \"P0|P1|P2|P3|P4\", depth: \"full|standard|smoke\"}],\n journeys: [\"journey1\", ...], exploration_targets: [\"target1\", ...]}\n```\n\nFor small artifacts: the downstream test card runs single-session. For medium/large: fan-out to parallel test cards.",
+      "title_template": "[qa] Plan: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["plan_complete", "sizing"],
+          "properties": {
+            "plan_complete": {"type": "boolean"},
+            "sizing": {"type": "string", "enum": ["small", "medium", "large"]},
+            "artifact_type": {"type": "string"},
+            "claims": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    },
+    {
+      "id": "qa-build",
+      "profile": "qa",
+      "skill": "live-testing",
+      "body_template": "## QA Phase 2 — Build, containerize, smoke\n\n**Milestone:** ${trigger.title}\n**Plan:** see qa-receive card on this board\n\n**Your task:**\n1. Detect build system (package.json, Cargo.toml, pyproject.toml, go.mod, Makefile, Dockerfile).\n2. Build from source the way a user would.\n3. For medium/large artifacts: generate Containerfile if missing, build image `qa-test:<card-id>`.\n4. Smoke test: confirm artifact runs and is reachable (CLI: --help/version; server: health endpoint; webapp: URL renders).\n\nComplete this card with metadata:\n```\n{build_success: true, smoke_result: \"running|failed\"}\n```\n\nIf build fails: set build_success=false, file a Critical finding card, and block this card.",
+      "title_template": "[qa] Build: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["build_success"],
+          "properties": {
+            "build_success": {"type": "boolean"},
+            "smoke_result": {"type": "string"}
+          }
+        }
+      }
+    },
+    {
+      "id": "qa-functional",
+      "profile": "qa",
+      "skill": "live-testing",
+      "body_template": "## QA Phase 3 — Prove claims (two-pass, DELTA-FIRST)\n\n**Milestone:** ${trigger.title}\n**Plan:** see qa-receive card for claims + risk ranking\n**Build:** see qa-build card for artifact details\n\n**CRITICAL: Test the files that CHANGED in this milestone first and deepest.** Run `git log --oneline` and `git diff` to identify which commits belong to this milestone. Those files get maximum edge-case depth. Unchanged files get regression smoke only.\n\n**Your task:**\n1. **Pass 1 (fast):** Smoke ALL claims — happy path only. If a core claim's happy path fails, file immediately (Critical).\n2. **Pass 2 (deep):** For each claim that passed smoke, apply edge cases by risk level:\n   - P0/P1: 10+ edge cases, degradation probes, concurrent access\n   - P2: 5 edge cases, happy path journeys\n   - P3/P4: smoke only\n3. Give each claim a verdict: proven, disproven, or untested.\n\nApply universal edge cases: empty/null input, boundary values, special chars, unicode, concurrency, restart, resource exhaustion, network failure, time/date, auth.\n\nComplete this card with metadata:\n```\n{verdict: \"PASS|FAIL\",\n verdicts: [{claim_id: \"C1\", claim: \"...\", verdict: \"proven|disproven|untested\", risk_level: \"P0|P1|P2|P3|P4\", evidence: \"command + exit code\"}],\n findings: [{severity: \"Critical|Important|Minor|Note\", claim: \"...\", detail: \"...\", reproduction: \"copy-pasteable commands\"}],\n findings_filed: <count of kanban cards actually created for findings>}\n```\n\nIf you report findings_filed > 0, each finding MUST have a corresponding kanban card created on this board.",
+      "title_template": "[qa] Functional: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+            "findings": {"type": "array"},
+            "findings_filed": {"type": "integer"}
+          }
+        }
+      }
+    },
+    {
+      "id": "qa-journeys",
+      "profile": "qa",
+      "skill": "live-testing",
+      "body_template": "## QA Phase 4 — Walk user journeys\n\n**Milestone:** ${trigger.title}\n**Plan:** see qa-receive card for journeys list\n**Build:** see qa-build card for artifact details\n\n**Your task:**\nExecute each journey from the plan as a real user: click through UI, call API sequence, pipe CLI commands. Give each journey a verdict.\n\nA journey that can't be completed gets disproven even if every component claim passed — the broken flow itself is the finding.\n\nComplete this card with metadata:\n```\n{verdict: \"PASS|FAIL\",\n journey_verdicts: [{journey: \"...\", verdict: \"proven|disproven\", evidence: \"command chain or screenshot ref\"}],\n findings: [{severity: \"...\", claim: \"...\", detail: \"...\", reproduction: \"...\"}],\n findings_filed: <count>}\n```",
+      "title_template": "[qa] Journeys: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+            "findings": {"type": "array"},
+            "findings_filed": {"type": "integer"}
+          }
+        }
+      }
+    },
+    {
+      "id": "qa-security",
+      "profile": "qa",
+      "skill": "live-testing",
+      "body_template": "## QA Phase 5 — Non-functional + security depth\n\n**Milestone:** ${trigger.title}\n**Build:** see qa-build card for artifact details\n\n**Your task:**\nRun the cheap, fast checks that catch regressions functional tests miss:\n\n**Security smoke:** IDOR, auth bypass, secrets in output, dependency scan\n**Security depth:** CSRF, XSS, SSRF, open redirect, path traversal, command injection, session fixation\n**Performance:** response time, 30s smoke load, degradation under concurrency\n**Accessibility** (webapps only): axe-core scan, tab-order, contrast\n**Expanded edge cases:** data integrity, idempotency, cache invalidation, graceful shutdown, connection pool exhaustion, locale/i18n, Unicode normalization, API versioning, pagination drift, rate limiting, WebSocket reconnection, upgrade/migration, recovery\n\nComplete this card with metadata:\n```\n{verdict: \"PASS|FAIL\",\n checks: [{check: \"...\", result: \"pass|fail|skip\", reason: \"...\"}],\n findings: [{severity: \"...\", claim: \"...\", detail: \"...\", reproduction: \"...\"}],\n findings_filed: <count>}\n```",
+      "title_template": "[qa] Security: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+            "findings": {"type": "array"},
+            "findings_filed": {"type": "integer"}
+          }
+        }
+      }
+    },
+    {
+      "id": "qa-explore",
+      "profile": "qa",
+      "skill": "live-testing",
+      "body_template": "## QA Phase 6 — Explore beyond the spec\n\n**Milestone:** ${trigger.title}\n**Plan:** see qa-receive card for exploration targets\n**Build:** see qa-build card for artifact details\n\n**Your task:**\nFind what the spec DIDN'T anticipate — bugs in the gaps between features.\n\nFor each exploration target, write a charter (one-sentence mission):\n- \"Probe the file-upload feature for size, type, and encoding edge handling\"\n- \"Probe the auth flow for token expiry, refresh, and concurrent session behavior\"\n\nTest **graceful degradation**: kill the DB, make upstream return 500, fill the disk. Test **recovery**: crash the process, restart, verify state intact.\n\nComplete this card with metadata:\n```\n{verdict: \"PASS|FAIL\",\n charters: [{charter: \"...\", result: \"clean|bugs_found\", findings: \"...\"}],\n findings: [{severity: \"...\", claim: \"...\", detail: \"...\", reproduction: \"...\"}],\n findings_filed: <count>}\n```",
+      "title_template": "[qa] Explore: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+            "findings": {"type": "array"},
+            "findings_filed": {"type": "integer"}
+          }
+        }
+      }
+    },
+    {
+      "id": "qa-quick",
+      "profile": "qa",
+      "skill": "live-testing",
+      "body_template": "## QA Quick re-test — small milestone, single session\n\n**Milestone:** ${trigger.title}\n**Plan:** see qa-receive card for claims + sizing\n\nYou are the last gate for a SMALL milestone (<10 claims, stateless). Run your full live-testing protocol in a single session.\n\n**CRITICAL: Test the files that CHANGED first.** Run `git log --oneline` to identify which commits belong to this milestone.\n\n## Phases (all in one session)\n1. Build + smoke\n2. Two-pass claims (smoke all, deep test passing)\n3. Quick journeys\n4. Security checks (enumerated below)\n5. Quick exploration\n6. Verdict\n\n## MANDATORY completion metadata\n\nYour metadata MUST include these fields (the engine validates them — missing fields = card FAILS and retries):\n\n**verdicts** — per-claim evidence array. One entry per claim tested:\n```\nverdicts: [\n  {\"claim_id\": \"C1\", \"claim\": \"description\", \"verdict\": \"proven|disproven|untested\", \"evidence\": \"exact command + exit code + result\"},\n  ...\n]\n```\n\n**checks** — security check results array:\n```\nchecks: [\n  {\"check\": \"secrets-scan\", \"result\": \"pass|fail|skip\", \"reason\": \"grep -rn 'API_KEY\\|secret' . → 0 matches\"},\n  {\"check\": \"dangerous-patterns\", \"result\": \"pass|fail|skip\", \"reason\": \"grep -rn 'eval\\|exec\\|system' . → 0 matches\"},\n  {\"check\": \"dependency-scan\", \"result\": \"pass|fail|skip\", \"reason\": \"no manifest found\"},\n  {\"check\": \"input-validation\", \"result\": \"pass|fail|skip\", \"reason\": \"no input surface\"}\n]\n```\n\n**exploration** — probe beyond the spec. For EVERY file in the milestone delta (run `git log --oneline` to get the commits), inspect its CONTENT, not just its existence. Report what you probed and what you found:\n```\nexploration: [\n  {\"probe\": \"inspected file X content\", \"result\": \"found stale labels\", \"finding\": \"Note: stale labels\"},\n  {\"probe\": \"checked for hardcoded paths\", \"result\": \"clean\", \"finding\": \"\"},\n  {\"probe\": \"verified no hidden entrypoints\", \"result\": \"clean\", \"finding\": \"\"}\n]\n```\nIf any exploration probe finds something, file it as a kanban card and set finding to the severity.\n\n**verdict, findings_count, findings[], commit_tested, findings_filed** — same as before.\n\nFile findings as kanban cards (Critical → block, others → ship).\n\n**Completion metadata contract:**\n- PASS: metadata={verdict: \"PASS\", findings_count: 0, findings: [], commit_tested: \"<sha>\", findings_filed: 0, verdicts: [...], checks: [...], exploration: [...]}\n- FAIL: metadata={verdict: \"FAIL\", findings_count: N, findings: [{severity, claim, detail, reproduction}], commit_tested: \"<sha>\", findings_filed: N, verdicts: [...], checks: [...], exploration: [...]}",
+      "title_template": "[qa] Quick: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict", "findings_count", "commit_tested", "verdicts", "checks", "exploration"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+            "findings_count": {"type": "integer"},
+            "findings": {"type": "array", "items": {"type": "object"}},
+            "commit_tested": {"type": "string"},
+            "findings_filed": {"type": "integer"},
+            "verdicts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["claim_id", "claim", "verdict", "evidence"],
+                "properties": {
+                  "claim_id": {"type": "string"},
+                  "claim": {"type": "string"},
+                  "verdict": {"type": "string", "enum": ["proven", "disproven", "untested"]},
+                  "evidence": {"type": "string"}
+                }
+              }
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["check", "result", "reason"],
+                "properties": {
+                  "check": {"type": "string"},
+                  "result": {"type": "string", "enum": ["pass", "fail", "skip"]},
+                  "reason": {"type": "string"}
+                }
+              }
+            },
+            "exploration": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["probe", "result", "finding"],
+                "properties": {
+                  "probe": {"type": "string"},
+                  "result": {"type": "string"},
+                  "finding": {"type": "string"}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "qa-verdict",
+      "profile": "qa",
+      "skill": "live-testing",
+      "body_template": "## QA Verdict — synthesize milestone test results\n\n**Milestone:** ${trigger.title}\n\n**Your task:**\nSynthesize results from all 4 test cards on this board:\n- qa-functional: claim verdicts + findings\n- qa-journeys: journey verdicts + findings\n- qa-security: security check results + findings\n- qa-explore: exploration findings\n\nRead each card's completion via `kanban_show`. Do NOT re-test — synthesize.\n\n**For each phase, cite ONE key piece of evidence inline** (the most important command result, exit code, or finding from that phase's card). This makes the verdict self-contained — a reader shouldn't need to open child cards for the headline evidence.\n\n**Decision logic:**\n- Any Critical finding → file findings as kanban cards (bug→debugger, non-bug→tech-lead), then complete with verdict=FAIL\n- Only Important/Minor/Note → file findings, complete with verdict=PASS (ship with follow-ups)\n- All proven, no findings → verdict=PASS\n\nInclude testability feedback (design decisions that made testing hard).\n\n**Completion metadata contract:**\n- PASS: metadata={verdict: \"PASS\", findings_count: 0, findings: [], commit_tested: \"<sha>\", findings_filed: 0}\n- FAIL: metadata={verdict: \"FAIL\", findings_count: N, findings: [{severity, claim, detail, reproduction}], commit_tested: \"<sha>\", findings_filed: N}",
+      "title_template": "[qa] Verdict: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict", "findings_count", "commit_tested"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+            "findings_count": {"type": "integer"},
+            "findings": {"type": "array", "items": {"type": "object"}},
+            "commit_tested": {"type": "string"},
+            "findings_filed": {"type": "integer"}
+          }
+        }
+      }
+    },
+    {
+      "id": "route-bug",
+      "profile": "qa",
+      "body_template": "## Route QA findings to fixers\n\n**Milestone:** ${trigger.title}\n\nYou have findings from QA testing. Your bug-handoff skill (loaded automatically) tells you how to route each one:\n\n- Critical → debugger card (`[bug]` prefix), block on fix\n- Important/Minor/Note → tech-lead card (`[fix]` prefix), ship with follow-up\n\nFor each finding, create a kanban card on this board with the finding detail and reproduction steps in the body.\n\nComplete this card with metadata:\n```\n{routed: true, debugger_cards: <count>, tech_lead_cards: <count>}\n```",
+      "title_template": "[qa] Route findings: ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["routed"],
+          "properties": {
+            "routed": {"type": "boolean"},
+            "debugger_cards": {"type": "integer"},
+            "tech_lead_cards": {"type": "integer"}
+          }
+        }
+      }
+    },
+    {
+      "id": "refactor-scan",
+      "profile": "tech-lead",
+      "skill": "codebase-design",
+      "body_template": "## Architecture scan — find deepening opportunities\n\n**Milestone:** ${trigger.title}\n**Repo:** ${trigger.card_body}\n\nYou are scanning an existing codebase for architectural friction. This milestone just shipped — look for tech debt accumulated during the build.\n\n### What to do\n\n1. Read the codebase at the repo path above. Walk every source file.\n2. Use the `codebase-design` vocabulary: module, interface, depth, seam, adapter, leverage, locality.\n3. Apply the **deletion test** to anything you suspect is shallow: would deleting it concentrate complexity, or just move it?\n4. Look for: shallow modules (interface nearly as complex as implementation), duplicated transaction lifecycles, missing seams, test layers that bypass clean production interfaces, tight coupling.\n5. If a `REFACTOR.md` file exists in the repo, read it — these candidates were already identified. Mark items that have been addressed as done. Do not re-report fixed items.\n6. Do NOT open a browser. Do NOT write an HTML report. Do NOT ask the user to pick.\n\n### Output: ranked candidates\n\nFor EACH candidate found, output a structured entry. Be honest — if the codebase is clean, say so and return an empty list.\n\n### Completion metadata (REQUIRED)\n\n```\n{candidates: [{id: \"C1\", files: [\"path/to/file\"], problem: \"<why current architecture causes friction>\", solution: \"<what would change>\", benefits: \"<locality/leverage gains>\", strength: \"Strong\"|\"Worth exploring\"|\"Speculative\", deletion_test: \"<concentrates or just moves>\"}], codebase_clean: true|false, total_strong: N, total_worth_exploring: N, scan_summary: \"<one-line>\"}\n```\n\n- `candidates`: empty array `[]` if codebase is clean.\n- `codebase_clean`: true if zero Strong and zero Worth exploring candidates.\n- `total_strong`: count of candidates with strength=Strong.\n- `total_worth_exploring`: count with strength=Worth exploring.",
+      "title_template": "[refactor-scan] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["candidates", "codebase_clean"],
+          "properties": {
+            "candidates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "files", "problem", "solution", "benefits", "strength"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "files": {"type": "array", "items": {"type": "string"}},
+                  "problem": {"type": "string"},
+                  "solution": {"type": "string"},
+                  "benefits": {"type": "string"},
+                  "strength": {"type": "string", "enum": ["Strong", "Worth exploring", "Speculative"]},
+                  "deletion_test": {"type": "string"}
+                }
+              }
+            },
+            "codebase_clean": {"type": "boolean"},
+            "total_strong": {"type": "integer"},
+            "total_worth_exploring": {"type": "integer"},
+            "scan_summary": {"type": "string"}
+          }
+        }
+      }
+    },
+    {
+      "id": "refactor-review",
+      "profile": "verifier",
+      "skill": "adversarial-review",
+      "body_template": "## Validate scan candidates against real codebase\n\n**Milestone:** ${trigger.title}\n**Repo:** ${trigger.card_body}\n\nThe scanner found ${nodes.refactor-scan.output.total_strong} Strong and ${nodes.refactor-scan.output.total_worth_exploring} Worth exploring candidates.\n\n### Your job\n\nFor EACH candidate from the scan, verify it against the ACTUAL codebase. The scanner is an LLM — it produces false positives. Your job is to filter them.\n\nCall `kanban_chains` to fan out one reviewer card per candidate:\n\n```\nkanban_chains(\n  goal: \"Validate refactor candidates against real codebase\",\n  chains: [\n    [{assignee: \"verifier\", title: \"[refactor-review] C1: <short problem>\", body: \"Verify this refactor candidate against the real codebase at ${trigger.card_body}.\\n\\nCandidate: <problem>\\nSolution: <solution>\\nFiles: <files>\\nStrength: <strength>\\n\\nCheck:\\n1. Is the friction REAL? Read the actual code at the file paths listed.\\n2. Is the proposed deepening correct? Would it actually improve depth or locality?\\n3. Would the deletion test actually concentrate complexity?\\n\\nComplete with metadata: {valid: true|false, severity: \\\"Strong\\\"|\\\"Worth exploring\\\"|\\\"Speculative\\\", evidence: \\\"file:line — what you found\\\", adjusted_solution: \\\"if the original solution needs correction\\\"}\"}]\n  ]\n)\n```\n\nBuild one chain per candidate. Each chain has a single step (the reviewer).\n\n### After fan-in (when all reviewers complete)\n\nRead all reviewer verdicts. Synthesize:\n1. Filter out invalid candidates (valid=false).\n2. Keep only Strong and Worth exploring (drop Speculative unless the reviewer upgraded it).\n3. Order by severity (Strong first).\n4. Write the validated list to `REFACTOR.md` in the repo root.\n\n### Completion metadata (REQUIRED)\n\n```\n{verdict: \"continue\"|\"stop\", valid_candidates: [{id, problem, solution, severity, evidence}], dropped_candidates: [{id, reason}], refactor_file: \"<path>\"}\n```\n\n- `verdict`: \"stop\" if zero valid candidates remain, \"continue\" if any do.\n- `valid_candidates`: only the ones that passed review.\n- `dropped_candidates`: ones the reviewers rejected, with reasons.\n- `refactor_file`: path to the REFACTOR.md file you wrote.\n\n### Stop condition\n\nIf zero candidates passed review, set verdict=stop. The workflow ends here — no tickets created.",
+      "title_template": "[refactor-review] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict", "valid_candidates"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["continue", "stop"]},
+            "valid_candidates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "problem", "solution", "severity"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "problem": {"type": "string"},
+                  "solution": {"type": "string"},
+                  "severity": {"type": "string", "enum": ["Strong", "Worth exploring"]},
+                  "evidence": {"type": "string"}
+                }
+              }
+            },
+            "dropped_candidates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "reason"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "reason": {"type": "string"}
+                }
+              }
+            },
+            "refactor_file": {"type": "string"}
+          }
+        }
+      }
+    },
+    {
+      "id": "refactor-decompose",
+      "profile": "product-owner",
+      "skill": "to-tickets",
+      "body_template": "## Decompose validated refactor candidates into tickets\n\n**Repo:** ${trigger.card_body}\n**Refactor plan:** ${nodes.refactor-review.output.refactor_file}\n\nThe reviewer validated the candidates in the REFACTOR.md file at the path above.\n\n### What to do\n\nFor each valid candidate, create a refactor ticket via `kanban_create`:\n\n```\nkanban_create(\n  title: \"[ticket-refactor-NN] <candidate id>: <short description>\",\n  assignee: \"tech-lead\",\n  body: \"This is a trigger card. Complete this card IMMEDIATELY. Do NOT implement. Do NOT delegate. Do NOT call kanban_chains or loop_engine. The next workflow (tech-lead-execute) handles all execution.\\n\\n---\\n\\n## Refactor task\\n\\n**Problem:** <candidate problem>\\n**Solution:** <candidate solution>\\n**Evidence:** <reviewer evidence>\\n**Severity:** <candidate severity>\\n\\n**Constraint:** This is a REFACTOR. Existing tests MUST pass before AND after your change. Behavior MUST be preserved. Do NOT add new features.\"\n)\n```\n\nCreate in dependency order if candidates depend on each other.\n\n### Completion metadata (REQUIRED)\n\n```\n{decomposed: true, ticket_count: N, ticket_ids: [\"<id1>\", ...], refactor_file: \"<path>\"}\n```",
+      "title_template": "[refactor-decompose] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["decomposed", "ticket_count"],
+          "properties": {
+            "decomposed": {"type": "boolean"},
+            "ticket_count": {"type": "integer"},
+            "ticket_ids": {"type": "array", "items": {"type": "string"}},
+            "refactor_file": {"type": "string"}
+          }
+        }
+      }
+    }
+  ],
+  "edges": [
+    {"from": "qa-receive", "to": "qa-build", "condition": "${nodes.qa-receive.output.sizing} != 'small'"},
+    {"from": "qa-receive", "to": "qa-quick", "condition": "${nodes.qa-receive.output.sizing} == 'small'"},
+    {"from": "qa-build", "to": "qa-functional"},
+    {"from": "qa-build", "to": "qa-journeys"},
+    {"from": "qa-build", "to": "qa-security"},
+    {"from": "qa-build", "to": "qa-explore"},
+    {"from": "qa-functional", "to": "qa-verdict"},
+    {"from": "qa-journeys", "to": "qa-verdict"},
+    {"from": "qa-security", "to": "qa-verdict"},
+    {"from": "qa-explore", "to": "qa-verdict"},
+    {"from": "qa-quick", "to": "refactor-scan", "condition": "${nodes.qa-quick.output.verdict} == 'PASS'"},
+    {"from": "qa-verdict", "to": "refactor-scan", "condition": "${nodes.qa-verdict.output.verdict} == 'PASS'"},
+    {"from": "qa-quick", "to": "route-bug", "condition": "${nodes.qa-quick.output.verdict} == 'FAIL'"},
+    {"from": "qa-verdict", "to": "route-bug", "condition": "${nodes.qa-verdict.output.verdict} == 'FAIL'"},
+    {"from": "refactor-scan", "to": "refactor-review"},
+    {"from": "refactor-review", "to": "refactor-decompose", "condition": "${nodes.refactor-review.output.verdict} == 'continue'"}
+  ]
+}

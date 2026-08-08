@@ -1,24 +1,12 @@
 {
   "active_projects": [
     {
-      "board": "livetest-unbias-1",
-      "repo": "/tmp/livetest-unbias/repo-1"
+      "board": "wf-test",
+      "repo": "/home/lpaydat/workspace/wf-test"
     },
     {
-      "board": "livetest-unbias-2",
-      "repo": "/tmp/livetest-unbias/repo-2"
-    },
-    {
-      "board": "livetest-unbias-3",
-      "repo": "/tmp/livetest-unbias/repo-3"
-    },
-    {
-      "board": "livetest-unbias-4",
-      "repo": "/tmp/livetest-unbias/repo-4"
-    },
-    {
-      "board": "livetest-unbias-5",
-      "repo": "/tmp/livetest-unbias/repo-5"
+      "board": "wf-gate-test",
+      "repo": "/home/lpaydat/workspace/wf-test"
     }
   ]
 }
