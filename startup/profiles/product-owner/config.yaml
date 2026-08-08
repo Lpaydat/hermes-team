@@ -78,6 +78,7 @@ plugins:
   - kanban_chains
   - context_graph
   - skill_enforcer
+  - loop_engine
   disabled: []
   entries:
     kanban_chains:
