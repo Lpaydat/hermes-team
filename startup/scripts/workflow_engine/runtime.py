@@ -3206,37 +3206,87 @@ class Engine:
     def _boards_to_check(self) -> list[str]:
         """Get list of boards to check for triggers.
 
-        Validates each board DB has the required ``tasks`` table before
-        including it. A corrupt or uninitialized board DB (missing tables,
-        0-byte file, locked) would otherwise crash the entire trigger scan
-        with ``no such table: tasks``, blocking ALL boards from processing.
-        Broken boards are logged at WARNING so they surface without halting
-        the engine.
+        Only scans boards listed in ``active-projects.json``. If that file
+        doesn't exist or has no entries, falls back to scanning all boards
+        (backward compat). Validates each board DB has the required
+        ``tasks`` table before including it. A corrupt or uninitialized
+        board DB (missing tables, 0-byte file, locked) would otherwise
+        crash the entire trigger scan with ``no such table: tasks``,
+        blocking ALL boards from processing. Broken boards are logged at
+        WARNING so they surface without halting the engine.
         """
         from .kanban_adapter import KANBAN_HOME, _connect
+
+        # --- Board isolation: only scan active projects ---
+        allowed_boards = self._active_project_boards()
+
         boards_dir = KANBAN_HOME
         if not boards_dir.exists():
             return []
+
+        candidate_boards: list[str] = []
+        if allowed_boards is not None:
+            # Only scan boards in the active-projects allowlist
+            for name in allowed_boards:
+                p = boards_dir / name
+                if p.is_dir() and (p / "kanban.db").exists():
+                    candidate_boards.append(name)
+            if not candidate_boards:
+                log.debug("active-projects.json lists boards but none exist on disk")
+        else:
+            # No active-projects.json — scan all (backward compat)
+            for p in sorted(boards_dir.iterdir()):
+                if not p.is_dir() or not (p / "kanban.db").exists():
+                    continue
+                candidate_boards.append(p.name)
+
         valid_boards: list[str] = []
-        for p in sorted(boards_dir.iterdir()):
-            if not p.is_dir() or not (p / "kanban.db").exists():
-                continue
-            db_path = p / "kanban.db"
+        for name in candidate_boards:
+            db_path = boards_dir / name / "kanban.db"
             # Skip 0-byte files (interrupted init)
             if db_path.stat().st_size == 0:
-                log.warning("Board %r has 0-byte kanban.db; skipping", p.name)
+                log.warning("Board %r has 0-byte kanban.db; skipping", name)
                 continue
             try:
                 with _connect(db_path) as conn:
                     conn.execute("SELECT 1 FROM tasks LIMIT 1").fetchone()
-                valid_boards.append(p.name)
+                valid_boards.append(name)
             except Exception as e:
                 log.warning(
                     "Board %r kanban.db unreadable (%s); skipping trigger scan. "
                     "Run `hermes kanban boards delete %s` to remove if stale.",
-                    p.name, e, p.name,
+                    name, e, name,
                 )
         return valid_boards
+
+    def _active_project_boards(self) -> list[str] | None:
+        """Read active-projects.json and return board names.
+
+        Returns None if the file doesn't exist (caller falls back to
+        scanning all boards). Returns a list (possibly empty) of board
+        names from the file.
+        """
+        from .kanban_adapter import KANBAN_HOME
+        # active-projects.json lives in the startup dir (two levels up from boards/)
+        # KANBAN_HOME = startup/kanban/boards → parent = startup/kanban → parent = startup
+        startup_dir = KANBAN_HOME.parent.parent
+        projects_file = startup_dir / "active-projects.json"
+        if not projects_file.exists():
+            return None
+        try:
+            data = json.loads(projects_file.read_text())
+            if "active_projects" in data:
+                boards = [proj.get("board") for proj in data["active_projects"] if proj.get("board")]
+                if boards:
+                    return boards
+            elif isinstance(data, dict):
+                # Legacy format: {board: path}
+                boards = list(data.keys())
+                if boards:
+                    return boards
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return None
 
     def _board_to_project_dir(self, board: str) -> str:
         """Try to map a board name to a project directory."""
