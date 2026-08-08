@@ -83,7 +83,63 @@
     {"id": "pi-coding-agent", "name": "pi coding agent SDK", "category": "agent", "description": "SDK for building coding agents", "when_to_use": "Building AI coding assistants and code-aware agents", "platforms": ["web"], "tags": ["agent", "coding", "sdk"], "alternatives": []},
 
     {"id": "golangci-lint", "name": "golangci-lint", "category": "linting", "description": "Go meta-linter aggregating multiple linters", "when_to_use": "Always for Go projects", "platforms": ["linux", "macos", "windows"], "tags": ["linting", "go"], "alternatives": []},
-    {"id": "gofmt", "name": "gofmt", "category": "formatting", "description": "Go code formatter, built-in", "when_to_use": "Always for Go projects", "platforms": ["linux", "macos", "windows"], "tags": ["formatting", "go"], "alternatives": []}
+    {"id": "gofmt", "name": "gofmt", "category": "formatting", "description": "Go code formatter, built-in", "when_to_use": "Always for Go projects", "platforms": ["linux", "macos", "windows"], "tags": ["formatting", "go"], "alternatives": []},
+
+    {"id": "serde", "name": "serde + serde_json", "category": "serialization", "description": "Canonical Rust serialization framework (zero real alternatives)", "when_to_use": "Always for Rust projects — entire ecosystem depends on it", "platforms": ["linux", "macos", "windows", "web"], "tags": ["serialization", "rust", "canonical"], "alternatives": [], "notes": "Canonical — no alternative exists"},
+    {"id": "tokio", "name": "tokio", "category": "async-runtime", "description": "Canonical Rust async runtime", "when_to_use": "Always for async Rust projects. axum hard-depends on it.", "platforms": ["linux", "macos", "windows"], "tags": ["async", "runtime", "rust", "canonical"], "alternatives": [], "notes": "Canonical — no alternative exists"},
+    {"id": "reqwest", "name": "reqwest", "category": "http-client", "description": "Ergonomic Rust HTTP client built on hyper/tokio", "when_to_use": "Rust projects needing HTTP client functionality", "platforms": ["linux", "macos", "windows"], "tags": ["http", "client", "rust", "canonical"], "alternatives": ["ureq"]},
+    {"id": "anyhow", "name": "anyhow", "category": "error-handling", "description": "Rust error handling for applications", "when_to_use": "For application crates — ergonomic error chaining", "platforms": ["linux", "macos", "windows"], "tags": ["error-handling", "rust", "app"], "alternatives": ["eyre"]},
+    {"id": "thiserror", "name": "thiserror", "category": "error-handling", "description": "Rust error handling for libraries", "when_to_use": "For library crates — derive Error enum types", "platforms": ["linux", "macos", "windows"], "tags": ["error-handling", "rust", "library"], "alternatives": []},
+    {"id": "clap", "name": "clap", "category": "cli-framework", "description": "Feature-rich Rust CLI parser with derive macros", "when_to_use": "Rust CLI tools needing argument parsing with subcommands", "platforms": ["linux", "macos", "windows"], "tags": ["cli", "rust", "canonical"], "alternatives": ["lexopt"]},
+    {"id": "tracing", "name": "tracing", "category": "logging", "description": "Structured logging and distributed tracing for Rust", "when_to_use": "Rust applications — libraries use log facade, apps use tracing", "platforms": ["linux", "macos", "windows"], "tags": ["logging", "tracing", "rust", "canonical"], "alternatives": ["log"]},
+    {"id": "sqlx", "name": "sqlx", "category": "database", "description": "Async Rust SQL toolkit (Postgres, MySQL, SQLite)", "when_to_use": "Rust projects needing async DB access. Pairs natively with axum.", "platforms": ["linux", "macos", "windows"], "tags": ["database", "sql", "rust", "async"], "alternatives": ["sea-orm", "diesel"]},
+    {"id": "rusqlite", "name": "rusqlite", "category": "database", "description": "Synchronous Rust SQLite bindings", "when_to_use": "Rust local-first apps using embedded SQLite", "platforms": ["linux", "macos", "windows", "mobile"], "tags": ["database", "sqlite", "rust", "embedded"], "alternatives": []},
+    {"id": "validator", "name": "validator crate", "category": "validation", "description": "Rust validation crate — derive Validate trait for semantic checks", "when_to_use": "Rust projects needing input validation beyond serde's structural checks", "platforms": ["linux", "macos", "windows"], "tags": ["validation", "rust"], "alternatives": ["garde"]},
+
+    {"id": "httpx", "name": "httpx", "category": "http-client", "description": "Python HTTP client (sync + async). FastAPI TestClient base.", "when_to_use": "Always for Python HTTP client needs", "platforms": ["linux", "macos", "windows"], "tags": ["http", "client", "python", "canonical"], "alternatives": ["requests"]},
+    {"id": "uvicorn", "name": "uvicorn", "category": "asgi-server", "description": "ASGI server for FastAPI", "when_to_use": "Always for FastAPI deployment", "platforms": ["linux", "macos", "windows"], "tags": ["server", "asgi", "python"], "alternatives": ["granian"]},
+    {"id": "pydantic-settings", "name": "pydantic-settings", "category": "config", "description": "Settings management reading .env with pydantic validation", "when_to_use": "Python projects needing typed config/env management", "platforms": ["linux", "macos", "windows"], "tags": ["config", "python", "env"], "alternatives": ["python-dotenv"]},
+    {"id": "sqlalchemy", "name": "SQLAlchemy 2.0 + alembic", "category": "orm", "description": "Python SQL toolkit + ORM + migration tool", "when_to_use": "Python projects needing database access with ORM and migrations", "platforms": ["linux", "macos", "windows"], "tags": ["orm", "database", "python", "migration"], "alternatives": ["sqlmodel", "tortoise-orm"]},
+    {"id": "pytest-asyncio", "name": "pytest-asyncio", "category": "testing", "description": "Async test support for pytest", "when_to_use": "Python projects with async functions (asyncio)", "platforms": ["linux", "macos", "windows"], "tags": ["testing", "python", "async"], "alternatives": []},
+
+    {"id": "net-http-go", "name": "net/http (Go 1.22+)", "category": "web-framework", "description": "Go stdlib HTTP router with path params and method matching (1.22+)", "when_to_use": "Always for Go HTTP servers — stdlib is now sufficient, no framework needed", "platforms": ["linux", "macos", "windows"], "tags": ["web", "api", "go", "stdlib", "canonical"], "alternatives": ["chi", "echo"]},
+    {"id": "sqlc", "name": "sqlc", "category": "orm", "description": "Go SQL codegen — type-safe queries from SQL, no ORM overhead", "when_to_use": "Go projects needing type-safe database access", "platforms": ["linux", "macos", "windows"], "tags": ["database", "codegen", "go"], "alternatives": ["gorm", "ent"]},
+    {"id": "viper", "name": "viper", "category": "config", "description": "Go configuration management (env, files, flags)", "when_to_use": "Go projects needing config management", "platforms": ["linux", "macos", "windows"], "tags": ["config", "go"], "alternatives": ["koanf"]},
+
+    {"id": "hono", "name": "Hono", "category": "web-framework", "description": "Edge-native TypeScript web framework, CF Workers first-class", "when_to_use": "TypeScript backend on Cloudflare Workers, Deno, Bun, or Node. Works everywhere.", "platforms": ["web"], "tags": ["web", "api", "backend", "typescript", "edge", "serverless"], "alternatives": ["express", "fastify"], "notes": "Only TS framework that works on edge, Node, Bun, and Deno"},
+    {"id": "partykit", "name": "PartyKit", "category": "realtime", "description": "Realtime WebSocket scaling on Cloudflare Workers", "when_to_use": "Realtime apps on Cloudflare Workers (collaboration, presence, live data)", "platforms": ["web"], "tags": ["realtime", "websocket", "edge", "typescript"], "alternatives": ["socket-io"]},
+    {"id": "resend", "name": "Resend", "category": "email", "description": "Developer-first transactional email API", "when_to_use": "Sending transactional emails from any backend", "platforms": ["web"], "tags": ["email", "api", "backend"], "alternatives": ["nodemailer"]},
+
+    {"id": "zustand", "name": "Zustand", "category": "state-management", "description": "Minimalist React state management, no boilerplate", "when_to_use": "React apps needing global client state. Pairs with TanStack Query for server state.", "platforms": ["web"], "tags": ["state", "react", "client-state"], "alternatives": ["jotai", "redux-toolkit"]},
+    {"id": "tanstack-query", "name": "TanStack Query", "category": "state-management", "description": "Server state management — caching, invalidation, optimistic updates", "when_to_use": "React apps fetching server data. Do NOT put server data in Zustand.", "platforms": ["web"], "tags": ["state", "server-state", "data-fetching", "react"], "alternatives": ["swr"]},
+    {"id": "react-router", "name": "React Router v7", "category": "routing", "description": "De facto standard React router", "when_to_use": "React SPAs needing routing", "platforms": ["web"], "tags": ["routing", "react"], "alternatives": ["tanstack-router"]},
+    {"id": "expo-router", "name": "Expo Router", "category": "routing", "description": "File-based routing for React Native / Expo", "when_to_use": "React Native apps with multiple screens", "platforms": ["ios", "android"], "tags": ["routing", "react-native", "expo"], "alternatives": ["react-navigation"]},
+    {"id": "react-hook-form", "name": "React Hook Form", "category": "forms", "description": "Performant React forms with minimal re-renders", "when_to_use": "React forms. shadcn/ui Form component is built on it.", "platforms": ["web"], "tags": ["forms", "react", "validation"], "alternatives": ["formik"]},
+    {"id": "zod", "name": "Zod", "category": "validation", "description": "TypeScript-first schema validation", "when_to_use": "All TypeScript projects needing validation. Single schema language across frontend and backend.", "platforms": ["web", "mobile"], "tags": ["validation", "typescript", "schema"], "alternatives": ["valibot"]},
+    {"id": "valibot", "name": "Valibot", "category": "validation", "description": "Tree-shakeable schema validation, 95% smaller than Zod for edge", "when_to_use": "Cloudflare Workers / edge where bundle size matters. Use Zod elsewhere.", "platforms": ["web"], "tags": ["validation", "typescript", "edge"], "alternatives": ["zod"]},
+    {"id": "sveltekit-superforms", "name": "sveltekit-superforms", "category": "forms", "description": "SvelteKit form handling with Zod validation", "when_to_use": "SvelteKit forms needing progressive enhancement and validation", "platforms": ["web"], "tags": ["forms", "svelte", "validation"], "alternatives": []},
+
+    {"id": "shadcn-utils", "name": "cva + clsx + tailwind-merge", "category": "styling-utils", "description": "Variant management + class merging utilities used by shadcn/ui internally", "when_to_use": "Always with shadcn/ui, gluestack, or shadcn-svelte. shadcn/ui depends on these.", "platforms": ["web", "mobile"], "tags": ["styling", "tailwind", "shadcn"], "alternatives": []},
+    {"id": "tanstack-table", "name": "TanStack Table", "category": "data-table", "description": "Headless, type-safe data table for React, Svelte, Vue, Solid", "when_to_use": "Apps needing data tables/grids. Pairs with shadcn/ui Table.", "platforms": ["web"], "tags": ["table", "data-grid", "headless", "react", "svelte"], "alternatives": ["ag-grid"]},
+    {"id": "sonner", "name": "Sonner", "category": "notifications", "description": "Toast notification library for React", "when_to_use": "React apps needing toast notifications. shadcn/ui toast wraps Sonner.", "platforms": ["web"], "tags": ["toast", "notifications", "react"], "alternatives": ["react-hot-toast"]},
+    {"id": "svelte-sonner", "name": "svelte-sonner", "category": "notifications", "description": "Sonner port for Svelte", "when_to_use": "Svelte apps needing toast notifications", "platforms": ["web"], "tags": ["toast", "notifications", "svelte"], "alternatives": []},
+    {"id": "auto-animate", "name": "Auto-Animate", "category": "animation", "description": "One-line drop-in animations for React, Svelte, Vue, Solid", "when_to_use": "List animations, layout transitions — zero config", "platforms": ["web"], "tags": ["animation", "react", "svelte", "cross-framework"], "alternatives": []},
+
+    {"id": "chartjs", "name": "Chart.js", "category": "charts", "description": "Fast, canvas-based general charting (bar, line, pie, doughnut). 68KB gzip.", "when_to_use": "General-purpose charts. Fast canvas rendering, framework-agnostic, free.", "platforms": ["web"], "tags": ["charts", "visualization", "canvas"], "alternatives": ["recharts"]},
+    {"id": "echarts", "name": "Apache ECharts", "category": "charts", "description": "Power charting with 100+ chart types, canvas/WebGL, real-time. 332KB gzip.", "when_to_use": "Complex visualizations, real-time data, when you need 100+ chart types", "platforms": ["web"], "tags": ["charts", "visualization", "complex", "real-time"], "alternatives": []},
+    {"id": "lightweight-charts", "name": "Lightweight Charts (TradingView)", "category": "charts", "description": "Professional financial/trading charts. 45KB gzip.", "when_to_use": "Financial/trading apps — candlestick, volume, technical indicators", "platforms": ["web"], "tags": ["charts", "financial", "trading"], "alternatives": []},
+    {"id": "uplot", "name": "uPlot", "category": "charts", "description": "Fastest canvas time-series chart. 22KB gzip. Handles millions of points.", "when_to_use": "Real-time streaming, massive time-series datasets", "platforms": ["web"], "tags": ["charts", "real-time", "performance", "time-series"], "alternatives": []},
+    {"id": "cytoscape", "name": "Cytoscape.js", "category": "visualization", "description": "Graph/network visualization — what Obsidian uses for its graph view", "when_to_use": "Knowledge graph visualization, network/topology display, Obsidian-style graph views", "platforms": ["web"], "tags": ["graph", "network", "visualization", "obsidian"], "alternatives": ["sigma-js"]},
+    {"id": "react-flow", "name": "React Flow", "category": "visualization", "description": "Interactive node-based diagrams and flow editors", "when_to_use": "Node editors, workflow builders, flowchart diagrams, circuit designers", "platforms": ["web"], "tags": ["visualization", "node-editor", "flow-diagram", "react"], "alternatives": []},
+    {"id": "visx", "name": "Visx", "category": "charts", "description": "Low-level React chart primitives (D3 + React)", "when_to_use": "Custom React charts where you need full control over D3 + React integration", "platforms": ["web"], "tags": ["charts", "custom", "react", "d3"], "alternatives": []},
+    {"id": "deck-gl", "name": "deck.gl", "category": "visualization", "description": "Large-scale geospatial data visualization on maps", "when_to_use": "Geospatial/map visualizations with large datasets", "platforms": ["web"], "tags": ["visualization", "geo", "maps", "webgl"], "alternatives": []},
+
+    {"id": "motion", "name": "Motion (Framer Motion)", "category": "animation", "description": "React animation library, 120fps GPU-accelerated, gestures, layout animations", "when_to_use": "React micro-interactions, layout animations, gesture-based animations, page transitions", "platforms": ["web"], "tags": ["animation", "react", "gpu-accelerated"], "alternatives": ["anime-js"]},
+    {"id": "anime-js", "name": "anime.js", "category": "animation", "description": "Framework-agnostic animation engine, SVG morphing, complex timelines", "when_to_use": "Cross-framework animation (Svelte, vanilla), SVG morphing, complex staggered timelines", "platforms": ["web"], "tags": ["animation", "framework-agnostic", "svg", "timeline"], "alternatives": ["motion"]},
+    {"id": "gsap", "name": "GSAP", "category": "animation", "description": "Professional animation timeline engine, ScrollTrigger", "when_to_use": "Professional animations, scroll-triggered effects, complex sequences, banner ads", "platforms": ["web"], "tags": ["animation", "professional", "scroll", "timeline"], "alternatives": []},
+
+    {"id": "vidstack", "name": "Vidstack", "category": "media-player", "description": "Modern media player, framework-agnostic (React/Svelte/Vue), HLS/DASH", "when_to_use": "Video/audio players in web apps. Modern, small (15KB), streaming support.", "platforms": ["web"], "tags": ["media", "video", "audio", "streaming", "framework-agnostic"], "alternatives": ["video-js"]},
+    {"id": "media-chrome", "name": "Media Chrome", "category": "media-player", "description": "Headless media player UI components (web components)", "when_to_use": "Custom video player UIs — build your own controls with headless web components", "platforms": ["web"], "tags": ["media", "video", "audio", "headless", "custom-ui"], "alternatives": []}
   ],
 
   "toolkits": [
@@ -373,6 +429,150 @@
       "description": "TS-first durable workflows, simpler than Temporal",
       "when_to_use": "TypeScript durable workflows, background jobs, retries",
       "tools": ["inngest"]
+    },
+    {
+      "id": "rust-backend-essentials",
+      "name": "Rust Backend Essentials",
+      "description": "Canonical Rust crates for any backend project",
+      "when_to_use": "Always with rust-api or rust-cli for non-trivial projects",
+      "tools": ["serde", "tokio", "reqwest", "anyhow", "thiserror", "tracing"]
+    },
+    {
+      "id": "rust-cli-essentials",
+      "name": "Rust CLI Essentials",
+      "description": "Canonical Rust CLI crates (clap + serde + anyhow)",
+      "when_to_use": "Always with rust-cli for non-trivial CLIs",
+      "tools": ["serde", "clap", "anyhow", "thiserror", "tracing"]
+    },
+    {
+      "id": "rust-db-sqlx",
+      "name": "Rust SQL (sqlx)",
+      "description": "Async SQL for Rust with sqlx",
+      "when_to_use": "Rust projects with Postgres or remote databases",
+      "tools": ["sqlx"],
+      "requires_toolkit": ["rust-api"]
+    },
+    {
+      "id": "rust-db-sqlite",
+      "name": "Rust SQLite (rusqlite)",
+      "description": "Embedded SQLite for Rust",
+      "when_to_use": "Rust local-first apps with SQLite",
+      "tools": ["rusqlite"]
+    },
+    {
+      "id": "python-api-essentials",
+      "name": "Python API Essentials",
+      "description": "Canonical Python backend packages (httpx + pydantic-settings)",
+      "when_to_use": "Always with python-api for non-trivial APIs",
+      "tools": ["httpx", "pydantic-settings"]
+    },
+    {
+      "id": "python-db-sqlalchemy",
+      "name": "Python SQL (SQLAlchemy + alembic)",
+      "description": "ORM + migrations for Python",
+      "when_to_use": "Python projects with Postgres or complex SQL",
+      "tools": ["sqlalchemy"]
+    },
+    {
+      "id": "go-api",
+      "name": "Go API Service",
+      "description": "Go HTTP API with stdlib router",
+      "when_to_use": "Go HTTP APIs (when Go has ecosystem advantage)",
+      "tools": ["go", "net-http-go", "golangci-lint", "gofmt"],
+      "config_files": ["configs/go/"]
+    },
+    {
+      "id": "ts-backend",
+      "name": "TypeScript Backend (Hono)",
+      "description": "TypeScript backend on Cloudflare Workers / Node / Bun",
+      "when_to_use": "TypeScript backend on edge or serverless. CF Workers first.",
+      "tools": ["typescript", "hono", "vitest", "zod", "biome"],
+      "config_files": ["configs/node/"]
+    },
+    {
+      "id": "ts-backend-drizzle",
+      "name": "TS Backend + Drizzle",
+      "description": "TypeScript backend with Drizzle ORM",
+      "when_to_use": "TS backend with database access",
+      "tools": ["drizzle", "drizzle-kit"],
+      "requires_toolkit": ["ts-backend"]
+    },
+    {
+      "id": "react-state",
+      "name": "React State + Data Fetching",
+      "description": "Zustand (client) + TanStack Query (server) state split",
+      "when_to_use": "React apps with global state and server data. The gold-standard split.",
+      "tools": ["zustand", "tanstack-query"]
+    },
+    {
+      "id": "react-forms",
+      "name": "React Forms",
+      "description": "React Hook Form + Zod validation",
+      "when_to_use": "React apps with forms. shadcn/ui Form built on RHF.",
+      "tools": ["react-hook-form", "zod"]
+    },
+    {
+      "id": "react-charts",
+      "name": "React Charts",
+      "description": "General charts for React (Chart.js) + data tables (TanStack Table)",
+      "when_to_use": "React apps needing charts and data tables",
+      "tools": ["chartjs", "tanstack-table"]
+    },
+    {
+      "id": "react-anim",
+      "name": "React Animation",
+      "description": "Motion for micro-interactions + Auto-Animate for lists",
+      "when_to_use": "React apps needing animations",
+      "tools": ["motion", "auto-animate"]
+    },
+    {
+      "id": "cross-framework-anim",
+      "name": "Cross-Framework Animation",
+      "description": "anime.js + GSAP for Svelte/vanilla",
+      "when_to_use": "Svelte or vanilla JS animations, SVG morphing, complex timelines",
+      "tools": ["anime-js", "gsap"]
+    },
+    {
+      "id": "media",
+      "name": "Media Playback",
+      "description": "Vidstack player + Media Chrome for custom UIs",
+      "when_to_use": "Web apps with video/audio playback",
+      "tools": ["vidstack", "media-chrome"]
+    },
+    {
+      "id": "financial-charts",
+      "name": "Financial Charts",
+      "description": "TradingView Lightweight Charts for candlestick/trading",
+      "when_to_use": "Financial/trading apps",
+      "tools": ["lightweight-charts"]
+    },
+    {
+      "id": "graph-visualization",
+      "name": "Graph Visualization",
+      "description": "Cytoscape.js for network/knowledge graph display",
+      "when_to_use": "Obsidian-style graph visualization, network topology",
+      "tools": ["cytoscape"]
+    },
+    {
+      "id": "node-editor",
+      "name": "Node Editor / Flow Diagrams",
+      "description": "React Flow for interactive node-based UIs",
+      "when_to_use": "Node editors, workflow builders, flowchart diagrams",
+      "tools": ["react-flow"]
+    },
+    {
+      "id": "svelte-forms",
+      "name": "Svelte Forms",
+      "description": "sveltekit-superforms + Zod",
+      "when_to_use": "SvelteKit forms with validation",
+      "tools": ["sveltekit-superforms", "zod"]
+    },
+    {
+      "id": "svelte-notifications",
+      "name": "Svelte Notifications",
+      "description": "svelte-sonner for toast notifications",
+      "when_to_use": "Svelte apps needing toast notifications",
+      "tools": ["svelte-sonner"]
     }
   ],
 
