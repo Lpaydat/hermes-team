@@ -585,7 +585,7 @@
       "name": "CLI Tool",
       "description": "Command-line tool or utility",
       "match_keywords": ["cli", "command-line", "terminal", "script", "utility"],
-      "toolkits": ["rust-cli"]
+      "toolkits": ["rust-cli", "rust-cli-essentials"]
     },
     {
       "id": "cli-tool-prototype",
@@ -599,7 +599,7 @@
       "name": "CLI Tool with Storage",
       "description": "CLI tool that persists data locally",
       "match_keywords": ["cli", "storage", "persist", "save", "local"],
-      "toolkits": ["rust-cli", "sqlite-local"]
+      "toolkits": ["rust-cli", "rust-cli-essentials", "rust-db-sqlite"]
     },
     {
       "id": "tui-app",
@@ -613,28 +613,63 @@
       "name": "Desktop App",
       "description": "Cross-platform desktop application",
       "match_keywords": ["desktop", "native", "electron", "tauri", "gui"],
-      "toolkits": ["rust-desktop", "react-web-ui"]
+      "toolkits": ["rust-desktop", "react-web-ui", "react-state", "react-anim"]
     },
     {
       "id": "web-app-react",
       "name": "Web App (React)",
-      "description": "Interactive web app with React",
+      "description": "Interactive web app with React, state, forms, and charts",
       "match_keywords": ["web", "app", "spa", "dashboard", "react"],
-      "toolkits": ["react-web-ui"]
+      "toolkits": ["react-web-ui", "react-state", "react-forms", "react-charts", "react-anim"]
     },
     {
       "id": "web-app-svelte",
       "name": "Web App (Svelte)",
       "description": "Interactive web app with SvelteKit",
       "match_keywords": ["web", "app", "svelte", "ssr", "content"],
-      "toolkits": ["svelte-web-ui"]
+      "toolkits": ["svelte-web-ui", "svelte-forms", "svelte-notifications"]
     },
     {
       "id": "web-app-heavy-compute",
       "name": "Web App with Heavy Compute",
       "description": "Web app with performance-critical client logic (Rust WASM)",
       "match_keywords": ["web", "wasm", "compute", "performance", "browser"],
-      "toolkits": ["react-web-ui", "rust-wasm-logic"]
+      "toolkits": ["react-web-ui", "rust-wasm-logic", "react-state"]
+    },
+    {
+      "id": "web-app-data-viz",
+      "name": "Data Visualization Web App",
+      "description": "Dashboard with charts, tables, and graph visualization",
+      "match_keywords": ["dashboard", "analytics", "data-viz", "charts", "metrics", "visualization"],
+      "toolkits": ["react-web-ui", "react-state", "react-charts"]
+    },
+    {
+      "id": "web-app-financial",
+      "name": "Financial / Trading App",
+      "description": "Web app with trading charts and financial data",
+      "match_keywords": ["trading", "finance", "stock", "candlestick", "portfolio"],
+      "toolkits": ["react-web-ui", "react-state", "financial-charts"]
+    },
+    {
+      "id": "web-app-graph-viz",
+      "name": "Graph Visualization App",
+      "description": "App with Obsidian-style graph view or node editor",
+      "match_keywords": ["graph-view", "knowledge-graph-viz", "network-graph", "mind-map"],
+      "toolkits": ["react-web-ui", "graph-visualization"]
+    },
+    {
+      "id": "web-app-node-editor",
+      "name": "Node Editor / Visual Builder",
+      "description": "App with drag-and-drop node-based interface",
+      "match_keywords": ["node-editor", "flow-builder", "workflow-designer", "visual-programming"],
+      "toolkits": ["react-web-ui", "node-editor", "react-state"]
+    },
+    {
+      "id": "web-app-media",
+      "name": "Media / Video App",
+      "description": "Web app with video/audio playback",
+      "match_keywords": ["video", "audio", "player", "streaming", "media"],
+      "toolkits": ["react-web-ui", "media"]
     },
     {
       "id": "static-site",
@@ -646,16 +681,30 @@
     {
       "id": "api-service",
       "name": "API Service",
-      "description": "HTTP API or web backend",
+      "description": "HTTP API or web backend (Rust)",
       "match_keywords": ["api", "service", "backend", "server", "http", "rest", "endpoint"],
-      "toolkits": ["rust-api"]
+      "toolkits": ["rust-api", "rust-backend-essentials"]
     },
     {
       "id": "api-service-prototype",
       "name": "API Service (Quick Prototype)",
       "description": "Python FastAPI for fast iteration",
       "match_keywords": ["api", "prototype", "python", "fastapi"],
-      "toolkits": ["python-api"]
+      "toolkits": ["python-api", "python-api-essentials"]
+    },
+    {
+      "id": "api-service-ts",
+      "name": "API Service (TypeScript Edge)",
+      "description": "TypeScript API on Cloudflare Workers / Node / Bun",
+      "match_keywords": ["api", "typescript", "hono", "edge-api"],
+      "toolkits": ["ts-backend"]
+    },
+    {
+      "id": "api-service-go",
+      "name": "API Service (Go)",
+      "description": "Go HTTP API with stdlib router",
+      "match_keywords": ["api", "go", "golang"],
+      "toolkits": ["go-api"]
     },
     {
       "id": "mobile-offline",
@@ -674,23 +723,44 @@
     {
       "id": "fullstack-saas",
       "name": "Full-Stack SaaS",
-      "description": "Web app + API + auth + payments + database",
+      "description": "Web app + Rust API + auth + payments + database",
       "match_keywords": ["saas", "fullstack", "platform", "dashboard", "billing"],
-      "toolkits": ["react-web-ui", "rust-api", "neon-serverless", "drizzle-ts-db", "logto-standalone", "stripe-payments", "redis-cache"]
+      "toolkits": ["react-web-ui", "react-state", "react-forms", "rust-api", "rust-backend-essentials", "neon-serverless", "drizzle-ts-db", "logto-standalone", "stripe-payments", "redis-cache"]
     },
     {
       "id": "fullstack-saas-prototype",
       "name": "Full-Stack SaaS (Quick Prototype)",
       "description": "Python FastAPI + React for fast SaaS MVP",
       "match_keywords": ["saas", "mvp", "prototype", "python", "fast"],
-      "toolkits": ["react-web-ui", "python-api", "supabase-baas", "better-auth-ts", "stripe-payments"]
+      "toolkits": ["react-web-ui", "react-state", "python-api", "python-api-essentials", "supabase-baas", "better-auth-ts", "stripe-payments"]
+    },
+    {
+      "id": "fullstack-saas-edge",
+      "name": "Full-Stack SaaS (Edge)",
+      "description": "Web app + TS edge API + auth + payments on Cloudflare",
+      "match_keywords": ["saas", "edge", "serverless-saas", "cloudflare-saas"],
+      "toolkits": ["react-web-ui", "react-state", "ts-backend", "ts-backend-drizzle", "neon-serverless", "better-auth-ts", "stripe-payments"]
     },
     {
       "id": "ai-app",
       "name": "AI Application",
-      "description": "App with AI/LLM integration",
+      "description": "Web app with AI/LLM integration (TypeScript)",
       "match_keywords": ["ai", "llm", "chatbot", "agent", "rag", "gpt"],
       "toolkits": ["react-web-ui", "ai-ts", "qdrant-vector"]
+    },
+    {
+      "id": "ai-app-python",
+      "name": "AI Application (Python)",
+      "description": "AI app with Python backend (pydantic-ai / LangGraph)",
+      "match_keywords": ["ai", "python", "langgraph", "pydantic-ai", "rag-python"],
+      "toolkits": ["react-web-ui", "python-api", "ai-python", "qdrant-vector"]
+    },
+    {
+      "id": "ai-app-rust",
+      "name": "AI Application (Rust)",
+      "description": "AI app with Rust backend (rust-genai)",
+      "match_keywords": ["ai", "rust", "rust-genai", "rag-rust"],
+      "toolkits": ["react-web-ui", "rust-api", "ai-rust"]
     },
     {
       "id": "ai-app-local",
@@ -702,9 +772,16 @@
     {
       "id": "graph-app",
       "name": "Graph Database App",
-      "description": "App needing graph relationships and traversals",
+      "description": "App needing server-side graph relationships and traversals",
       "match_keywords": ["graph", "knowledge-graph", "relationship", "network", "cypher"],
       "toolkits": ["graph-neo4j"]
+    },
+    {
+      "id": "graph-app-realtime",
+      "name": "Real-Time Graph App",
+      "description": "Graph app with sub-ms traversals (Memgraph)",
+      "match_keywords": ["graph", "realtime", "graphrag", "memgraph"],
+      "toolkits": ["graph-memgraph"]
     },
     {
       "id": "graph-app-local",
@@ -718,7 +795,14 @@
       "name": "Serverless Edge App",
       "description": "Cloudflare Workers + D1 + Queues",
       "match_keywords": ["serverless", "edge", "cloudflare", "workers"],
-      "toolkits": ["cf-edge", "react-web-ui"]
+      "toolkits": ["cf-edge", "react-web-ui", "ts-backend"]
+    },
+    {
+      "id": "workflow-app",
+      "name": "Workflow / Orchestration App",
+      "description": "App with durable workflows and long-running processes",
+      "match_keywords": ["workflow", "temporal", "inngest", "orchestration", "saga", "background-jobs"],
+      "toolkits": ["rust-api", "rust-backend-essentials", "temporal-workflows"]
     },
     {
       "id": "library-sdk",
@@ -732,14 +816,35 @@
       "name": "Ecommerce",
       "description": "Web app + payments + inventory",
       "match_keywords": ["ecommerce", "shop", "store", "cart", "product"],
-      "toolkits": ["react-web-ui", "rust-api", "postgres-db", "drizzle-ts-db", "stripe-payments"]
+      "toolkits": ["react-web-ui", "react-state", "rust-api", "rust-backend-essentials", "postgres-db", "drizzle-ts-db", "stripe-payments"]
     },
     {
       "id": "game",
       "name": "Game",
       "description": "Mobile or web game",
       "match_keywords": ["game", "gaming", "play", "engine"],
+      "toolkits": ["react-web-ui", "react-state"]
+    },
+    {
+      "id": "iot-automation",
+      "name": "IoT / Automation",
+      "description": "IoT device integration, home automation, API orchestration via Node-RED",
+      "match_keywords": ["iot", "home-automation", "sensor", "mqtt", "automation", "node-red", "hardware"],
+      "toolkits": []
+    },
+    {
+      "id": "browser-extension",
+      "name": "Browser Extension",
+      "description": "Chrome/Firefox browser extension",
+      "match_keywords": ["extension", "add-on", "browser-extension", "chrome-extension"],
       "toolkits": ["react-web-ui"]
+    },
+    {
+      "id": "bot",
+      "name": "Bot",
+      "description": "Discord, Telegram, or Slack bot",
+      "match_keywords": ["bot", "discord", "telegram", "slack", "chatbot-command"],
+      "toolkits": ["rust-api", "rust-backend-essentials"]
     }
   ]
 }
