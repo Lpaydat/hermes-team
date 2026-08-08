@@ -142,7 +142,12 @@
     {"id": "media-chrome", "name": "Media Chrome", "category": "media-player", "description": "Headless media player UI components (web components)", "when_to_use": "Custom video player UIs — build your own controls with headless web components", "platforms": ["web"], "tags": ["media", "video", "audio", "headless", "custom-ui"], "alternatives": []},
 
     {"id": "plotly", "name": "Plotly.js", "category": "charts", "description": "Scientific/statistical charting — 40+ chart types including contour, violin, isosurface, SPLOM, error bars. 1.36MB gzip.", "when_to_use": "Hard scientific visualization only — contour plots, violin plots, isosurfaces, volume rendering, SPLOM. Use ECharts for everything else.", "platforms": ["web"], "tags": ["charts", "scientific", "3d", "statistical"], "alternatives": ["echarts"], "notes": "Only for scientific use cases ECharts can't handle. Heavy bundle — justify in ADR."},
-    {"id": "node-red", "name": "Node-RED", "category": "automation", "description": "Visual flow-based programming for event-driven apps — drag nodes, wire flows, process events", "when_to_use": "IoT (Raspberry Pi, sensors, MQTT), home automation, API orchestration glue, quick automation prototyping. Standalone runtime + editor, not a library.", "platforms": ["linux", "macos", "windows"], "tags": ["automation", "iot", "visual-programming", "flow-based", "low-code"], "alternatives": [], "notes": "Apache 2.0. 23.5K stars. OpenJS Foundation. Different from React Flow (which is a UI library). Node-RED is a standalone platform."}
+    {"id": "node-red", "name": "Node-RED", "category": "automation", "description": "Visual flow-based programming for event-driven apps — drag nodes, wire flows, process events", "when_to_use": "IoT (Raspberry Pi, sensors, MQTT), home automation, API orchestration glue, quick automation prototyping. Standalone runtime + editor, not a library.", "platforms": ["linux", "macos", "windows"], "tags": ["automation", "iot", "visual-programming", "flow-based", "low-code"], "alternatives": [], "notes": "Apache 2.0. 23.5K stars. OpenJS Foundation. Different from React Flow (which is a UI library). Node-RED is a standalone platform."},
+
+    {"id": "astro", "name": "Astro", "category": "frontend-framework", "description": "Content-first web framework with zero-JS-by-default and island architecture. Uses Svelte components via @astrojs/svelte.", "when_to_use": "Content sites (blogs, docs, marketing) where zero-JS matters. Ships zero client JS unless you add interactive islands. Uses Svelte components natively.", "platforms": ["web"], "tags": ["frontend", "content", "ssg", "zero-js", "islands"], "alternatives": ["svelte"], "notes": "Astro Content Collections provide type-safe content management. Can use React, Svelte, Vue, Solid components in the same project."},
+    {"id": "textual", "name": "Textual", "category": "tui-framework", "description": "Python TUI framework — runs in terminal AND web browser. CSS-like styling, async support.", "when_to_use": "Python projects needing a TUI. Quick prototypes, internal tools, AI tool dashboards. Also renders to web browser.", "platforms": ["linux", "macos", "windows"], "tags": ["tui", "terminal", "python", "web-render"], "alternatives": ["ratatui"]},
+    {"id": "opentui", "name": "OpenTUI", "category": "tui-framework", "description": "High-performance TUI core (Zig) with TypeScript/React/Solid bindings. SSH support, Three.js WebGPU renderer.", "when_to_use": "TypeScript TUI apps. Powers OpenCode in production. Component-based, React reconciler, serve over SSH.", "platforms": ["linux", "macos", "windows"], "tags": ["tui", "terminal", "typescript", "react", "ssh"], "alternatives": ["ratatui"]},
+    {"id": "bubble-tea", "name": "Bubble Tea", "category": "tui-framework", "description": "Elm-architecture Go TUI framework", "when_to_use": "Go projects needing a TUI", "platforms": ["linux", "macos", "windows"], "tags": ["tui", "terminal", "go"], "alternatives": ["ratatui"]}
   ],
 
   "toolkits": [
@@ -576,6 +581,38 @@
       "description": "svelte-sonner for toast notifications",
       "when_to_use": "Svelte apps needing toast notifications",
       "tools": ["svelte-sonner"]
+    },
+    {
+      "id": "astro-content",
+      "name": "Astro Content Site",
+      "description": "Astro for zero-JS content sites (blogs, docs, marketing)",
+      "when_to_use": "Content sites where zero client JS matters. Blogs, docs, marketing. Uses Svelte components for interactive islands.",
+      "tools": ["astro", "typescript", "vite", "biome"],
+      "config_files": ["configs/node/"]
+    },
+    {
+      "id": "python-tui",
+      "name": "Python TUI (Textual)",
+      "description": "Terminal UI with Textual for Python projects",
+      "when_to_use": "Python projects needing a TUI. Quick prototypes, internal tools, AI dashboards.",
+      "tools": ["python3", "textual", "pytest", "ruff"],
+      "config_files": ["configs/python/"]
+    },
+    {
+      "id": "ts-tui",
+      "name": "TypeScript TUI (OpenTUI)",
+      "description": "Terminal UI with OpenTUI for TypeScript projects",
+      "when_to_use": "TypeScript TUI apps. SSH-servable, React reconciler, component-based.",
+      "tools": ["typescript", "opentui", "vitest", "biome"],
+      "config_files": ["configs/node/"]
+    },
+    {
+      "id": "go-tui",
+      "name": "Go TUI (Bubble Tea)",
+      "description": "Terminal UI with Bubble Tea for Go projects",
+      "when_to_use": "Go projects needing a TUI",
+      "tools": ["go", "bubble-tea", "golangci-lint", "gofmt"],
+      "config_files": ["configs/go/"]
     }
   ],
 
@@ -604,9 +641,30 @@
     {
       "id": "tui-app",
       "name": "Terminal UI App",
-      "description": "Full-screen terminal user interface",
+      "description": "Full-screen terminal user interface — detects language from project context",
       "match_keywords": ["tui", "terminal-ui", "ncurses", "dashboard"],
       "toolkits": ["rust-tui"]
+    },
+    {
+      "id": "tui-app-python",
+      "name": "Terminal UI App (Python)",
+      "description": "Python TUI with Textual — for Python projects needing a terminal interface",
+      "match_keywords": ["tui", "python", "textual"],
+      "toolkits": ["python-tui"]
+    },
+    {
+      "id": "tui-app-ts",
+      "name": "Terminal UI App (TypeScript)",
+      "description": "TypeScript TUI with OpenTUI — for TS projects needing a terminal interface",
+      "match_keywords": ["tui", "typescript", "opentui"],
+      "toolkits": ["ts-tui"]
+    },
+    {
+      "id": "tui-app-go",
+      "name": "Terminal UI App (Go)",
+      "description": "Go TUI with Bubble Tea — for Go projects needing a terminal interface",
+      "match_keywords": ["tui", "go", "bubble-tea"],
+      "toolkits": ["go-tui"]
     },
     {
       "id": "desktop-app",
@@ -674,9 +732,9 @@
     {
       "id": "static-site",
       "name": "Static Site / Content Site",
-      "description": "Blog, docs, marketing site",
+      "description": "Blog, docs, marketing site — zero-JS with Astro",
       "match_keywords": ["static", "blog", "docs", "marketing", "content", "astro"],
-      "toolkits": ["svelte-web-ui"]
+      "toolkits": ["astro-content"]
     },
     {
       "id": "api-service",
