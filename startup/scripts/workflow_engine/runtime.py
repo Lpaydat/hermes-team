@@ -1660,13 +1660,21 @@ class Engine:
 
     def _reachable_nodes(self, wf: Workflow, state_nodes: dict[str, dict],
                          ctx: dict) -> set[str]:
-        """BFS from dispatched/done nodes following ALL edges. Uses shared helper."""
+        """BFS from dispatched/done nodes following *live* edges.
+
+        Condition-aware: edges whose condition evaluates False against ``ctx``
+        are treated as dead (not traversed). This prevents dead conditional
+        edges — e.g. verify→fix when verdict is PASS — from marking cycle
+        members reachable, which would otherwise block completion.
+        """
         node_ids = {n.id for n in wf.nodes}
         seeds = {n.id for n in wf.nodes
                  if node_phase(n, state_nodes.get(n.id, {})) in (PHASE_DONE, PHASE_RUNNING)}
-        edges = wf.edges or [Edge(from_node=d, to_node=n.id)
-                             for n in wf.nodes for d in n.depends_on]
-        return bfs_reachable(edges, seeds, node_ids)
+        raw_edges = wf.edges or [Edge(from_node=d, to_node=n.id)
+                                 for n in wf.nodes for d in n.depends_on]
+        live_edges = [e for e in raw_edges
+                      if e.condition is None or evaluate_condition(e.condition, ctx)]
+        return bfs_reachable(live_edges, seeds, node_ids)
 
     def _read_instance_status(self, instance_id: str) -> str:
         """Read a workflow instance's status column (fresh, not cached)."""

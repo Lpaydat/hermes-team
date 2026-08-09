@@ -2,12 +2,13 @@
 """
 Workflow Engine — combined cron for the dev workflow.
 
-Runs five phases per project board, every tick:
+Runs six phases per project board, every tick:
   1. bead-sync:    sync kanban card status → bd bead status (closes done beads)
   2. dispatch:     bd ready → create PO dispatch card (bugs → debugger directly)
   3. human-escal:  human-flagged beads → operator HQ card
   4. scanner:      detect blocked tasks → escalate to proper profile
   5. qa-trigger:   verifier/debugger card with "merged" in summary → create QA re-test card
+  6. stale-reclaim: reclaim tasks with a dead worker PID and stale heartbeat
 
 Reads active-projects.json for the project list. Empty list = silent exit.
 Each project maps to its own kanban board (1 project = 1 board).
@@ -34,6 +35,12 @@ CONFIG_FILE = Path(
     or str(Path.home() / ".hermes-teams/startup/active-projects.json")
 )
 KANBAN_ROOT = Path.home() / ".hermes-teams/startup/kanban/boards"
+
+# Stale-claim reaper: a task is considered stale when its heartbeat is older
+# than this threshold (seconds). Default 900 = 15 min. The hermes-agent
+# PID-alive extension keeps claims alive even when heartbeats stop; this
+# reaper catches the crash-but-not-cleaned-up case (PID dead, claim active).
+STALE_THRESHOLD = 900
 
 # ── Config ────────────────────────────────────────────────────────────────
 
@@ -644,8 +651,97 @@ def phase_qa_trigger(board, project_dir):
     return actions
 
 # ══════════════════════════════════════════════════════════════════════════
-# MAIN
+# PHASE 6: STALE-CLAIM REAPER — reclaim tasks with dead worker PIDs
 # ══════════════════════════════════════════════════════════════════════════
+
+def _pid_alive(pid):
+    """Return True if *pid* is a live process, False otherwise."""
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)  # signal 0 = existence check, no signal delivered
+        return True
+    except ProcessLookupError:
+        return False  # no such process
+    except PermissionError:
+        return True   # process exists but owned by another user
+    except OSError:
+        return False  # all other errno cases → treat as dead
+
+def reclaim_stale_claims(board, dry_run=False):
+    """Reclaim tasks whose worker crashed without cleaning up its claim.
+
+    Criteria for reclamation:
+      1. status = 'running' (actively claimed)
+      2. last_heartbeat_at is older than STALE_THRESHOLD seconds
+      3. worker_pid process is DEAD
+
+    If the PID is alive but the heartbeat is stale (the hermes-agent
+    PID-alive extension bug — a stuck-but-alive process keeps getting claim
+    extensions), we log a WARNING but do NOT reclaim, because reclaiming
+    would kill legitimate long-running work. That case needs a hermes-agent
+    fix (background heartbeat thread), not a cron workaround.
+    """
+    actions = []
+    db = board_db_path(board)
+    if not db.exists():
+        return actions
+
+    now = int(time.time())
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT id, title, assignee, last_heartbeat_at, worker_pid "
+            "FROM tasks WHERE status = 'running'"
+        ).fetchall()
+    except sqlite3.Error:
+        conn.close()
+        return actions
+    conn.close()
+
+    for row in rows:
+        task_id = row["id"]
+        heartbeat = row["last_heartbeat_at"]
+        pid = row["worker_pid"]
+        title = (row["title"] or "")[:40]
+
+        if not heartbeat:
+            continue  # no heartbeat recorded yet — not our concern
+
+        age = now - heartbeat
+        if age < STALE_THRESHOLD:
+            continue  # heartbeat is fresh
+
+        alive = _pid_alive(pid)
+
+        if not alive:
+            if dry_run:
+                actions.append(
+                    f"stale-reclaim: would reclaim {task_id} "
+                    f"(PID {pid} dead, heartbeat {age}s stale) on {board}"
+                )
+            else:
+                ok, _ = run_kanban(board, [
+                    "reclaim", task_id,
+                    "--reason", f"stale-claim-reaper: PID {pid} dead, "
+                                f"heartbeat {age}s > {STALE_THRESHOLD}s threshold",
+                ])
+                actions.append(
+                    f"stale-reclaim: {'reclaimed' if ok else 'FAILED to reclaim'} "
+                    f"{task_id} ({title}) on {board}"
+                )
+        else:
+            # PID alive but heartbeat stale — the dangerous case. Log a
+            # WARNING but do NOT reclaim. This is the PID-alive extension
+            # bug that needs a hermes-agent fix.
+            actions.append(
+                f"stale-reclaim WARNING: {task_id} on {board} has stale "
+                f"heartbeat ({age}s) but PID {pid} is ALIVE — not reclaiming "
+                f"(needs hermes-agent heartbeat-thread fix)"
+            )
+
+    return actions
 
 def main():
     projects = load_projects()
@@ -689,6 +785,14 @@ def main():
             all_actions.extend(phase_qa_trigger(board, path))
         except Exception as e:
             all_actions.append(f"qa-trigger ERROR [{name}]: {e}")
+
+        # Stale-claim reaper — reclaim tasks whose worker crashed but left
+        # an active claim. Catches the heartbeat-failure edge case without
+        # touching hermes-agent code.
+        try:
+            all_actions.extend(reclaim_stale_claims(board, dry_run=DRY_RUN))
+        except Exception as e:
+            all_actions.append(f"stale-reclaim ERROR [{name}]: {e}")
 
     if all_actions:
         log(f"{len(all_actions)} action(s):")
