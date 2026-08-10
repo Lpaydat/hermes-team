@@ -33,6 +33,8 @@ kanban_create(
 
 CRITICAL: `parents: ["<qa_card_id>"]` means the QA card is the PARENT and the finding card is the CHILD. The finding card blocks in `todo` until dispatched, and the QA card can't complete until all its children (findings) are done. Never link the finding card as a parent of the QA card — that blocks QA from dispatching.
 
+DO NOT pass `skills` on finding cards. The target profile (debugger/tech-lead) has its own skills. Passing QA-specific skills (like live-testing) to other profiles causes crashes — "Unknown skill(s)".
+
 For Critical findings, the dependency gate ensures the QA card stays in `todo` until the finding card (its child) completes.
 
 ## After filing
