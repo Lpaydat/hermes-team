@@ -1,8 +1,12 @@
 {
   "active_projects": [
     {
-      "board": "e2e-clean",
-      "repo": "/home/lpaydat/workspace/e2e-clean"
+      "board": "port-csv2md",
+      "repo": "/home/lpaydat/workspace/port-csv2md"
+    },
+    {
+      "board": "compose-dataviz",
+      "repo": "/home/lpaydat/workspace/compose-dataviz"
     }
   ]
 }
