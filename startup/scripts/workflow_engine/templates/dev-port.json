@@ -1,0 +1,126 @@
+{
+  "id": "dev-port",
+  "name": "Dev Port — port/migrate/translate from reference repos",
+  "description": "When a [port] card completes, route to architect who reads the spec + reference repos and builds a coverage map. Then decompose into port tickets (copy+adapt from refs) and build tickets (gaps with no ref). Shares downstream pipeline with dev-dispatch: setup, milestones, tech-lead-execute, milestone-gate.",
+  "trigger": {
+    "source": "card_completed",
+    "condition": {
+      "assignee": "product-owner",
+      "status": "done",
+      "title_prefix_any": [
+        "[port]"
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "id": "entry",
+      "profile": "product-owner",
+      "type": "command",
+      "command": "echo '{\"status\": \"routing\"}'",
+      "body_template": "noop — routing junction"
+    },
+    {
+      "id": "route-architect",
+      "profile": "architect",
+      "skill": "architecture-gate",
+      "body_template": "## Architecture gate — port/migration spec with reference repos\n\n**Spec card:** ${trigger.card_id}\n**Title:** ${trigger.title}\n**Spec body:**\n\n${trigger.card_body}\n\nYou are the architect. Load your `architecture-gate` skill. This is a PORT or MIGRATION task — the spec references one or more existing repos that contain implementations to port, translate, or combine.\n\n### What to do\n\n1. Read the spec above. Extract the target repo path AND the reference repo path(s) from the body (look for `Repo:`, `Ref:`, `Reference:`, or filesystem paths).\n2. Read the reference repo(s). For each spec user story, check whether the reference repo has a corresponding implementation. Build a COVERAGE MAP.\n3. Run the five-question blast-radius triage on the spec. Assign a tier (T0-T3).\n4. For T1+: decide the tech stack by reading `~/.hermes-teams/startup/tech-preferences.json`. If porting between languages (e.g. Python to Rust), note the source language and target language.\n5. Write the spec to a file at the target project repo. Add `## Implementation Decisions` and `## Testing Decisions` sections. Include the coverage map in the implementation decisions — list each spec story and its ref implementation status (covered/partial/gap).\n6. If no repo path is in the spec body, write the spec to `SPEC.md` in your workspace.\n\n### Coverage map format\n\nIn the Implementation Decisions section, add:\n```\n### Coverage Map\n\n| Story | Status | Ref location | Notes |\n|-------|--------|-------------|-------|\n| 1. <story> | covered | ref-repo:src/foo.rs | Direct port, adapt types |\n| 2. <story> | partial | ref-repo:src/bar.rs | Needs rewrite for async |\n| 3. <story> | gap | — | No ref implementation, build from scratch |\n```\n\n### Complete with metadata\n\n```\n{verdict: \"stamped\", tier: \"T0|T1|T2\", spec_file: \"<path>\", tech_stack: \"<languages and tools>\", testing_decisions: \"<one-line>\", ref_repos: [\"<path1>\", ...], coverage: {covered: N, partial: N, gap: N, total: N}}\n```\n\nFor T2/T3 escalation (needs human): block the card with reason `escalated-t2:` or `T3 handback-wayfinder:`.",
+      "title_template": "[architect] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["verdict"],
+          "properties": {
+            "verdict": {"type": "string", "enum": ["stamped", "needs-more-info"]},
+            "tier": {"type": "string"},
+            "spec_file": {"type": "string"},
+            "tech_stack": {"type": "string"},
+            "testing_decisions": {"type": "string"},
+            "ref_repos": {"type": "array", "items": {"type": "string"}},
+            "coverage": {"type": "object"}
+          }
+        }
+      }
+    },
+    {
+      "id": "route-setup",
+      "profile": "tech-lead",
+      "skill": "",
+      "body_template": "## Project setup — scaffold tooling and hygiene files\n\n**Repo:** ${trigger.card_body}\n**Tech stack:** ${nodes.route-architect.output.tech_stack}\n**Spec file:** ${nodes.route-architect.output.spec_file}\n\nThe architect has decided the tech stack. Your job is to set up the project with proper tooling BEFORE any feature tickets start.\n\n### What to do\n\n1. Read the tech preferences at `~/.hermes-teams/startup/tech-preferences.json` to understand the preferred tooling for the chosen stack.\n2. Read the spec file at `${nodes.route-architect.output.spec_file}` to confirm the tech stack.\n3. Based on the tech stack, copy the appropriate config files from `~/.hermes-teams/startup/scripts/workflow_engine/configs/` into the project repo.\n\n### Setup by language\n\nDetect the language from the architect's tech_stack output. Copy configs from the matching `configs/<language>/` directory:\n\n- **Python** (`configs/python/`): pyproject.toml, ruff.toml, Makefile, conftest.py, .gitignore\n- **Rust** (`configs/rust/`): Cargo.toml additions, clippy.toml, rustfmt.toml, Makefile, .gitignore\n- **TypeScript** (`configs/node/`): package.json, tsconfig.json, biome.json, Makefile, .gitignore\n- **Go** (`configs/go/`): .golangci.yml, Makefile, .gitignore\n\nIf no configs exist for the language, create minimal ones (linter config, formatter config, Makefile with lint/format/test/check targets, .gitignore).\n\nAlways append global patterns from `configs/_shared/.gitignore.global` to `.gitignore`.\n\n### Verify\n\nAfter copying, run the linter and formatter for the detected language to confirm the setup works.\n\n### Complete with metadata\n\n```\n{setup_done: true, files_created: [\"...\"], files_merged: [\"...\"], linter: \"<cmd>\", formatter: \"<cmd>\", test_runner: \"<cmd>\", has_gitignore: true}\n```",
+      "title_template": "[setup] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["setup_done", "files_created"],
+          "properties": {
+            "setup_done": {"type": "boolean"},
+            "files_created": {"type": "array", "items": {"type": "string"}},
+            "files_merged": {"type": "array", "items": {"type": "string"}},
+            "linter": {"type": "string"},
+            "formatter": {"type": "string"},
+            "test_runner": {"type": "string"},
+            "has_gitignore": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    {
+      "id": "route-decompose",
+      "profile": "product-owner",
+      "skill": "to-tickets",
+      "body_template": "## Decompose port spec into tickets — loop_engine converge loop\n\n**Title:** ${trigger.title}\n**Architect spec file:** ${nodes.route-architect.output.spec_file}\n**Tech stack:** ${nodes.route-architect.output.tech_stack}\n**Testing decisions:** ${nodes.route-architect.output.testing_decisions}\n**Reference repos:** ${nodes.route-architect.output.ref_repos}\n\nYou are the product-owner. DO NOT implement.\n\nThe architect has stamped the spec with a COVERAGE MAP. Each spec story is marked as covered, partial, or gap. Read the spec file to see the map.\n\n### Call loop_engine\n\nCall `loop_engine` with:\n\n- `goal`: \"Decompose port spec into ticket plan: ${trigger.title}\"\n- `runner`: \"product-owner\"\n- `max_iterations`: 3\n\n- `execution`: {\n    title: \"[plan-exec] Decompose port spec into ticket plan\",\n    body: \"Read the stamped spec file at ${nodes.route-architect.output.spec_file}. It has a Coverage Map listing each spec story with status (covered/partial/gap) and ref location. Create a TICKET PLAN with two types of tickets:\\n\\n**PORT tickets** (for covered/partial stories): Title format `[ticket-NN] Port: <story>`. Body must include: the ref file path to port from, what to adapt (language differences, API changes, conventions), and acceptance criteria from the spec.\\n\\n**BUILD tickets** (for gap stories): Title format `[ticket-NN] <story>`. Body must include: acceptance criteria from the spec, tech stack from architect decisions. No ref implementation exists.\\n\\nFor each ticket include: title, what-to-build, blocked-by (dependency numbers), and ticket_type (port|build). Output the complete ticket plan.\",\n    assignee: \"product-owner\",\n    skill: \"to-tickets\"\n  }\n\n- `verifier`: {\n    title: \"[plan-review] Review port ticket plan\",\n    body: \"Review the ticket plan against the spec file at ${nodes.route-architect.output.spec_file}. Check:\\n\\n1. COVERAGE: Does every spec story have a ticket?\\n2. PORT ACCURACY: Do port tickets reference the correct ref files from the coverage map?\\n3. SCOPE: Is each ticket atomic?\\n4. DEPENDENCIES: Are dependencies correct?\\n\\nVerdict: advance (plan is good) or replan (list specific gaps).\",\n    assignee: \"verifier\",\n    metric_type: \"ground_truth\"\n  }\n\nAfter convergence, create the ticket cards via `kanban_create`. Two types:\\n\\n**Port tickets**: `title: \"[ticket-NN] Port: <story>\"`, `assignee: \"tech-lead\"`, body includes ref file path + adaptation notes + acceptance criteria.\\n**Build tickets**: `title: \"[ticket-NN] <story>\"`, `assignee: \"tech-lead\"`, body includes acceptance criteria + tech stack.\\n\\nEach ticket fires tech-lead-execute independently when tech-lead completes it.\n\n### Complete with metadata\n\n```\n{decomposed: true, ticket_count: N, ticket_ids: [\"<id1>\", ...], port_tickets: N, build_tickets: N}\n```",
+      "title_template": "[decompose] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["decomposed", "ticket_count", "ticket_ids"],
+          "properties": {
+            "decomposed": {"type": "boolean"},
+            "ticket_count": {"type": "integer"},
+            "ticket_ids": {"type": "array", "items": {"type": "string"}},
+            "port_tickets": {"type": "integer"},
+            "build_tickets": {"type": "integer"},
+            "converged": {"type": "boolean"},
+            "iterations": {"type": "integer"}
+          }
+        }
+      }
+    },
+    {
+      "id": "route-milestone",
+      "profile": "product-owner",
+      "skill": "",
+      "body_template": "## Plan milestones from ticket dependency graph\n\n**Title:** ${trigger.title}\n**Ticket count:** ${nodes.route-decompose.output.ticket_count}\n**Ticket IDs:** ${nodes.route-decompose.output.ticket_ids}\n**Repo:** ${trigger.card_body}\n\nYou are the product-owner. Group the decomposed tickets into milestones. When a milestone completes, it triggers a QA + refactor pass via the milestone-gate workflow.\n\n### Rules for grouping\n\n1. Read the ticket plan. Each ticket has dependencies (blocked-by).\n2. Group tickets into milestones:\n   - Tickets with NO dependencies between them can share a milestone\n   - A ticket that depends on another should be in the SAME milestone if small, or a LATER milestone if foundational\n   - Aim for 2-5 tickets per milestone\n   - The LAST milestone should contain final integration tickets\n3. If there are only 1-3 tickets total, create a single milestone.\n4. Do NOT create more than 5 milestones.\n\n### Create milestone cards\n\nFor EACH milestone, call `kanban_create`:\n- `title`: \"[milestone-NN] <short description>: ${trigger.title}\"\n- `assignee`: \"product-owner\"\n- `body`: \"**Repo:** ${trigger.card_body}\\n\\nMilestone NN scope: <features this milestone ships>.\\n\\nDeferred to later milestones: <or \\\"none\\\">.\\n\\nContains tickets: <list ticket numbers and titles>.\"\n- `parents`: list of ticket card IDs in this milestone\n\nThe milestone card stays in `todo` until all parent tickets complete, then auto-promotes.\n\n### Completion metadata\n\n```\n{milestone_count: N, milestone_ids: [\"<id1>\", ...], milestones: [{number: 1, tickets: [\"t_xxx\", ...], description: \"<short>\"}]}\n```\n\nDO NOT call kanban_chains. DO NOT implement.",
+      "title_template": "[milestones] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": ["milestone_count"],
+          "properties": {
+            "milestone_count": {"type": "integer"},
+            "milestone_ids": {"type": "array", "items": {"type": "string"}},
+            "milestones": {"type": "array"}
+          }
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "entry",
+      "to": "route-architect"
+    },
+    {
+      "from": "route-architect",
+      "to": "route-setup"
+    },
+    {
+      "from": "route-setup",
+      "to": "route-decompose"
+    },
+    {
+      "from": "route-decompose",
+      "to": "route-milestone"
+    }
+  ]
+}
