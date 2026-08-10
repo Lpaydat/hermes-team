@@ -199,7 +199,8 @@
     {
       "id": "route-bug",
       "profile": "qa",
-      "body_template": "## Route QA findings to fixers\n\n**Milestone:** ${trigger.title}\n\nYou have findings from QA testing. Route each one using `kanban_create` with `parents` set to THIS card's ID so the kanban dependency gate tracks them:\n\n- Critical → debugger card (`[bug]` prefix): `kanban_create(title: \"[bug] <finding>\", assignee: \"debugger\", parents: [\"<THIS_CARD_ID>\"], body: \"<finding detail + reproduction>\")`\n- Important/Minor/Note → tech-lead card (`[fix]` prefix): `kanban_create(title: \"[fix] <finding>\", assignee: \"tech-lead\", parents: [\"<THIS_CARD_ID>\"], body: \"<finding detail + reproduction>\")`\n\nIMPORTANT: This card CANNOT complete until all child cards are done. The kanban dependency gate will park this card in `todo` until every child completes. Do NOT complete this card manually — let the dependency gate handle it. After creating all child cards, block this card with `kanban_block(kind: \"dependency\", reason: \"waiting on N finding cards\")`.\n\nWhen all children complete, this card auto-promotes to `ready`. Then complete it with:\n```\n{routed: true, debugger_cards: <count>, tech_lead_cards: <count>}\n```",
+      "skill": "bug-handoff",
+      "body_template": "## Route QA findings to fixers\n\n**Milestone:** ${trigger.title}\n\nYou have findings from QA testing. Your `bug-handoff` skill tells you which profile each severity routes to.\n\nCall `kanban_chains` with one chain per finding. Each chain is a single step — the fix card. kanban_chains handles parent-child linking, dependency blocking, and auto-promotion automatically.\n\nWhen all fix cards complete, this card auto-promotes. Complete it with:\n```\n{routed: true, debugger_cards: <count>, tech_lead_cards: <count>}\n```",
       "title_template": "[qa] Route findings: ${trigger.title}",
       "output": {
         "schema": {
