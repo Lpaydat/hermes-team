@@ -20,17 +20,20 @@ Critical bugs block shipping. Everything else ships and gets fixed later.
 
 ## How to file
 
-For each finding, create a kanban card on the current board:
+For each finding, create a kanban card on the current board. The finding card is a CHILD of the current QA card — the QA card is the parent.
 
 ```
-hermes kanban create \
-  --title "[bug] <short description>" \
-  --assignee debugger \
-  --body "## Finding\n\n**Source:** QA card <card_id>\n**Severity:** Critical\n**Claim:** <claim>\n\n## Detail\n<detail>\n\n## Reproduction\n<reproduction>" \
-  --parent <current_qa_card_id>
+kanban_create(
+  title: "[bug] <short description>",
+  assignee: "debugger",
+  parents: ["<current_qa_card_id>"],
+  body: "## Finding\n\n**Source:** QA card <card_id>\n**Severity:** Critical\n**Claim:** <claim>\n\n## Detail\n<detail>\n\n## Reproduction\n<reproduction>"
+)
 ```
 
-For Critical findings, link the card as a parent of the QA verdict card so the verdict can't complete until the bug is fixed. Use `kanban_link` or `--parent`.
+CRITICAL: `parents: ["<qa_card_id>"]` means the QA card is the PARENT and the finding card is the CHILD. The finding card blocks in `todo` until dispatched, and the QA card can't complete until all its children (findings) are done. Never link the finding card as a parent of the QA card — that blocks QA from dispatching.
+
+For Critical findings, the dependency gate ensures the QA card stays in `todo` until the finding card (its child) completes.
 
 ## After filing
 
