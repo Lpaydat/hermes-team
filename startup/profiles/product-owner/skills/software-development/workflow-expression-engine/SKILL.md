@@ -112,6 +112,69 @@ Full math, boolean with parentheses, library functions. Reserved symbols: `$` (l
 - **No parentheses means no complex grouping.** `A AND B OR C AND D` works (groups as `(A AND B) OR (C AND D)`), but `(A OR B) AND C` does not. Unroll or use multiple edges.
 - **`resolve_template` only expands one level of dot-path.** `${item.a.b}` (two levels) does NOT resolve to `item["a"]["b"]`; it resolves `${item.a}` to `str(item["a"])` (the dict repr) and leaves `.b}` dangling.
 
+## Condition-aware reachability — evaluate_condition in _reachable_nodes
+
+`_reachable_nodes` (runtime.py:1661) now calls `evaluate_condition` to determine which edges are live during its BFS traversal. Edges whose condition evaluates False against the current context are excluded — they are "dead" and should not mark downstream nodes as reachable.
+
+**Why this matters:** In a verify→fix→re-verify→fix conditional cycle, when verify PASSES, the verify→fix edge (condition: `verdict=='FAIL'`) is dead. The old code followed it anyway, making `fix` reachable. Since `fix` was reachable but pending, `_check_completion` returned False forever — the instance was stuck `active`.
+
+**The filter (runtime.py):**
+```python
+live_edges = [e for e in raw_edges
+              if e.condition is None or evaluate_condition(e.condition, ctx)]
+return bfs_reachable(live_edges, seeds, node_ids)
+```
+
+Unconditional edges (`condition is None`) are always traversed. Only conditional edges with a False evaluation are excluded.
+
+### Unit-testing evaluate_condition — context keys are FLATTENED
+
+`evaluate_condition` and `_evaluate_single_clause` do `context.get(var_path)` where `var_path` is the full dotted string from inside `${}`. The context dict must use FLATTENED keys matching how `_build_ctx` constructs runtime context:
+
+```python
+# WRONG — nested dict; condition silently returns False
+ctx = {"nodes": {"verify": {"output": {"verdict": "PASS"}}}}
+
+# CORRECT — flat dotted keys (matches _build_ctx: ctx[f"nodes.{node_id}.output.{k}"] = v)
+ctx = {"nodes.verify.output.verdict": "PASS"}
+```
+
+This is the #1 gotcha when writing unit tests that call `evaluate_condition` directly. The runtime flattens via `_build_ctx` (runtime.py:1118), so real runtime context is always flat — but hand-constructed test context often uses nested dicts out of habit.
+
+### node_phase state format for unit tests
+
+When constructing `state_nodes` dicts for tests of `_reachable_nodes` or `_check_completion`, `node_phase()` derives phase from specific fields, NOT a generic `"status"` key:
+
+- **task nodes:** `card_status` field (`"done"`, `"archived"`, `"todo"`, `"ready"`, `"running"`, `"blocked"`)
+- **command/wait/noop nodes:** `done` boolean flag
+- **terminal flags:** `skipped` or `failed` boolean (checked first, overrides card state)
+
+```python
+# WRONG — "status" is not read by node_phase
+state_nodes = {"verify": {"status": "done"}}
+
+# CORRECT
+state_nodes = {
+    "verify": {"card_status": "done", "output": {"verdict": "PASS"}},
+    "done":   {"done": True},  # noop/command node
+}
+```
+
+### Building test Engine and Workflow objects
+
+```python
+from workflow_engine.model import Workflow
+from workflow_engine.runtime import Engine, StateDB
+
+# StateDB auto-inits schema in __init__ — no init_db() method exists
+engine = Engine(tmpdir / "templates")
+engine.state = StateDB(tmpdir / "state.db")
+
+# Use Workflow.from_dict, NOT resolve_template (which is for string substitution)
+wf = Workflow.from_dict(template_dict)
+# Back-edges need max_iterations or iteration-referencing condition or load validation rejects
+```
+
 ## When extending the evaluator
 
 If adding a new operator or variable namespace:

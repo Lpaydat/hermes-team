@@ -22,15 +22,15 @@
       "schedule_display": "0 */6 * * *",
       "repeat": {
         "times": null,
-        "completed": 3035
+        "completed": 3050
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T21:34:18.270864+07:00",
-      "next_run_at": "2026-08-06T06:00:00+07:00",
-      "last_run_at": "2026-08-06T02:18:22.684762+07:00",
+      "next_run_at": "2026-08-10T12:00:00+07:00",
+      "last_run_at": "2026-08-10T06:00:10.490314+07:00",
       "last_status": "error",
       "last_error": "Script not found: /home/lpaydat/.hermes-teams/startup/profiles/product-owner/scripts/task-hygiene-validator.py",
       "last_delivery_error": null,
@@ -62,15 +62,15 @@
       "schedule_display": "* * * * *",
       "repeat": {
         "times": null,
-        "completed": 33140
+        "completed": 37879
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T21:44:57.246903+07:00",
-      "next_run_at": "2026-08-06T03:57:00+07:00",
-      "last_run_at": "2026-08-06T03:56:19.030575+07:00",
+      "next_run_at": "2026-08-10T10:44:00+07:00",
+      "last_run_at": "2026-08-10T10:43:28.477911+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -102,15 +102,15 @@
       "schedule_display": "* * * * *",
       "repeat": {
         "times": null,
-        "completed": 2316
+        "completed": 7034
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-31T15:42:15.115183+07:00",
-      "next_run_at": "2026-08-06T03:57:00+07:00",
-      "last_run_at": "2026-08-06T03:56:19.097626+07:00",
+      "next_run_at": "2026-08-10T10:44:00+07:00",
+      "last_run_at": "2026-08-10T10:43:28.898339+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -121,5 +121,5 @@
       "fire_claim": null
     }
   ],
-  "updated_at": "2026-08-06T03:56:19.097957+07:00"
+  "updated_at": "2026-08-10T10:43:28.898710+07:00"
 }

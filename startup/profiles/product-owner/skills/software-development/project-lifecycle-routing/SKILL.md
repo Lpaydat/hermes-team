@@ -15,7 +15,7 @@ A project moves through lifecycle stages. Each stage has a skill that owns the p
 | User says "promote this" / "ship it" | Promotion | `project-promotion` | Creates project structure, board, bd epic. Dispatches to PO. |
 | User brings a new project idea | New project | `project-kickoff` | Routes to grill → spec → architect → to-tickets |
 | Feature work on existing project | Planning | `dev-planning` | Discuss → to-spec → architect → to-tickets |
-| Workflow engine creates dispatch card | Dispatch | `dev-dispatch` | Creates tech-lead cards from ready beads |
+| Workflow engine creates dispatch card | Dispatch | `dev-dispatch` | Routes [spec]/[ticket-] card completions by type → architect→setup→decompose→milestone |
 | Project needs technical decisions | Design | Architect design card | design-council → ADRs → PO reads before to-tickets |
 
 ## The critical transition: promotion → planning
@@ -72,40 +72,78 @@ This is a recognized structural gap, not a design choice. R&D belongs between sp
 
 Full analysis (the gap, where R&D sits, profile-vs-skill verdict, what it produces, YC/venture-builder parallel, proposed `exploration-gate` skill spec): see [`references/pipeline-exploration-gap.md`](references/pipeline-exploration-gap.md). For the Karpathy autoresearch pattern (autonomous keep-or-discard experiment loop) and its implications for parallel spike prototyping: see [`references/autoresearch-pattern.md`](references/autoresearch-pattern.md).
 
+## Resuming a project after workflow engine changes
+
+When resuming a project where the workflow engine has changed since the last planning session, the existing manual plan artifacts (TICKETS.md, IMPLEMENTATION-PLAN.md) are STALE — the workflow's decompose phase regenerates the plan fresh. Don't try to reconcile old plans with the new engine.
+
+**Procedure (proven 2026-08-08, ngin project):**
+1. Back up everything: `git add -A && git commit`, then `git tag backup-<date>` AND `git branch backup/<name>` — both needed (tag for immutability, branch for easy checkout)
+2. Delete manual plan artifacts (TICKETS.md, IMPLEMENTATION-PLAN.md) — only SPEC + ADRs + CONTEXT.md survive
+3. Clean repo: `git worktree remove --force` all worktrees (branches survive in git), `rm -rf target/` (build cache, regenerable), `git branch | grep -v main | xargs git branch -D` (stale ticket branches)
+4. Verify clean state compiles (`cargo test` or equivalent)
+5. Feed the spec into the workflow engine
+
+**Key insight:** The user corrected the PO's instinct to "continue from existing plan." When the workflow engine changes, the plan it generates will differ. Starting fresh (keeping code, discarding manual plans) is cleaner than reconciling stale plans against an evolved engine.
+
+**Beads schema migration gate:** If `bd init` reports "refusing to auto-apply N pending schema migrations (v42 -> v53)" and ALL writes are blocked, the remote's Dolt DB is behind. bd refuses to auto-migrate because two clones migrating independently forks the schema unrecoverably (#4259). When the beads DB has no live data (0 open issues): (1) `git push origin --delete refs/dolt/data`, (2) `rm -rf .beads/`, (3) `bd init --non-interactive`. The key: `bd init` WITHOUT deleting the remote ref re-bootstraps from the stale remote and hits the same gate. This is an operator action — the test failure it causes is environmental, not a code defect.
+
+## E2E workflow test-first
+
+When the workflow engine templates or code changed since the last successful
+e2e run, test the FULL pipeline on a small project BEFORE feeding a large
+spec into it. A bug at any node (trigger → architect → setup → decompose →
+milestone → tech-lead-execute → merge-verify) silently breaks downstream.
+
+See [`references/e2e-workflow-test-methodology.md`](references/e2e-workflow-test-methodology.md)
+for the proven procedure (fresh board + small Rust CLI spec + verify each node fires).
+
 ## Full pipeline reference
 
 ```
-User → PO → (grill → spec → architect → to-tickets → approval)
-  → beads → workflow engine → dev-dispatch → tech-lead
-  → kanban_chains(dev+verifier) → merge → workflow engine auto-creates QA card → QA → done
-  
+User → PO → (grill → spec → [spec] card completes)
+  → dev-dispatch trigger fires → routes by type:
+      bug → debugger
+      research → scout
+      ops → ops
+      tickets → PO parses pre-made tickets (route-tickets)
+      default → architect (stamp spec) → setup (scaffold configs) → decompose (loop_engine + to-tickets) → milestones ([milestone-NN] cards)
+  → [ticket-NN] card completes → tech-lead-execute trigger fires
+      plan (loop_engine: dev phases + verifier phases) → verify (adversarial behavior tests) → fix↔re-verify (max 10) → close (merge to master) → merge-verify
+  → [milestone-NN] card completes (all parent tickets done) → milestone-gate fires
+      QA (receive→build→functional/journeys/security/explore→verdict) → IF PASS → refactor (scan→review→decompose) → IF FAIL → route-bug
+
 Feedback loops:
-  QA PASS w/ findings → files bug beads (linked to epic) → workflow engine routes to debugger
-  QA FAIL → triage: bug→debugger, non-bug→tech-lead, spec→PO
-  Verifier iter ≥3 → ESCALATE → tech-lead → (hard bug) → debugger
-  Debugger EXIT A → fix+RCA → verifier reviews+merges → workflow engine auto-creates QA card → QA → done
-  Debugger EXIT B → design flaw → ADR stub → architect gate
+  Verifier FAIL → fix node → re-verify loop
+  Verifier ESCALATE → close node handles escalation
+  Debugger debug-fix subworkflow → test_failure → debugger → verifier
 ```
 
-### Workflow engine phases (5)
+**Note:** qa-gate.json and refactor-cycle.json were DISABLED (2026-08-08) and unified into milestone-gate.json. The old templates had two trigger bugs (prefix mismatch + self-trigger suppression blocking cross-workflow triggers). One unified graph = one trigger condition, structural edge routing. See `loop-engine-convergence-patterns` Pattern 18.
 
-The engine runs every minute on cron. All 5 phases run per-project:
+### Workflow engine architecture (current — stateless graph engine)
 
-1. **bead-sync** — kanban card status → bd bead status (closes done beads)
-2. **dispatch** — `bd ready` → PO dispatch card (bugs → debugger directly via `dispatch_bug_to_debugger`)
-3. **human-escal** — human-flagged beads → operator HQ card
-4. **scanner** — blocked tasks → escalate via ESCALATION_CHAIN (dev/verifier/debugger/qa → tech-lead, tech-lead → PO)
-5. **qa-trigger** — master advanced with code files + a verifier/debugger card completed recently → creates QA re-test card. Hybrid git-diff detection: `git rev-parse HEAD` changed + `git diff --name-only` shows code extensions (.py/.js/etc) + a completed verifier/debugger card in the last hour. Dedup via `qa-merge-<sha>`. State tracked in `qa-trigger-state.json` per board.
+The OLD imperative cron engine (`startup/scripts/workflow-engine.py`, 5 phases) is **SUPERSEDED**. The current engine is the **stateless graph engine** at `startup/scripts/workflow_engine/` (`model.py` + `runtime.py` + `store.py`). It runs on a 1-minute cron tick.
 
-> **⚠ CURRENT STATE (verified 2026-07-31): `phase_qa_trigger` is DISABLED.** It is commented out in `workflow-engine.py` `main()` (the call block is wrapped in `# QA trigger disabled — now handled by new workflow engine`). The intended replacement — cron job `94e735a11be6` ("New Workflow Engine", targeting `startup/scripts/workflow_engine/main.py`) — is **erroring every tick** ("Script not found", 389+ error completions). Net effect: **QA re-test cards are NOT being created automatically** — a live pipeline gap. Before relying on auto-QA, check (a) whether the comment block in `main()` is still there, and (b) whether the replacement cron's script exists. To reactivate the hybrid phase: uncomment the `try`/`except` block at the end of `main()`.
+**Tick pipeline (per instance, 3 passes + triggers):**
+```
+GC          → cleanup old instances/keys/watermarks (7-day retention)
+SYNC        → read card status from board → update node states (stateless derivation)
+RESET       → back-edge resets (increment iteration if < maxIterations), dead-branch skip propagation
+ACTIVATE+DISPATCH → evaluate activation (AND/OR edges, fan-in barrier), dispatch ready nodes
+TRIGGERS    → scan completed cards matching trigger conditions, create new instances
+```
 
-**QA trigger design lesson:** The trigger went through 7 iterations — the fundamental lesson is that **natural-language detection (regex on summaries) is fragile** because agents don't write predictable text (verifiers write "PASS" not "merged"). The final working approach uses **structural signals**: git diff detects code files (language-independent), the verifier card completion confirms it was a code merge not a manual push. Never depend on what an agent wrote in its summary for pipeline triggers.
+**16 production templates** live in `startup/scripts/workflow_engine/templates/`. Key workflows:
+- `dev-dispatch` — routing junction: spec/ticket card completes → routes to architect→setup→decompose→milestone (default), or to debugger/scout/ops (by type), or to route-tickets (pre-made ticket parsing)
+- `tech-lead-execute` — per-ticket execution loop: plan (loop_engine with dev+verifier phases) → verify → fix↔re-verify (max 10 iters) → close (merge) → merge-verify
+- `milestone-gate` — triggered by [milestone-NN] card completion: QA swarm (sizing-adaptive) → refactor scan → review → decompose. Unified qa-gate + refactor-cycle (2026-08-08)
+- `debug-fix` — subworkflow for test_failure → debugger → verifier
 
-See [`references/workflow-engine-phases.md`](references/workflow-engine-phases.md) for the full phase reference (including the filter chain and the abandoned-regex design history).
+**Node types:** task (agent execution), command (synchronous shell), wait (poll condition), subworkflow (child instance), foreach (fan-out).
 
-### Workflow graph model (the declarative successor)
+**Loop_engine plugin** (`startup/plugins/loop_engine/`): tool-driven convergence engine. Caller invokes it with phases (execution+verifier pairs), it handles card creation internally, dependency-parks the calling card until all phases converge. Installed on PO, tech-lead, architect, debugger, builder profiles.
 
-The 696-line imperative cron has a designed successor: a **declarative graph model** (node types, edge types, conditions, JSON Schema) that compiles down to the proven kanban primitives (`kanban_create`, `kanban_chains`, `loop_engine`). The graph does NOT replace the board — it replaces the cron logic that decides which cards to create and when. Seven node types (`task`, `fan-out`, `fan-in`, `branch`, `loop`, `gate`, `emit`), four edge types (`sequential`, `conditional`, `parallel-split`, `parallel-join`), JSONLogic-inspired conditions. See [`references/workflow-graph-model.md`](references/workflow-graph-model.md) for the primitive mapping table, key design answers (foreach, loop termination, fan-out↔kanban_chains mapping), and schema invariants.
+For the engine internals (tick ordering, state model, guard rails, trigger system), see `references/runtime-execution-model.md` in the `workflow-engine-development` skill. For the OLD imperative phase reference (historical context only), see [`references/workflow-engine-phases.md`](references/workflow-engine-phases.md).
 
 ### Builder pipeline artifact contract (grill → build → promotion)
 

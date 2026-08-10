@@ -1,0 +1,12 @@
+name: kill_task
+version: 1.0.0
+description: >-
+  Process-tree-safe worker termination. Kills a kanban worker AND every
+  descendant process it spawned (grep, find, rustc, cargo, codex, …) that
+  would otherwise survive as orphans reparented to init when the worker is
+  killed. Looks up the worker PID from the task's spawn record, walks
+  /proc/*/stat following PPID chains to collect the full descendant tree
+  while the worker is still alive, then kills deepest-first (SIGTERM → wait →
+  SIGKILL) before killing the worker last. Local backend only.
+provides_tools:
+  - kill_task

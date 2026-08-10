@@ -74,6 +74,35 @@ For ngin, start with TTL-based heartbeat (agent extends lease). Add liveness
 classification later. The concept: a RUN has a liveness STATE, not just a
 lease timer.
 
+### Hermes's actual heartbeat implementation — and its critical gap
+
+Reverse-engineered from a real stuck-worker incident (2026-08-09): a verifier
+agent ran for 47 minutes with a dead heartbeat but was never auto-reclaimed
+because its PID was alive. Full details in
+[`references/hermes-heartbeat-internals.md`](references/hermes-heartbeat-internals.md).
+
+**Key findings that should inform any harness heartbeat design:**
+
+- **No background heartbeat thread.** Hermes heartbeats are activity-bridged via
+  `_touch_activity()` — called from the event loop at API call boundaries and
+  inside `_wait_for_process` poll loops. If the event loop is blocked inside a
+  tool call that never returns, heartbeats stop completely. A background thread
+  decouples liveness from activity and is strictly more robust.
+
+- **PID-alive extends the claim indefinitely (up to 1 hour).** The dispatcher's
+  `release_stale_claims()` extends a claim by +15 min if the worker PID is alive
+  and the heartbeat is < 1h stale. A stuck-but-alive process holds its claim for
+  up to 60 minutes before the heartbeat-stale backstop triggers.
+
+- **Activity callback is thread-local** (`base.py:46`). If a tool executes on a
+  thread where the callback wasn't set, `touch_activity_if_due()` is a silent
+  no-op — heartbeats stop even though the poll loop is running.
+
+- **Terminal timeout (600s) was not enforced.** A trivial git command held the
+  worker for 47 minutes — the `_wait_for_process` deadline check was somehow
+  bypassed, suggesting the poll loop never started or the subprocess handle was
+  corrupted.
+
 ## Hermes dispatch model — the CORRECT version
 
 **Corrected from a session error.** The PO incorrectly stated "each gateway
@@ -244,6 +273,14 @@ nodes.
 - **Heartbeat is more than a ping.** Paperclip classifies agent productivity
   from output text. Start simple (TTL extension) but design for liveness
   classification from the beginning.
+- **Hermes's activity-bridged heartbeat fails when a tool call blocks the
+  event loop.** Verified in incident 2026-08-09: a verifier stuck inside a
+  terminal tool call sent no heartbeats for 47 minutes because there's no
+  background thread — `_touch_activity()` only fires at event-loop boundaries.
+  PID-alive claim extensions stretched the TTL to match the 1-hour stale
+  threshold. Any harness heartbeat must be background-threaded, independent
+  of the worker's event loop. See
+  [`references/hermes-heartbeat-internals.md`](references/hermes-heartbeat-internals.md).
 - **Spec-writing: frame as extraction, not replacement.** When writing the spec
   for a harness-agnostic platform, every layer "provides the same capability as"
   the source system — NOT "replaces" it. The user caught replacement framing 4
@@ -295,6 +332,8 @@ nodes.
   tickets with 20 dependency edges ALL went to `running` simultaneously.
   Fix: use the `kanban_link` tool API (which calls recompute_ready), or call
   `recompute_ready(conn)` manually after any raw SQL insert.
+- **Spec/ADR validation + repo management for large-worktree repos**: [`references/ngin-spec-validation-and-repo-management.md`](references/ngin-spec-validation-and-repo-management.md) — (1) verified result: ngin spec + 8 ADRs remain valid against the evolved Hermes engine (Hermes-side changes are impl details, not design-affecting). (2) Backup pattern for repos with multi-GB worktrees (git branch/tag, not cp -r) and worktree safety check before deletion. Read when re-validating the ngin spec or managing the ngin repo's large worktree set.
+
 - **Board cleanup requires cleaning BOTH databases.** When killing a workflow
   run, you must clean both `kanban/boards/<board>/kanban.db` (archive cards)
   AND `kanban/workflow-state.db` (delete instances, trigger_keys,
@@ -387,3 +426,4 @@ nodes.
 - **Full gap analysis**: `~/workspace/ngin-vs-hermes-gap-analysis.md`
 - **Paperclip dispatch research**: [`references/paperclip-dispatch-research.md`](references/paperclip-dispatch-research.md) — condensed research from reading the Paperclip codebase: 14 adapter types, heartbeat/liveness model, regex classifiers, runtime config, watchdog system. Read when designing heartbeat, liveness classification, or adapter selection.
 - **Kanban board operations**: [`references/kanban-board-operations.md`](references/kanban-board-operations.md) — correct patterns for atomic card creation with dependencies, board cleanup, sqlite3 guard interaction, dispatcher board scanning, and the workflow pipeline card-routing order. Read when creating ticket cards, cleaning up failed runs, or debugging dispatch issues.
+- **Hermes heartbeat internals**: [`references/hermes-heartbeat-internals.md`](references/hermes-heartbeat-internals.md) — reverse-engineered heartbeat/claim/reclaim internals from `kanban_db.py`, `run_agent.py`, `kanban_tools.py`, and `environments/base.py`. Documents: no background thread (activity-bridged only), thread-local callback gap, PID-alive extension loop, 1-hour stale threshold, and the terminal-timeout enforcement failure. Includes a step-by-step investigation recipe for stuck workers (board DB event timeline → session DB last messages → agent.log freeze point). Read when debugging stuck/dispatcher-stale workers or designing heartbeat for any harness.

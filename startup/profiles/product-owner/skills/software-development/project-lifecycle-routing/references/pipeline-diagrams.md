@@ -28,48 +28,38 @@ PLANNING PHASE:
     → beads DB
 
 DISPATCH PHASE:
-  workflow engine (cron 60s: bead-sync + dispatch + scanner)
-    → dev-dispatch (PO creates tech-lead cards)
+  stateless graph engine (cron 60s tick: SYNC → RESET → ACTIVATE+DISPATCH → TRIGGERS)
+    → dev-dispatch trigger fires on [spec]/[ticket-] card completion
+    → routes by type: bug→debugger, research→scout, ops→ops, tickets→PO, default→architect chain
 
-CONSTRUCTION PHASE:
-  tech-lead (kanban_chains: creates dev + verifier atomically)
-    → developer (harness wrapper, generates code)
-    ↔ verifier (adversarial review, 3-stage: execute → fan out → synthesize)
-    │   FAIL → fix card → re-iterate (inner loop, no tech-lead)
-    │   iter ≥3 → ESCALATE → tech-lead
-    │   PASS → verifier merges (serialized, post-rebase test)
+CONSTRUCTION PHASE (per ticket):
+  tech-lead-execute trigger fires on [ticket-NN] card completion
+    plan (loop_engine: dev phases + verifier phases, max 5 iters)
+    → verify (adversarial behavior tests + lint gate)
+    → fix↔re-verify (max 10 iterations)
+    → close (merge ticket branch to master)
+    → merge-verify (verifier mechanically confirms: git log, fsck, tests)
 
 QA PHASE:
-  QA (tests the assembled running artifact, no code reading)
-    PASS → ACTUAL DONE
-    PASS w/ findings → files bug beads (linked to epic) → workflow engine → debugger
-    FAIL → triage by type:
-      bug (code wrong) → DEBUGGER
-      non-bug (behavior wrong) → TECH-LEAD
-      spec (spec wrong) → PRODUCT-OWNER
+  Replaced by the verifier's adversarial behavior testing in tech-lead-execute.
+  The old cron QA trigger (5-phase cron) is SUPERSEDED.
 
 DEBUGGER LOOP:
-  reproduce → hypothesize+fix (→ developer) → falsify (→ verifier) → converge
-    EXIT A: localized bug → fix + regression test + RCA
-      → verifier reviews + merges fix branch
-      → verifier creates QA card → QA re-tests
-    EXIT B: design flaw → RCA + ADR stub → architect gate (re-enters top)
+  debug-fix subworkflow: test_failure → debugger → verifier
+    EXIT A: fix + regression test + RCA
+    EXIT B: design flaw → ADR stub → architect gate
 
-ESCALATION CHAIN:
-  developer/verifier blocked → tech-lead
-  tech-lead blocked → product-owner
-  product-owner blocked → human (HUMAN_REQUIRED)
-  tech-lead hard bug → debugger
-  verifier iter ≥3 → tech-lead
-  QA bug → debugger
-  debugger design flaw → architect
+REFACTOR PHASE:
+  refactor-cycle trigger fires on [milestone-NN] card completion
+  (milestone auto-promotes when all parent tickets complete via kanban dep-gate)
+  → refactor scan → may create [refactor-request] card → back to dev-dispatch
 ```
 
 ## The three orchestrators
 
 - **Architect** — design fan-out (researcher + peer perspectives → ADR)
-- **Tech-lead** — construction fan-out (developer + verifier → merged feature)
-- **Debugger** — diagnosis fan-out (developer fix + verifier falsify → proven fix)
+- **Tech-lead** — construction (loop_engine: developer builds, verifier checks per phase)
+- **Debugger** — diagnosis (debug-fix subworkflow: test_failure → fix → re-verify)
 
 ## Role separation (load-bearing)
 
@@ -77,13 +67,10 @@ ESCALATION CHAIN:
 - Verifier = the Checker. Never writes code. Reviews output, not reasoning.
 - This separation makes adversarial verification meaningful.
 
-## Verifier merge gate
+## Merge responsibility
 
-The verifier owns the merge:
-1. Acquire merge slot (`bd merge-slot`)
-2. Rebase onto main
-3. Re-run full test suite on rebased candidate
-4. Merge
-5. Release slot
-
-Serialized — one slot holder at a time.
+The tech-lead owns the merge (close node in tech-lead-execute):
+1. Merge ticket branch into master (`git merge --no-ff`)
+2. Run ALL tests on merged result
+3. Verify no work was lost (`git log master..<branch>` = empty)
+4. merge-verify node (verifier) independently confirms: branch merged, no dangling commits, tests pass

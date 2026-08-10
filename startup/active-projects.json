@@ -1,12 +1,8 @@
 {
   "active_projects": [
     {
-      "board": "wf-test",
-      "repo": "/home/lpaydat/workspace/wf-test"
-    },
-    {
-      "board": "wf-gate-test",
-      "repo": "/home/lpaydat/workspace/wf-test"
+      "board": "e2e-clean",
+      "repo": "/home/lpaydat/workspace/e2e-clean"
     }
   ]
 }
