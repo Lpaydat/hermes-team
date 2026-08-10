@@ -81,10 +81,59 @@ class TemplateStore:
         return sorted(p.stem for p in self.dir.glob("*.json"))
 
     def all(self) -> list[Workflow]:
-        """Load all valid templates. Invalid ones are skipped (logged on first load)."""
+        """Load all valid templates. Invalid ones are skipped (logged on first load).
+
+        Also validates that every node's ``skill`` exists on its ``profile`` —
+        mismatches are logged as warnings (the template still loads, but the
+        operator gets an early signal to install the skill or fix the template).
+        """
         results = []
         for wid in self.list_ids():
             wf = self.load(wid)
             if wf is not None:
                 results.append(wf)
+        self._validate_skills(results)
         return results
+
+    def _validate_skills(self, workflows: list[Workflow]) -> None:
+        """Warn when a node's skill doesn't exist on its profile.
+
+        Checks both ``profiles/<profile>/skills/`` and ``shared-skills/`` for a
+        matching skill directory (supports nested categories like
+        ``mattpocock/to-tickets``).
+        """
+        import os
+        hermes_root = Path.home() / ".hermes-teams"
+        profiles_root = hermes_root / "startup" / "profiles"
+        shared_skills = hermes_root / "shared-skills"
+        for wf in workflows:
+            for node in wf.nodes:
+                skill = (node.skill or "").strip()
+                if not skill:
+                    continue
+                profile_dir = profiles_root / node.profile
+                if not profile_dir.exists():
+                    log.warning(
+                        "SKILL VALIDATION: %s/%s references profile '%s' which does not exist",
+                        wf.id, node.id, node.profile,
+                    )
+                    continue
+                found = False
+                # Check profile-local skills
+                skills_dir = profile_dir / "skills"
+                if skills_dir.exists():
+                    found = any(
+                        skill in dirs
+                        for _, dirs, _ in os.walk(skills_dir)
+                    )
+                # Check shared skills (mattpocock bundle, etc.)
+                if not found and shared_skills.exists():
+                    found = any(
+                        skill in dirs
+                        for _, dirs, _ in os.walk(shared_skills)
+                    )
+                if not found:
+                    log.warning(
+                        "SKILL VALIDATION: %s/%s uses skill '%s' on profile '%s' — skill NOT FOUND",
+                        wf.id, node.id, skill, node.profile,
+                    )
