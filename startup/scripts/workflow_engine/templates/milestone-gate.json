@@ -200,7 +200,7 @@
       "id": "route-bug",
       "profile": "qa",
       "skill": "bug-handoff",
-      "body_template": "## Route QA findings to fixers\n\n**Milestone:** ${trigger.title}\n\nYou have findings from QA testing. Your `bug-handoff` skill tells you which profile each severity routes to.\n\nCall `kanban_chains` with one chain per finding. Each chain is a single step — the fix card. kanban_chains handles parent-child linking, dependency blocking, and auto-promotion automatically.\n\nWhen all fix cards complete, this card auto-promotes. Complete it with:\n```\n{routed: true, debugger_cards: <count>, tech_lead_cards: <count>}\n```",
+      "body_template": "## Route QA findings to fixers\n\n**Milestone:** ${trigger.title}\n\nYou have findings from QA testing. Your `bug-handoff` skill tells you which profile each severity routes to.\n\nCall `kanban_chains` with one chain per finding. Each chain is a single step — the fix card.\n\nWhen all fix cards complete, this card auto-promotes. Complete it with:\n```\n{routed: true, debugger_cards: <count>, tech_lead_cards: <count>}\n```",
       "title_template": "[qa] Route findings: ${trigger.title}",
       "output": {
         "schema": {
