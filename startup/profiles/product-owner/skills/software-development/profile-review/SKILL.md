@@ -67,6 +67,33 @@ Net effect: the mandatory pin is inert. Fix: remove the skill from `skills.disab
 
 How this happens: copying a profile config from a template lands the skill in `disabled` (templates disable everything the source profile doesn't use); later, someone adds it to `mandatory` without removing it from `disabled`. Always diff the two lists against each other — run this check for EVERY profile, not just ones you suspect.
 
+### 4b. Model reference audit — stale models in config
+
+When the user says "switch all profiles to model X" or "I see old model Y
+somewhere", grep ALL profile configs for any model reference that isn't the
+target model. Stale models hide in three places beyond `model.default`:
+
+1. **`auxiliary.vision.model`** — e.g. builder had `glm-4.6` here while
+   `model.default` was already `glm-5.2`. The vision model is a separate
+   field and gets missed if you only check the top-level model block.
+2. **`fallback_providers`** — e.g. product-owner had `deepseek-v4-flash`
+   as a fallback. This only fires when the primary is down, so decide
+   with the user whether to keep or remove it.
+3. **Cron job `model` fields** — `profiles/*/cron/jobs.json` entries may
+   pin a model explicitly. Check `grep '"model"' jobs.json` — `null` means
+   inherit (fine), any other value is a pin that may be stale.
+
+Also check:
+- **Workflow templates** — `search_files pattern="glm|model" path="templates/"`
+  (should be zero hits — templates should never pin models)
+- **Stress test scripts** — may hardcode old model names as test parameters
+  (test artifacts, not production code — note but don't fix)
+
+The audit command:
+```bash
+grep -rn 'glm-4\|deepseek\|<old-model>' ~/.hermes-teams/startup/profiles/*/config.yaml
+```
+
 ### 5. Skill sediment
 
 Check the indexed skill's own body for stale pitfalls or sediment that predates a refactor: unnumbered bullet lists, pitfall numbering that breaks (8, 9, then unnumbered, then 12), or pitfalls that describe a *different* skill's domain (e.g. a "use clarify for design" pitfall inside a live-testing skill). These accumulate when skills are copied or edited in place.

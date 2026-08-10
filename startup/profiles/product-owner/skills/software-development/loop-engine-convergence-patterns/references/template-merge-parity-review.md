@@ -105,6 +105,29 @@ This is the user's "review again" correction — they instinctively knew one
 pass wasn't enough. Encode it: **merge parity review requires at least two
 passes, each finding different-sized regressions.**
 
+## Semantic regression — commands that look similar but do different things
+
+The parity review catches LOST content (missing phrases, missing schema fields).
+But it can miss SEMANTIC changes where a phrase is replaced with one that looks
+similar but does something completely different.
+
+**Real example (caught post-merge, 2026-08-10):** During the qa-gate →
+milestone-gate merge, `git diff --name-only` (lists changed file paths) was
+changed to `git log --oneline` (lists commit messages). Both are git commands,
+both contain "git", but they produce completely different output. QA was
+instructed to identify changed files via a command that returns commit
+messages — it couldn't know which files to test deeply.
+
+**Detection:** Add a semantic-diff step to the parity review. For any
+instruction line containing a shell command (`git`, `cargo`, `npm`, etc.),
+verify the command produces the same TYPE of output, not just that a git
+command exists in both versions. This is harder to automate than phrase
+matching — it requires understanding what each command does.
+
+**Applied fix (commit ab011ca):** Restored `git diff --name-only <before>..<after>`
+alongside `git log --oneline` so QA gets both the commit list AND the changed
+file list.
+
 ## Reference
 
 See `references/milestone-gate-unification.md` for the design rationale of

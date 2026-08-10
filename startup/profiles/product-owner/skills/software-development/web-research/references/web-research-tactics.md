@@ -464,7 +464,71 @@ done
 
 The first few lines reveal the actual license: an `"Apache License Version 2.0"` header plus a `"Portions of this software are licensed as follows"` preamble naming an `ee/LICENSE.md` = open-core Apache 2.0 (core OSS, enterprise features separately licensed). This preamble pattern is how you distinguish true-OSS from open-core without reading the whole file — and it's often the decisive fact when the user's question is "is it fully open source."
 
-## 17. Academic papers (arXiv) → PDF + pdftotext, not the HTML mirror
+## 17. Evaluating repo size and structure empirically (discover → clone → count)
+
+The search API (above) finds repos by topic. When the task has a **size constraint** — "find small repos", "under 500 LOC", "1-5 files" — you need two things the search API alone can't give you: size-qualified search and empirical LOC verification.
+
+### Size-qualified search — find small repos by KB footprint
+
+The GitHub Search API supports a `size:` qualifier (in KB) alongside `stars:` and `language:`. Use it to pre-filter before cloning:
+
+```sh
+curl -sL -H "User-Agent: research-script" \
+  "https://api.github.com/search/repositories?q=markdown+parser+python+size:<100+stars:>5&sort=stars&order=desc&per_page=5" \
+  | python3 -c "
+import json, sys
+for r in json.load(sys.stdin).get('items', []):
+    print(f\"{r['full_name']:45s} | {str(r.get('language') or 'N/A'):12s} | {r['size']:5d}KB | ★{r['stargazers_count']:4d} | {(r.get('description','') or '')[:65]}\")"
+```
+
+**Key qualifier combos for repo discovery:**
+- `size:<100` → roughly <500 LOC (KB includes docs, configs, assets; code is a fraction)
+- `stars:>5` → filters out personal scratch repos while staying inclusive
+- `language:python` → same-language constraint for combining repos
+
+**Rate-limit reality for search.** The Search API has a stricter secondary rate limit (10 req/min, not the 60/hr core limit). You'll burn through 10 queries in one discovery pass. Strategy:
+1. Check `api.github.com/rate_limit` → read `resources.search.remaining` and `resources.search.reset`
+2. If `remaining` is 0, wait for `reset` (epoch) — typically 60 seconds, not an hour
+3. Make each query count: use broad queries (`markdown+parser+python`) not hyper-specific ones, and batch 8-10 per minute window
+
+**Description encoding gotcha.** Some repo descriptions contain control characters that break `json.loads()` with "Invalid control character at column N". When parsing search results in Python, use `json.loads(r["output"])` and catch the exception — the API call itself succeeded, you just need tolerant parsing. Or pipe through `python3 -c "import json,sys; ..."` which handles it more gracefully than embedded f-strings in shell.
+
+### Shallow clone + LOC counting — verify actual code size
+
+GitHub's `size` field (KB) is a rough proxy — it includes READMEs, images, test fixtures, configs. When the constraint is "under 500 LOC", verify empirically:
+
+```sh
+# Shallow clone (no history — fast, minimal bandwidth)
+git clone --depth 1 https://github.com/<org>/<repo>.git /tmp/repo_eval/<name>
+
+# Count Python files
+find /tmp/repo_eval/<name> -name '*.py' -not -path '*/.git/*' | wc -l
+
+# Total raw LOC (all .py files)
+find /tmp/repo_eval/<name> -name '*.py' -not -path '*/.git/*' -exec wc -l {} + | tail -1
+
+# SLOC (non-blank, non-comment) — the number that actually matters
+grep -v '^\s*$' /tmp/repo_eval/<name>/<main>.py | grep -v '^\s*#' | wc -l
+```
+
+**Why SLOC matters:** a 99-line file (raw) can be 51 SLOC — almost half is blank lines, docstrings, and comments. When comparing repos for a "combine these" task, SLOC is the real measure of integration effort. A 50-SLOC repo is a few hours to integrate; a 500-SLOC one is a multi-day effort.
+
+**File count check:** `find . -not -path '*/.git/*' -type f | wc -l` — a repo can have 3 `.py` files but 22 total files (docs, CI configs, sample data). For a "1-5 files" constraint, count code files specifically.
+
+### The discover → clone → evaluate workflow
+
+When evaluating candidate repos for combination/integration:
+
+1. **Batch search** (one rate-limit window): fire 8-10 size-qualified searches across complementary categories
+2. **Triage from search metadata**: filter by `size` (KB) and `stars` from the API response — don't clone everything
+3. **Shallow clone the top 3-5 candidates**: `git clone --depth 1` in a batch
+4. **Count LOC/SLOC + file count**: the empirical ground truth
+5. **Read the core source**: `head -30 <main>.py` to confirm functionality and assess integration complexity
+6. **Check dependencies**: `head` of the main file shows `import` statements — stdlib-only repos are trivial to combine; repos with heavy external deps need dependency reconciliation
+
+This workflow turned a vague "find small complementary repos" task into a verified report with exact SLOC counts, file counts, and dependency assessments for each repo — all backed by actual cloned code, not API metadata estimates.
+
+## 18. Academic papers (arXiv) → PDF + pdftotext, not the HTML mirror
 
 arXiv is the dominant primary source for ML/CS/AI research. Its abstract pages (`arxiv.org/abs/<id>`) are clean and curl-friendly, but its full-text HTML mirror (`ar5iv.labs.arxiv.org`) is unreliable — it frequently renders as an empty stub page in headless browsers (zero headings, zero body text in the snapshot). Don't waste turns on ar5iv.
 
@@ -507,7 +571,7 @@ sed -n '150,400p' paper.txt | grep -niE 'ACI|command|edit|loop' | head -30
 
 **Related preprint servers** (Semantic Scholar, bioRxiv, SSRN) follow the same pattern: screen abstracts, then PDF + pdftotext.
 
-## 18. SaaS vendor pricing pages → extract from `<table>` via browser_console, not sliders
+## 19. SaaS vendor pricing pages → extract from `<table>` via browser_console, not sliders
 
 Modern SaaS pricing pages (WorkOS, Stytch, Ory, Clerk, many others) render their pricing tables via JavaScript with **interactive sliders** ("estimate your cost — drag to N users"). The actual per-unit prices and tier boundaries are computed client-side and are **not present in the static HTML** that `curl` fetches. A `curl + grep` on the pricing URL returns the page chrome but not the numbers you need.
 

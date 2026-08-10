@@ -1,6 +1,6 @@
 ---
 name: loop-engine-convergence-patterns
-description: "Design patterns for loop_engine convergence. Covers decomposition, metric_type trap, driver protocol, merge gap (close+merge-verify+debug-fix), subworkflow input_mapping, architect gate, milestone-gate unified workflow (QA+refactor one graph), condition-aware _reachable_nodes (cycle deadlock fix), cross-profile plugin fix (all 15 profiles), route-bug kanban_chains+bug-handoff (don't re-explain automation), over-explanation audit (systematic scan for tool-mechanics re-explanation across all templates), REFACTOR.md path fix, stale-SHA prevention, stale-claim reaper, e2e progression (jsonq cleanest: 62 cards 0 interventions), tech-preferences (117 tools/63 toolkits/41 recipes), no-hardcoded-preferences audit, verifier lint enforcement. Load when building loop_engine nodes, debugging replans/merge gaps/subworkflows, wiring architect gates, designing milestone triggers, debugging stuck instances, or auditing templates."
+description: "Design patterns for loop_engine convergence: decomposition, metric_type trap, driver protocol, merge gap, subworkflow input_mapping, architect gate, milestone-gate unified workflow, condition-aware _reachable_nodes, cross-profile plugin fix, route-bug kanban_chains+bug-handoff, over-explanation audit, REFACTOR.md path fix, stale-SHA prevention, stale-claim reaper, e2e progression, tech-preferences, no-hardcoded-preferences audit, verifier lint enforcement, dev-port workflow, dev-compose workflow, context-file pre-flight, QA binary-testing gap, blocked-card root cause discipline, engine skill validation at load time. Load when building loop_engine nodes, debugging replans/merge gaps/subworkflows, wiring architect gates, designing milestone triggers, debugging stuck instances, auditing templates, building port/migration workflows, preparing a project for pipeline intake, debugging QA missing real bugs, or diagnosing blocked cards."
 ---
 
 # loop_engine Convergence Patterns
@@ -266,6 +266,8 @@ See `references/refactor-workflow-planning.md` for the full research on `improve
 - tech-lead-execute plan node: *"Before writing task cards, run `git rev-parse main` to get the current HEAD. Use that commit for any baseline reference. Do NOT trust commit SHAs from the spec card body — they may be stale."*
 
 **Generalization — point-in-time state in agent-authored prose:** Any volatile value a workflow agent captures into free-text body prose (a commit SHA, a branch name, a config snapshot, a container ID) will propagate downstream as stale. The templates never specify these values; the agents inject them. The fix is structural: either (a) suppress the value at the source, or (b) re-resolve it at execution time via a command, never trusting prose from an upstream node. This is the prose-propagation cousin of gauntlet lesson #16 (never hardcode runtime-decided values as template literals) — same root, different injection vector: #16 is template-authored at design time; this is agent-authored at runtime.
+
+**Known gap — body-text prohibition is read but partially disobeyed (e2e-clean, 2026-08-10):** Even with the anti-SHA instruction in the refactor-review body, the agent hedged — it wrote "codebase will have advanced by pickup" (proving it read the instruction) but STILL included the SHA in a parenthetical: "commit `5f8a86e` at scan time; codebase will have advanced by pickup". The agent understood the rule but chose to include both the warning AND the value. Body-text prohibitions on LLM behavior are inherently soft — the agent treats them as preferences, not hard constraints. Schema enforcement (rejecting metadata containing a hex SHA pattern) or post-write validation would be harder layers.
 
 See `references/stale-sha-propagation.md` for the full forensic trace (card bodies, REFACTOR.md, git log, propagation hops) from the hashtree e2e test.
 
@@ -684,6 +686,10 @@ Verified: all 15 profiles (advisor, architect, base, builder, debugger, designer
 
 **General rule:** When an agent creates a card assigned to a DIFFERENT profile, the `skills` field must only contain skills that exist on the TARGET profile, not the calling profile. The calling profile's skills are irrelevant to the target. Installing loop_engine on all profiles eliminates this class of crash entirely — any profile can receive any loop_engine-spawned card.
 
+**Structural defense — engine skill validation (commit `c1364ec`, 2026-08-10):** `TemplateStore.all()` now calls `_validate_skills()` at load time. For every template node with a `skill` field, it checks the skill exists on the node's profile — searching BOTH `profiles/<profile>/skills/` (profile-local) and `shared-skills/` (mattpocock bundle etc.). Mismatches log a WARNING immediately at engine startup, before any card is dispatched. All 17 templates pass with zero warnings. This catches the problem BEFORE cards crash at dispatch time with "Unknown skill(s)".
+
+**Related variant — live-testing not on debugger/verifier (same session):** Same root cause as loops-engineering. Bug cards created by QA with `skills=["live-testing"]` crashed on debugger ("Unknown skill(s)"). Fixed: installed live-testing on both debugger (needs it to reproduce bugs) and verifier (needs it for QA functional/security/explore nodes). The bug-handoff skill also now warns: "DO NOT pass skills on finding cards. The target profile has its own skills."
+
 ## Pattern 23: REFACTOR.md Written to Scratch Workspace + Orphaned QA Findings + Don't Re-Explain Automation
 
 Three issues found in e2e-final livetest, all FIXED.
@@ -815,6 +821,71 @@ See `references/e2e-final-proven-fixes.md` for the DEFINITIVE proof that all thr
 See `references/e2e-final-hashcheck-proven.md` for the hashcheck e2e (107 cards, 5/5 tech-lead-execute instances completed — 100% completion rate, up from 0% before the `_reachable_nodes` fix).
 See `references/e2e-clean-jsonq-zero-intervention.md` for the CLEANEST e2e run: jsonq (62 cards, 6/6 instances, 0 blocked, 0 crashed, 0 manual interventions — all 5 commits of fixes validated). Includes e2e progression comparison table and the REFACTOR.md SHA compliance gap.
 See `references/template-merge-parity-review.md` for the body/schema parity review technique used when consolidating two templates into one (catches silently lost content).
+
+See `references/bug-handoff-link-direction.md` for the bug-handoff parent-child link inversion bug — ambiguous "link as parent of" instruction causes agents to link bug cards as PARENT of QA, blocking QA from dispatching.
+
+See `references/engine-skill-validation.md` for the `TemplateStore._validate_skills()` pattern — validates every node's skill exists on its profile at engine load time, catching cross-profile skill mismatches before cards crash at dispatch.
+
+See `references/model-audit-technique.md` for the three-layer model audit (profile configs + cron jobs + workflow templates) when the user asks to find stale model references or standardize on one model.
+
+See `references/dev-port-workflow-pattern.md` for the dev-port workflow — building from reference repos instead of scratch. Creates PORT tickets (copy+adapt from refs) and BUILD tickets (gaps). Use cases: language migration, open-source translation, combining repos, building from existing tested code, feature extraction, modernization/dependency-slimming, language transpilation, monorepo splitting, forking+specialization, dead code pruning, API surface redesign, test extraction, build system detachment. Includes 2 verified test fixtures for feature-extraction livetests (`muesli/reflow` → `dedent`, `Textualize/rich` → `_ratio.py`) with real dependency analysis.
+
+See `references/migration-repo-discovery.md` for the GitHub API methodology to find and evaluate migration candidate repos — search queries by size/language/stars, git tree API for file listing, contents API for LOC counting, the graduated difficulty model (zero-dep → framework-dep → ecosystem-dep), and a proven candidate set (csv2md/csv-diff/strip-tags) with verified LOC and migration rationale.
+
+See `references/context-file-pre-flight-check.md` for the pre-flight check before feeding a spec to the pipeline — verify AGENTS.md and CLAUDE.md are correct, not stale "archived read-only" or empty templates. Wrong context files actively harm pipeline decisions.
+
+See `references/blocked-card-root-cause-inventory.md` for the COMPLETE classification of every blocked-card root cause found across 6 e2e tests — silly blocks (fixed at source), real blocks (correct behavior), hermes blocks (platform behavior). Includes the rule: never build a sweeper that auto-unblocks without understanding why.
+
+See `references/dev-port-compose-livetest-results.md` for the first live test of both workflows (port-csv2md + compose-dataviz, run in parallel). Coverage maps worked correctly — architect correctly mapped stories to ref repos, source_map correctly attributed which ref covers which story, PORT vs BUILD ticket naming proven. Both workflows completed cleanly. Code quality issues found via manual binary testing (QA binary-testing gap — see Pattern 24).
+
+**Unified naming principle (user's direction):** Don't proliferate workflow trigger prefixes when the mechanism is identical. Migration, translation, and extraction all use `[port]` — they differ only in the coverage map shape (full coverage vs partial vs gap-heavy). Combining repos uses `[compose]` — it needs a Source column (which ref repo covers which story). Two workflows, not five. The user caught this when I proposed separate `[migrate]`, `[translate]`, `[combine]`, `[extract]` prefixes: "let use `port` as the unified name then."
+
+**Semantic regression during template merge (Pattern 25):** When merging qa-gate into milestone-gate, the template-merge-parity review checks body lengths and key phrases. But it missed a SEMANTIC instruction change: `git diff --name-only` (lists changed files) became `git log --oneline` (lists commit messages). Both are git commands, both have "git" in them, but they do completely different things. QA was told to identify changed files via a command that returns commit messages instead. Fix: add semantic-diff checking to the parity review — for any instruction line that contains a shell command, verify the command produces the same type of output. Applied as commit `ab011ca` (restored git diff --name-only alongside git log --oneline).
+
+## Pattern 25: Fix at Source, Don't Build Sweepers — Blocked Card Root Cause Discipline
+
+**The user's correction (forceful):** When I proposed building a cron sweeper to auto-unblock blocked cards, the user rejected it: "this should be only the last solution. why? because no matter we try to solve or improve it. cards are still got damn blocked. it mixed between silly blocked that should not be blocked at all with the one that should be real block and need human attention. currently, if we just mindlessly unblock the blocked cards without knowing what they are. we might ruin the system/workflow instead."
+
+**The principle:** A sweeper that auto-unblocks cards masks root causes instead of fixing them. Every "silly block" (card blocked for a wrong reason) is a BUG in the pipeline that should be FIXED AT THE SOURCE — in the skill, template, or profile config that caused it. Only after all source-level bugs are eliminated should a sweeper be considered, and even then only for genuine crash-recovery (dead PID, stuck heartbeat).
+
+**Blocked card classification (proven across 6 e2e tests):**
+
+| Category | Examples | Fix |
+|----------|----------|-----|
+| SILLY (should never happen) | Skill not on target profile (loops-engineering, live-testing); bug-handoff link direction inverted; agent passing skills to wrong profile | Fix the skill/template/profile — install the skill, fix the instruction |
+| REAL (correct behavior) | dependency (waiting on parent); needs_input (genuinely needs human); transient (gates failing after retry) | Leave alone — these are working correctly |
+| HERMES (platform behavior) | Empty block_kind from circuit breaker; crash with no diagnostic | Report to hermes-agent; cannot fix in our code |
+
+**Diagnostic protocol when blocked cards appear:**
+1. Check `hermes kanban log <id>` for the crash reason
+2. If "Unknown skill(s)" — install the skill on the target profile (Pattern 22)
+3. If "Agent crash x2" with no skill error — check block_kind; if NULL, it's the circuit breaker
+4. If dependency block — check parent status; if parent is also blocked, trace the chain
+5. NEVER auto-unblock without understanding WHY it blocked — the user's hard line
+
+**Complete inventory of blocked-card root causes found and fixed across all sessions:**
+- loops-engineering not on developer/verifier → installed on all 15 profiles (Pattern 22)
+- live-testing not on debugger → installed (variant of Pattern 22)
+- bug-handoff parent-child link inverted → fixed skill direction
+- bug-handoff passing skills to finding cards → added "DO NOT pass skills" instruction
+- git diff --name-only → restored in qa-quick (Pattern 25 in gauntlet — semantic regression during merge)
+- REFACTOR.md path → explicit repo path (Pattern 23a)
+- stale commit SHA propagation → defense-in-depth (Pattern 8, references/stale-sha-propagation.md)
+
+## Pattern 24: QA Binary-Testing Gap — Unit Tests Pass, Binary Broken
+
+**Symptom (dev-port/compose livetests, 2026-08-10):** Unit tests pass (9/9, 17/17), milestone-gate QA runs, but manual binary testing found real bugs:
+
+- port-csv2md: `--alignment center` produces no visible change (separator row stays `| - |` instead of `| :---: |`). 1 integration test was failing but unit tests for the core path passed.
+- compose-dataviz: JSON chart path broken (`{"prices": [10, 20, 30]}` → "no numeric values found for field"). CSV chart renders upside down. All 26 unit tests passed.
+
+**Root cause:** QA (especially qa-quick) relies too heavily on "tests pass = code works" without actually running the binary with real input. Unit tests test functions in isolation; they miss CLI flag wiring, end-to-end data flow, and integration between ported components.
+
+**The gap is in the QA body templates.** The qa-quick body says "click through the UI, call API sequence" but doesn't explicitly require running the built binary with representative input and checking the output matches expectations.
+
+**Fix direction (not yet applied):** QA body templates (qa-quick and the full qa-functional/qa-journeys path) must include an explicit step: "Build the binary (`cargo build` / `npm run build` / equivalent). Run it with real input from the spec's user stories. Verify the output is correct." This is the behavior-test equivalent of the merge-verify pattern — don't trust self-reported test results, run the actual artifact.
+
+**General lesson:** "Tests pass" is necessary but not sufficient. On ported/translated code where the structure is copied from a reference, unit tests for individual functions pass easily because the logic is correct. But the WIRING (CLI argument parsing, data flow between modules, integration between ported components) is where bugs live. QA must exercise the actual binary, not just the test suite.
 
 ---
 
