@@ -21,24 +21,15 @@
       "schedule_display": "every 5m",
       "repeat": {
         "times": null,
-<<<<<<< Updated upstream
-        "completed": 5256
-=======
-        "completed": 4997
->>>>>>> Stashed changes
+        "completed": 5258
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-06T16:16:33.142337+07:00",
-<<<<<<< Updated upstream
-      "next_run_at": "2026-08-05T00:47:07.815982+07:00",
-      "last_run_at": "2026-08-05T00:42:07.815982+07:00",
-=======
-      "next_run_at": "2026-08-05T00:53:10.991907+07:00",
-      "last_run_at": "2026-08-05T00:48:10.991907+07:00",
->>>>>>> Stashed changes
+      "next_run_at": "2026-08-15T16:23:14.996359+07:00",
+      "last_run_at": "2026-08-15T16:18:14.996359+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -73,24 +64,15 @@
       "schedule_display": "every 360m",
       "repeat": {
         "times": null,
-<<<<<<< Updated upstream
-        "completed": 100
-=======
-        "completed": 96
->>>>>>> Stashed changes
+        "completed": 101
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T21:45:47.881586+07:00",
-<<<<<<< Updated upstream
-      "next_run_at": "2026-08-05T04:49:06.620512+07:00",
-      "last_run_at": "2026-08-04T22:49:06.620512+07:00",
-=======
-      "next_run_at": "2026-08-05T06:48:10.826741+07:00",
-      "last_run_at": "2026-08-05T00:48:10.826741+07:00",
->>>>>>> Stashed changes
+      "next_run_at": "2026-08-15T22:12:14.816203+07:00",
+      "last_run_at": "2026-08-15T16:12:14.816203+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -122,24 +104,15 @@
       "schedule_display": "every 360m",
       "repeat": {
         "times": null,
-<<<<<<< Updated upstream
-        "completed": 99
-=======
-        "completed": 95
->>>>>>> Stashed changes
+        "completed": 100
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-07T22:47:14.925022+07:00",
-<<<<<<< Updated upstream
-      "next_run_at": "2026-08-05T04:50:11.799322+07:00",
-      "last_run_at": "2026-08-04T22:50:11.799322+07:00",
-=======
-      "next_run_at": "2026-08-05T06:48:10.807483+07:00",
-      "last_run_at": "2026-08-05T00:48:10.807483+07:00",
->>>>>>> Stashed changes
+      "next_run_at": "2026-08-15T22:12:14.959386+07:00",
+      "last_run_at": "2026-08-15T16:12:14.959386+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -150,9 +123,5 @@
       "fire_claim": null
     }
   ],
-<<<<<<< Updated upstream
-  "updated_at": "2026-08-05T00:42:07.816158+07:00"
-=======
-  "updated_at": "2026-08-05T00:48:10.992095+07:00"
->>>>>>> Stashed changes
+  "updated_at": "2026-08-15T16:18:14.996492+07:00"
 }

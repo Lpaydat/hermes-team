@@ -565,7 +565,8 @@ def resolve_template(template: str, context: dict) -> str:
 def _evaluate_single_clause(clause: str, context: dict) -> bool:
     """Evaluate one atomic comparison clause (no AND/OR).
 
-    Operators: == 'x', != 'x', exists, is empty, <, <=, >, >= (numeric-aware).
+    Operators: == 'x', != 'x', contains 'x', exists, is empty,
+    <, <=, >, >= (numeric-aware).
     Returns False on any unrecognized form (safe default).
     """
     # ${var} exists  (truthy check)
@@ -617,6 +618,14 @@ def _evaluate_single_clause(clause: str, context: dict) -> bool:
             return lhs is not None
         return str(lhs) != rhs_raw
 
+    # ${var} contains 'value'  (substring for strings, membership for lists)
+    m = re.match(r"^\s*\$\{(.+?)\}\s+contains\s+'(.+?)'\s*$", clause)
+    if m:
+        lhs = context.get(m.group(1))
+        if isinstance(lhs, (list, tuple, set)):
+            return m.group(2) in lhs
+        return m.group(2) in ("" if lhs is None else str(lhs))
+
     # Numeric comparisons: <, <=, >, >=
     # Right-hand side may be a bare number (e.g. ${x} < 3) or a quoted
     # string (e.g. ${x} <= '3'). Either is eligible for numeric coercion.
@@ -654,6 +663,32 @@ def _evaluate_single_clause(clause: str, context: dict) -> bool:
     return False
 
 
+def _split_outside_quotes(text: str, pattern: str) -> list[str]:
+    """Split text on a regex pattern, ignoring matches inside single quotes.
+
+    Conditions use single-quoted literals ('value'); an OR/AND inside such a
+    literal is part of the value, not an operator (e.g. ${s} == 'priority or
+    die'). Masks quoted spans before matching, then splits the ORIGINAL text
+    on the matched spans.
+    """
+    import re as _re
+    mask = ""
+    quoted = False
+    for ch in text:
+        if ch == "'":
+            quoted = not quoted
+        mask += ("\x00" if quoted else ch)
+    spans = [m.span() for m in _re.finditer(pattern, mask, flags=_re.IGNORECASE)]
+    if not spans:
+        return [text]
+    parts, start = [], 0
+    for s, e in spans:
+        parts.append(text[start:s])
+        start = e
+    parts.append(text[start:])
+    return parts
+
+
 def evaluate_condition(condition: str, context: dict) -> bool:
     """Evaluate a condition expression against the context.
 
@@ -663,14 +698,17 @@ def evaluate_condition(condition: str, context: dict) -> bool:
         atom      := ${var} <op> <value>
 
     - ``AND`` binds tighter than ``OR`` (e.g. ``A AND B OR C AND D``
-      groups as ``(A AND B) OR (C AND D)``).
+      groups as ``(A AND B) OR (C AND D)``). ``AND``/``OR`` are
+      case-insensitive (``or``/``and`` also accepted) but only OUTSIDE
+      single-quoted literals — ``'priority or die'`` is one value.
     - Evaluation is left-to-right within a group; AND short-circuits on
       the first False atom, OR short-circuits on the first True group.
-    - Atomic operators: ``== 'x'``, ``!= 'x'``, ``exists``, ``is empty``,
-      ``<``, ``<=``, ``>``, ``>=``. Numeric operators attempt ``float()``
-      coercion on both sides; if either fails they fall back to string
-      comparison (never stringify-then-compare, which would make
-      ``"10" < "3"`` True).
+    - Atomic operators: ``== 'x'``, ``!= 'x'``, ``contains 'x'``,
+      ``exists``, ``is empty``, ``<``, ``<=``, ``>``, ``>=``.
+      ``contains`` does substring for strings, membership for lists.
+      Numeric operators attempt ``float()`` coercion on both sides; if
+      either fails they fall back to string comparison (never
+      stringify-then-compare, which would make ``"10" < "3"`` True).
     - Unrecognized forms return False (safe default).
     """
     condition = condition.strip()
@@ -678,12 +716,12 @@ def evaluate_condition(condition: str, context: dict) -> bool:
         return False
 
     # OR groups: any group True → whole condition True.
-    for or_group in condition.split(" OR "):
+    for or_group in _split_outside_quotes(condition, r"\s+OR\s+"):
         or_group = or_group.strip()
         if not or_group:
             continue
         # AND clauses within a group: all must be True for the group.
-        and_clauses = or_group.split(" AND ")
+        and_clauses = _split_outside_quotes(or_group, r"\s+AND\s+")
         group_true = True
         for clause in and_clauses:
             if not _evaluate_single_clause(clause.strip(), context):

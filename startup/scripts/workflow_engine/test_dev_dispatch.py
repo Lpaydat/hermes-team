@@ -3,11 +3,11 @@
 Tests against a REAL engine + real board (FakeWorld = real Engine/StateDB,
 real SQLite board, real create_card monkey-patch). Covers every edge case:
 
-1. All 5 routing types (bug/research/ops/architecture/default→tech-lead)
+1. All 5 routing types (bug/research/ops/tickets/default→architect gate)
 2. Trigger filtering (wrong assignee, wrong status, wrong title prefix)
 3. Idempotency (trigger doesn't fire twice for same card)
-4. No metadata.type → defaults to tech-lead
-5. Empty metadata → defaults to tech-lead
+4. No metadata.type → defaults to the architect gate
+5. Empty metadata → defaults to the architect gate
 6. Multiple spec cards complete simultaneously
 7. Spec card that's archived (not done) → no trigger
 8. Entry node is synchronous (command) — no card created for it
@@ -160,23 +160,80 @@ def test_route_tickets():
     print("OK: test_route_tickets")
 
 
-def test_route_default_tech_lead():
-    """metadata.type=feature (not bug/research/ops/architecture) → PO decompose card."""
+def test_route_default_architect():
+    """metadata.type=feature (not bug/research/ops/tickets) → architect gate card.
+
+    v2 tree builder (commit 14a9cda): the default route goes through
+    route-architect (architecture-gate stamps tech stack + spec file), then
+    setup, then decompose. See test_feature_pipeline_chain for the full walk.
+    """
     world = _make_world()
     try:
         _add_spec_card(world, "spec1", metadata={"type": "feature"})
         world.tick()
         world.tick()
-        routed = _get_routed_cards(world, include_po=True)
-        # route-decompose is now a product-owner [decompose] card
-        po_cards = [c for c in routed if c[1] == "product-owner"]
-        assert len(po_cards) == 1, \
-            f"Expected 1 PO decompose card, got: {routed}"
-        assert "[decompose]" in po_cards[0][2], \
-            f"Expected [decompose] prefix, got: {po_cards}"
+        routed = _get_routed_cards(world)
+        assert len(routed) == 1, \
+            f"Expected 1 routed card, got: {routed}"
+        assert routed[0][0] == "architect", \
+            f"Expected architect, got: {routed}"
+        assert routed[0][1].startswith("[architect]"), \
+            f"Expected [architect] title prefix, got: {routed}"
     finally:
         world.cleanup()
-    print("OK: test_route_default_tech_lead")
+    print("OK: test_route_default_architect")
+
+
+def test_feature_pipeline_chain():
+    """Feature spec walks the full v2 chain: architect → setup → decompose."""
+    world = _make_world()
+    try:
+        _add_spec_card(world, "spec1", metadata={"type": "feature"})
+        world.tick()
+        world.tick()
+
+        # Hop 1: architect card; complete it with a stamped spec
+        routed = _get_routed_cards(world)
+        assert len(routed) == 1 and routed[0][0] == "architect", \
+            f"Expected architect first, got: {routed}"
+        arch_card = _card_id_by_assignee(world, "architect")
+        world.complete_card(arch_card, metadata={
+            "verdict": "stamped", "tier": "T1",
+            "spec_file": "/tmp/spec.md", "tech_stack": "python3",
+            "testing_decisions": "pytest",
+        })
+        world.tick()
+
+        # Hop 2: setup card (tech-lead, consumes tech_stack); complete it
+        setup_card = _card_id_by_assignee(world, "tech-lead")
+        assert setup_card, f"Expected setup card after architect, got: {_get_all_cards(world)}"
+        world.complete_card(setup_card, metadata={
+            "setup_done": True, "files_created": ["pyproject.toml"],
+        })
+        world.tick()
+
+        # Hop 3: PO [decompose] card
+        routed = _get_routed_cards(world, include_po=True)
+        po_cards = [c for c in routed if c[1] == "product-owner" and "[decompose]" in c[2]]
+        assert len(po_cards) == 1, \
+            f"Expected 1 PO [decompose] card after setup, got: {routed}"
+    finally:
+        world.cleanup()
+    print("OK: test_feature_pipeline_chain")
+
+
+def _card_id_by_assignee(world, assignee):
+    """Engine-created card id for the latest card assigned to `assignee`."""
+    conn = sqlite3.connect(str(world.board_db))
+    rows = conn.execute(
+        "SELECT id FROM tasks WHERE assignee = ? AND id != 'spec1' "
+        "AND id != 'spec-bug' AND id != 'spec-dev' "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (assignee,),
+    ).fetchall()
+    conn.close()
+    assert rows, f"No card found for assignee {assignee}"
+    return rows[0][0]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -247,36 +304,34 @@ def test_idempotent_trigger():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 4. MISSING METADATA — defaults to tech-lead
+# 4. MISSING METADATA — defaults to the architect gate
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_no_metadata_type():
-    """Spec card with no metadata.type → defaults to PO decompose card."""
+    """Spec card with no metadata.type → defaults to architect gate card."""
     world = _make_world()
     try:
         _add_spec_card(world, "spec1", metadata={})
         world.tick()
         world.tick()
-        routed = _get_routed_cards(world, include_po=True)
-        po_cards = [c for c in routed if c[1] == "product-owner"]
-        assert len(po_cards) == 1 and "[decompose]" in po_cards[0][2], \
-            f"No type → PO decompose, got: {routed}"
+        routed = _get_routed_cards(world)
+        assert len(routed) == 1 and routed[0][0] == "architect", \
+            f"No type → architect, got: {routed}"
     finally:
         world.cleanup()
     print("OK: test_no_metadata_type")
 
 
 def test_null_metadata():
-    """Spec card with null metadata → defaults to PO decompose card."""
+    """Spec card with null metadata → defaults to architect gate card."""
     world = _make_world()
     try:
         _add_spec_card(world, "spec1", metadata=None)
         world.tick()
         world.tick()
-        routed = _get_routed_cards(world, include_po=True)
-        po_cards = [c for c in routed if c[1] == "product-owner"]
-        assert len(po_cards) == 1 and "[decompose]" in po_cards[0][2], \
-            f"Null metadata → PO decompose, got: {routed}"
+        routed = _get_routed_cards(world)
+        assert len(routed) == 1 and routed[0][0] == "architect", \
+            f"Null metadata → architect, got: {routed}"
     finally:
         world.cleanup()
     print("OK: test_null_metadata")
@@ -298,10 +353,10 @@ def test_multiple_specs_same_tick():
             f"Two specs → two instances, got {len(instances)}"
         world.tick()  # routing fires for both
         routed = _get_routed_cards(world, include_po=True)
-        # spec-bug → debugger; spec-dev → PO [decompose] card
+        # spec-bug → debugger; spec-dev (feature) → architect gate card
         assignees = sorted(r[1] for r in routed)
-        assert assignees == ["debugger", "product-owner"], \
-            f"Expected debugger + product-owner, got: {assignees}"
+        assert assignees == ["architect", "debugger"], \
+            f"Expected architect + debugger, got: {assignees}"
     finally:
         world.cleanup()
     print("OK: test_multiple_specs_same_tick")
@@ -465,7 +520,8 @@ if __name__ == "__main__":
         test_route_ops,
         test_route_architecture,
         test_route_tickets,
-        test_route_default_tech_lead,
+        test_route_default_architect,
+        test_feature_pipeline_chain,
         # Trigger filtering
         test_wrong_assignee_no_trigger,
         test_wrong_status_no_trigger,

@@ -751,7 +751,8 @@ def main():
     all_actions = []
     for project in projects:
         board = project.get("board", "")
-        path = project.get("path", "")
+        # ponytail: accept `repo` alias — wrong-keyed file made every phase skip silently
+        path = project.get("path") or project.get("repo") or ""
         name = project.get("name", board)
 
         if not board or not path:

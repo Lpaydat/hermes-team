@@ -473,11 +473,13 @@ def test_deeply_nested_json_parses():
 
 
 def test_extreme_nesting_handled_by_decoder():
-    """Pathologically deep nesting (>~1000 levels) exceeds CPython's recursion
-    limit and the json decoder raises RecursionError — it is NOT iterative for
-    nested containers. A template file this deep must be rejected gracefully by
-    the engine's TemplateStore (its contract is "never raises"), not crash the
-    process.
+    """Pathologically deep nesting must be rejected gracefully by the engine's
+    TemplateStore (its contract is "never raises"), not crash the process.
+
+    What the raw decoder does with 5000-deep nesting is CPython-version
+    dependent: <=3.13 raises RecursionError (decoder recurses past the ~1000
+    limit), 3.14+ allows far deeper nesting (RecursionError only ~200k). The
+    engine contract is the same either way: store.load() returns None.
 
     The json *encoder* (json.dumps) is also recursive; we build the payload with
     manual bracket writing to avoid encoder recursion during setup.
@@ -488,15 +490,18 @@ def test_extreme_nesting_handled_by_decoder():
     # recursion during setup; json.dumps itself recurses past ~1000 levels).
     deep_str = '{"k": ' * 5000 + '"leaf"' + '}' * 5000
 
-    # CPython's json decoder recurses for nested containers, so 5000 levels
-    # (> recursion limit, default 1000) raises RecursionError. This is the real
-    # CPython behaviour, not a bug.
-    with pytest.raises(RecursionError):
+    # Document the version-dependent decoder behaviour (not an engine contract):
+    # 3.14+ parses 5000-deep fine; older CPython raises RecursionError here.
+    try:
         json.loads(deep_str)
+    except RecursionError:
+        pass  # pre-3.14 behaviour
 
     # The engine must honour its "never raises" contract: a template file this
-    # deep is rejected (returns None) instead of crashing. Verify end-to-end
-    # against the real store + on-disk file.
+    # deep is rejected (returns None) instead of crashing — whether the decoder
+    # raised (older python) or parsed to a structurally invalid dict (3.14+,
+    # no id/nodes keys -> from_dict rejects). Verify end-to-end against the
+    # real store + on-disk file.
     store = TemplateStore(tempfile.mkdtemp())
     template_path = Path(store.dir) / "deep.json"
     template_path.write_text(deep_str, encoding="utf-8")
@@ -563,7 +568,9 @@ def test_1000_nodes_via_store():
     # NOTE: '!=' IS supported by evaluate_condition
     ("${x} != 'a'", "neq_supported", {"x": "b"}, True),
     # Unsupported operators → evaluate_condition returns False (no crash)
-    ("${x} contains 'abc'", "contains_unsupported", {"x": "abc"}, False),
+    # NOTE: contains IS now supported (builder templates use it)
+    ("${x} contains 'abc'", "contains_supported", {"x": "xxabcxx"}, True),
+    ("${x} contains 'abc'", "contains_supported_false", {"x": "xyz"}, False),
     ("${x} ~= 'abc'", "regex_unsupported", {"x": "abc"}, False),
     ("${x} in ['a','b']", "in_unsupported", {"x": "a"}, False),
     # NOTE: <, <=, >, >= ARE supported (numeric-aware comparison)
@@ -573,8 +580,8 @@ def test_1000_nodes_via_store():
     ("${x} < '5'", "lt_supported_false", {"x": "9"}, False),
 ])
 def test_condition_operators(cond, var, ctx, expected):
-    """evaluate_condition supports ==, !=, exists, is empty, <, <=, >, >=.
-    Unsupported operators (contains, ~=, in) return False — never raises.
+    """evaluate_condition supports ==, !=, contains, exists, is empty, <, <=, >, >=.
+    Unsupported operators (~=, in) return False — never raises.
     The node simply never fires, which is a silent no-op, not a crash."""
     assert evaluate_condition(cond, ctx) is expected, (
         f"condition {cond!r} with ctx {ctx} should be {expected}")

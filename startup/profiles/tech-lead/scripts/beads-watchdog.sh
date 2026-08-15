@@ -28,7 +28,7 @@ if [ ! -f "$ACTIVE_FILE" ]; then exit 1; fi
 ACTIVE_PROJECTS=$(python3 -c "
 import json
 with open('$ACTIVE_FILE') as f: cfg = json.load(f)
-for p in cfg.get('active_projects', []): print(p)
+for p in cfg.get('active_projects', []): print(p.get('path') or p.get('repo') or '')
 " 2>/dev/null)
 
 if [ -z "$ACTIVE_PROJECTS" ]; then exit 0; fi

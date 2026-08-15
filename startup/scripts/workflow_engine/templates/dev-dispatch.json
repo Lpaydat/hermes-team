@@ -1,7 +1,7 @@
 {
   "id": "dev-dispatch",
   "name": "Dev Dispatch — tree builder (decompose→review convergence loop)",
-  "description": "When a spec card completes, route it to the right profile: bugs to debugger, research to scout, ops to ops, architecture to architect, everything else to tech-lead. Replaces the old cron-based dispatch.",
+  "description": "When a spec card completes, route it: bugs to debugger, research to scout, ops to ops, pre-made tickets to PO parse; everything else through the architect gate (architect stamps tech stack from tech-preferences.json → setup scaffolds configs/<lang>/ → PO decompose → milestones). Replaces the old cron-based dispatch.",
   "trigger": {
     "source": "card_completed",
     "condition": {

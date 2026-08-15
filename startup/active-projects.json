@@ -2,11 +2,11 @@
   "active_projects": [
     {
       "board": "port-csv2md",
-      "repo": "/home/lpaydat/workspace/port-csv2md"
+      "path": "/home/lpaydat/workspace/port-csv2md"
     },
     {
       "board": "compose-dataviz",
-      "repo": "/home/lpaydat/workspace/compose-dataviz"
+      "path": "/home/lpaydat/workspace/compose-dataviz"
     }
   ]
 }

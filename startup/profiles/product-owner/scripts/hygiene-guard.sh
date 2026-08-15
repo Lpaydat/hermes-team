@@ -39,7 +39,7 @@ import json
 try:
     data = json.load(open('$ACTIVE_PROJECTS_FILE'))
     for p in data.get('active_projects', []):
-        print(p)
+        print(p.get('path') or p.get('repo') or '')
 except:
     pass
 " 2>/dev/null)

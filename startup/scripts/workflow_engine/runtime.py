@@ -3306,7 +3306,14 @@ class Engine:
                 if "active_projects" in data:
                     for proj in data["active_projects"]:
                         if proj.get("board") == board:
-                            return proj.get("path", "")
+                            # ponytail: accept `repo` alias — a wrong-keyed file
+                            # silently resolved project_dir to "" once (2026-08-15).
+                            # is_dir guard: a stale entry for a deleted repo must
+                            # degrade to "" (cwd=None) — a dangling path would make
+                            # command nodes fail and dir: workspaces resurrect
+                            # empty dirs at claim time.
+                            p = Path(proj.get("path") or proj.get("repo") or "")
+                            return str(p) if p.is_dir() else ""
                 elif board in data:
                     return data[board]
             except (json.JSONDecodeError, TypeError):
@@ -3329,8 +3336,8 @@ class Engine:
                 data = json.loads(projects_file.read_text())
                 if "active_projects" in data:
                     for proj in data["active_projects"]:
-                        path = proj.get("path", "")
-                        if path:
+                        path = proj.get("path") or proj.get("repo") or ""
+                        if path and Path(path).is_dir():
                             return path
                 elif isinstance(data, dict) and data:
                     return next(iter(data.values()), "")

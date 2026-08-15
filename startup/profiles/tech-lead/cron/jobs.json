@@ -27,23 +27,15 @@
       "schedule_display": "0 */4 * * *",
       "repeat": {
         "times": 999999,
-<<<<<<< Updated upstream
-        "completed": 182
-=======
-        "completed": 175
->>>>>>> Stashed changes
+        "completed": 183
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T09:00:32.413473+07:00",
-      "next_run_at": "2026-08-05T04:00:00+07:00",
-<<<<<<< Updated upstream
-      "last_run_at": "2026-08-05T00:00:27.700606+07:00",
-=======
-      "last_run_at": "2026-08-05T00:48:13.036838+07:00",
->>>>>>> Stashed changes
+      "next_run_at": "2026-08-15T20:00:00+07:00",
+      "last_run_at": "2026-08-15T16:12:28.369790+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": null,
@@ -61,9 +53,5 @@
       "fire_claim": null
     }
   ],
-<<<<<<< Updated upstream
-  "updated_at": "2026-08-05T00:00:27.701101+07:00"
-=======
-  "updated_at": "2026-08-05T00:48:13.037297+07:00"
->>>>>>> Stashed changes
+  "updated_at": "2026-08-15T16:12:28.370132+07:00"
 }

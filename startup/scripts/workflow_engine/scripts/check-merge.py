@@ -26,9 +26,9 @@ def load_active_projects():
         return {}
     data = json.loads(f.read_text())
     return {
-        p["board"]: p["path"]
+        p["board"]: (p.get("path") or p.get("repo"))
         for p in data.get("active_projects", [])
-        if p.get("board") and p.get("path")
+        if p.get("board") and (p.get("path") or p.get("repo"))
     }
 
 

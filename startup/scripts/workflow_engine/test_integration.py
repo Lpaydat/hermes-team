@@ -238,6 +238,13 @@ class RealBoardFixture:
         self.engine = Engine(self.templates_dir)
         self.engine.state = StateDB(self.state_db_path)
 
+        # Pin the trigger scan to OUR board. _boards_to_check() only scans
+        # boards listed in ~/.hermes-teams/startup/active-projects.json when
+        # that file exists — a freshly created fixture board is never in it,
+        # so card_completed triggers would silently never fire (and scanning
+        # live boards could fire our test templates on real completions).
+        self.engine._boards_to_check = lambda: [self.board]
+
         # Add template if provided
         if template_data:
             self.add_template(template_data)

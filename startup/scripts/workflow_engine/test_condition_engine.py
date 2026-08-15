@@ -263,6 +263,47 @@ def test_existing_regex_special_chars_literal():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# contains operator + case-insensitive AND/OR (builder templates depend on these)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_contains_substring():
+    # Context keys are flat dotted paths (as built by Engine._build_ctx)
+    ctx = {"nodes.guard.output.stdout": "IDEA_BANK_STATUS: DUE next week"}
+    expr = "${nodes.guard.output.stdout} contains 'DUE'"
+    assert evaluate_condition(expr, ctx) is True
+    assert evaluate_condition("${nodes.guard.output.stdout} contains 'ABSENT'", ctx) is False
+
+def test_contains_none_is_false():
+    """contains on a missing/None value is False, not a crash."""
+    assert evaluate_condition("${nodes.guard.output.stdout} contains 'DUE'", {}) is False
+
+def test_contains_list_membership():
+    ctx = {"items": ["a", "b"]}
+    assert evaluate_condition("${items} contains 'b'", ctx) is True
+    assert evaluate_condition("${items} contains 'c'", ctx) is False
+
+def test_lowercase_or_and():
+    """builder-idea-intake.json uses lowercase `or` — must group like OR."""
+    ctx = {"s": "URGENT stuff"}
+    expr = "${s} contains 'DUE' or ${s} contains 'URGENT'"
+    assert evaluate_condition(expr, ctx) is True
+    assert evaluate_condition("${s} contains 'DUE' OR ${s} contains 'URGENT'", ctx) is True
+    ctx2 = {"s": "quiet", "t": "1"}
+    assert evaluate_condition("${s} contains 'DUE' or ${s} contains 'URGENT'", ctx2) is False
+    assert evaluate_condition("${s} exists and ${t} == '1'", ctx2) is True
+
+def test_or_inside_quoted_literal_is_value():
+    """An `or`/`and` inside a single-quoted literal is part of the value,
+    not an operator (regression guard for the IGNORECASE split)."""
+    ctx = {"s": "priority or die"}
+    assert evaluate_condition("${s} == 'priority or die'", ctx) is True
+    assert evaluate_condition("${s} != 'this and that'", ctx) is True
+    # Real operators still work alongside quoted values containing them
+    assert evaluate_condition("${s} == 'priority or die' or ${s} == 'x'", ctx) is True
+    assert evaluate_condition("${s} contains 'or die' and ${s} exists", ctx) is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Runner
 # ═══════════════════════════════════════════════════════════════════════════
 
