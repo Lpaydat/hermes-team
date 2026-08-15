@@ -15,28 +15,58 @@ def _get_board():
 
 
 def _run_kanban(args_list):
-    """Run a hermes kanban command, return (success, output_text)."""
-    import os
+    """Run a hermes kanban command, return (success, output_text).
+
+    Lock-race hardening (proven 2026-08-15 wf-livetest strand, t_41f9c047):
+    the CLI's own busy_timeout is 120s, but subprocess timeout=30 killed
+    link/block calls queued behind a dispatcher write burst — TimeoutExpired
+    crashed the whole tool, links never landed, and the stranded park needed
+    a manual unblock. Timeout now outlasts busy_timeout; a timeout returns
+    (False, msg) instead of raising; transient failures (timeout / 'locked')
+    are retried with backoff before giving up.
+    """
+    import os, time as _time
     board = _get_board()
     cmd = ["hermes", "kanban", "--board", board] + args_list
     env = os.environ.copy()
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
-    return result.returncode == 0, result.stdout.strip()
+    attempts = [
+        (0.0, 150),   # outlast the CLI's 120s busy_timeout
+        (2.0, 150),
+        (5.0, 150),
+    ]
+    last_err = ""
+    for i, (backoff, tmo) in enumerate(attempts):
+        if backoff:
+            _time.sleep(backoff)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=tmo, env=env)
+        except subprocess.TimeoutExpired as e:
+            last_err = f"timeout after {tmo}s: {' '.join(args_list[:3])}"
+            continue
+        if result.returncode == 0:
+            return True, result.stdout.strip()
+        last_err = (result.stderr or result.stdout or "").strip()[:300]
+        if "locked" in last_err.lower():
+            continue  # transient — retry
+        return False, last_err
+    return False, f"kanban {' '.join(args_list[:3])} failed after {len(attempts)} attempts: {last_err}"
 
 
 def _run_kanban_json(args_list):
-    """Run a hermes kanban command with --json, return parsed JSON or None."""
+    """Run a hermes kanban command with --json, return parsed JSON or None.
+
+    On failure, returns a {'error': ...} dict (falsy-check via .get('id')
+    still works) carrying the stderr so callers can log WHY it failed —
+    silent link failures were half of the 2026-08-15 strand.
+    """
     import os
-    board = _get_board()
-    cmd = ["hermes", "kanban", "--board", board] + args_list + ["--json"]
-    env = os.environ.copy()
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
-    if result.returncode != 0:
-        return None
+    ok, out = _run_kanban(args_list + ["--json"])
+    if not ok:
+        return {"error": out}
     try:
-        return json.loads(result.stdout)
+        return json.loads(out)
     except json.JSONDecodeError:
-        return None
+        return {"error": f"non-JSON output: {out[:200]}"}
 
 
 def _get_my_card_id(**kwargs):
@@ -220,12 +250,25 @@ def kanban_chains(args: dict, **kwargs) -> str:
             prev = aid
         terminal_ids = [after_ids[-1]]
 
-    # 6. Link caller as child of the terminal card(s)
+    # 6. Link caller as child of the terminal card(s) — CHECKED.
+    #    (2026-08-15 strand: these were fire-and-forget; a dispatcher write
+    #    burst silently killed them and the park degenerated.)
+    link_failures = []
     if after:
-        _run_kanban(["link", after_ids[-1], my_card_id])
+        ok, out = _run_kanban(["link", after_ids[-1], my_card_id])
+        if not ok:
+            link_failures.append((after_ids[-1], out))
     else:
         for ids in chain_ids:
-            _run_kanban(["link", ids[-1], my_card_id])
+            ok, out = _run_kanban(["link", ids[-1], my_card_id])
+            if not ok:
+                link_failures.append((ids[-1], out))
+    if link_failures:
+        return json.dumps({
+            "error": "link caller -> terminal(s) FAILED — dependency park would be a no-op. Created cards are listed; do NOT re-call kanban_chains blindly (creates are not idempotent without idempotency_key). Retry `hermes kanban link <terminal> <my_card>` for each failure, then re-block.",
+            "link_failures": [[tid, why] for tid, why in link_failures],
+            "root_id": root_id, "chains": chain_ids, "after": after_ids,
+        })
 
     # 7. Block caller with kind=dependency
     reason = f"waiting_for_matrix:{','.join(terminal_ids)}"
