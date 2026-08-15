@@ -505,32 +505,42 @@ def test_real_trigger_detection():
 def test_real_project_dir_mapping():
     """Verify _board_to_project_dir works with real active-projects.json.
 
-    This test is environment-conditional: it depends on a `crr-pos` board being
-    mapped in active-projects.json (and pointing at a specific project dir).
-    On machines where that mapping is absent, the test skips rather than
-    asserting a hardcoded path that only the original author's box satisfies.
+    Asserts against whatever THIS machine's file actually contains (no
+    hardcoded author-box paths): every mapped board with an existing dir must
+    resolve to that dir; entries whose dir is gone must degrade to "" (is_dir
+    guard — stale entries must not feed dead paths to node workspaces);
+    unknown boards return "". Only skips on machines with no resolvable entry.
     """
     import pytest
-    # Create a real engine instance (uses real templates dir, but we only
-    # need the _board_to_project_dir method)
     templates_dir = Path.home() / ".hermes-teams/startup/scripts/workflow_engine/templates"
     engine = Engine(templates_dir)
 
-    # Test with a board that IS in active-projects.json (crr-pos → crr-pos-v2)
-    project_dir = engine._board_to_project_dir("crr-pos")
-    if project_dir == "":
-        pytest.skip("crr-pos project not mapped in active-projects.json on this machine")
-    assert project_dir == "/home/lpaydat/projects/crr-pos-v2", \
-        f"Expected /home/lpaydat/projects/crr-pos-v2, got: {project_dir}"
+    projects_file = Path.home() / ".hermes-teams/startup/active-projects.json"
+    data = json.loads(projects_file.read_text())
+    entries = data.get("active_projects", [])
 
-    # Test with a board NOT in active-projects.json → fallback to ~/projects/<board>
-    # (won't exist, but should return the path or empty string)
-    project_dir_unknown = engine._board_to_project_dir("nonexistent-board-xyz")
-    assert project_dir_unknown == "", \
-        f"Expected empty for unknown board, got: {project_dir_unknown}"
+    resolvable = [p for p in entries if p.get("board")
+                  and Path(p.get("path") or p.get("repo") or "").is_dir()]
+    if not resolvable:
+        pytest.skip("no active-projects entry with an existing dir on this machine")
 
-    print(f"  crr-pos → {project_dir}")
-    print(f"  unknown board → '{project_dir_unknown}'")
+    # Mapped + dir exists → resolves (exercises the path|repo fallback too)
+    for p in resolvable:
+        expected = str(Path(p.get("path") or p.get("repo")))
+        got = engine._board_to_project_dir(p["board"])
+        assert got == expected, f"{p['board']}: expected {expected}, got {got!r}"
+
+    # Mapped but dir deleted → degrade to "" (never a dangling cwd for nodes)
+    stale = [p for p in entries if p.get("board")
+             and not Path(p.get("path") or p.get("repo") or "").is_dir()]
+    for p in stale:
+        got = engine._board_to_project_dir(p["board"])
+        assert got == "", f"stale entry {p['board']} must degrade to '', got {got!r}"
+
+    # Unknown board → ""
+    assert engine._board_to_project_dir("nonexistent-board-xyz") == ""
+
+    print(f"  resolved: {[p['board'] for p in resolvable]}, stale: {[p['board'] for p in stale]}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

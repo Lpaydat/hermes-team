@@ -25,6 +25,7 @@ without the agent runtime).
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -73,17 +74,30 @@ BOARD = "team"
 
 @pytest.fixture()
 def kernel(tmp_path, monkeypatch):
-    """Isolated real kanban_db on a throwaway file; env wired like a worker."""
-    db_path = tmp_path / "kanban.db"
+    """Isolated real kernel on a throwaway HERMES_HOME with a REAL registered
+    board.
+
+    The subprocess-based tools resolve every call via
+    ``hermes kanban --board <BOARD>``; the CLI validates board existence
+    against the home's boards registry BEFORE the HERMES_KANBAN_DB pin
+    applies, so a bare tmp DB (the old in-process-generation fixture) makes
+    every create fail with "board does not exist". Registering the board in
+    a throwaway home keeps both subprocess CLI and in-process kb calls on the
+    same isolated DB with no leakage into the live home.
+    """
+    home = tmp_path / "e2e-home"
+    home.mkdir()
+    subprocess.run(
+        ["hermes", "kanban", "boards", "create", BOARD, "--name", "e2e kernel"],
+        env={**os.environ, "HERMES_HOME": str(home)},
+        capture_output=True, timeout=60, check=True,
+    )
+    db_path = home / "kanban" / "boards" / BOARD / "kanban.db"
     monkeypatch.setenv("HERMES_KANBAN_DB", str(db_path))
     monkeypatch.setenv("HERMES_KANBAN_BOARD", BOARD)
-    # Pin HERMES_HOME so lifecycle hooks don't warn/route to the default profile.
-    monkeypatch.setenv(
-        "HERMES_HOME", "/home/lpaydat/.hermes-teams/startup/profiles/qa"
-    )
+    monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.delenv("HERMES_KANBAN_RUN_ID", raising=False)
     _unshadow_tools()
-    kb.init_db(db_path=db_path)
     return db_path
 
 
@@ -219,7 +233,8 @@ def test_no_after_fans_caller_into_every_chain_end(kernel, monkeypatch):
     out = json.loads(kc.kanban_chains(args, task_id=caller, _profile="qa"))
     (a1,), (b1,) = out["chains"]
 
-    assert "after" not in out
+    # current contract: `after` is always present, empty when no after-steps
+    assert out["after"] == []
     assert set(out["terminal_ids"]) == {a1, b1}
     with kb.connect(board=BOARD) as conn:
         # both chain ends ready off the done root; caller waits on both
@@ -230,25 +245,35 @@ def test_no_after_fans_caller_into_every_chain_end(kernel, monkeypatch):
         assert _block_kind(conn, caller) == "dependency"
 
 
-def test_block_fails_loudly_on_runid_mismatch_while_running(kernel, monkeypatch):
-    """The real production fragility: the caller IS running, but the env run_id
-    is stale (e.g. a reclaim gave it a new run). block_task refuses on the
-    run_id gate and the handler surfaces a loud, retry-safe error instead of
-    silently leaving the caller un-gated. Also proves the hardening does NOT
-    misread a genuinely-running caller as 'already parked'."""
+def test_kernel_runid_gate_refuses_stale_run(kernel, monkeypatch):
+    """The run-id gate is KERNEL-side (block_task CAS on current_run_id), not
+    plugin-side: the subprocess `hermes kanban block` CLI used by this plugin
+    is orchestrator-context by design (worker ownership rules live in
+    kanban_tools, not the CLI). Assert the invariant where it actually lives:
+    a stale/wrong expected_run_id refuses the block (caller untouched), the
+    real run id parks it as a dependency-wait."""
     caller = _running_caller(monkeypatch)  # sets HERMES_KANBAN_RUN_ID to real run
     real = int(os.environ["HERMES_KANBAN_RUN_ID"])
-    monkeypatch.setenv("HERMES_KANBAN_RUN_ID", str(real + 12345))  # stale/wrong
-    args = {
-        "goal": "E2E runid-mismatch",
-        "chains": [[{"assignee": "qa", "title": "A1", "body": "a1"}]],
-    }
-    out = json.loads(kc.kanban_chains(args, task_id=caller, _profile="qa"))
-    assert "error" in out
-    assert "Block failed" in out["error"]
-    assert "Retry is safe" in out["error"]  # idempotency makes re-invoke recover
+
     with kb.connect(board=BOARD) as conn:
+        # stale run id (e.g. a reclaim replaced the run) → CAS misses, no-op
+        refused = kb.block_task(
+            conn, caller, reason="waiting_for_matrix:x",
+            kind="dependency", expected_run_id=real + 12345,
+        )
+        conn.commit()
+        assert refused is False, "stale run id must NOT be able to block"
         assert _status(conn, caller) == "running"  # untouched, not mis-parked
+
+        # the real run id parks it: running → todo with block_kind=dependency
+        ok = kb.block_task(
+            conn, caller, reason="waiting_for_matrix:x",
+            kind="dependency", expected_run_id=real,
+        )
+        conn.commit()
+        assert ok is True
+        assert _status(conn, caller) == "todo"
+        assert _block_kind(conn, caller) == "dependency"
 
 
 def _task_count():
@@ -261,54 +286,58 @@ def _body(tid):
         return kb.get_task(conn, tid).body or ""
 
 
-def test_idempotent_reinvocation_recovers_not_duplicates(kernel, monkeypatch):
-    """Swarm-parity: a retry/respawn recovers the SAME topology instead of
-    building a duplicate graph (kanban_swarm.create_swarm behaviour)."""
+def test_idempotency_key_dedupes_root_card(kernel, monkeypatch):
+    """Current idempotent surface: `idempotency_key` dedupes the ROOT card.
+    Chain cards carry no keys — re-invocation builds a duplicate graph, which
+    is exactly why the plugin's error returns forbid blind re-calls and hand
+    out repair instructions instead (no 'recovered' retry path exists)."""
     caller = _running_caller(monkeypatch)
     args = {
         "goal": "E2E idempotency",
-        "chains": [
-            [{"assignee": "qa", "title": "A1", "body": "a1"},
-             {"assignee": "qa", "title": "A2", "body": "a2"}],
-            [{"assignee": "qa", "title": "B1", "body": "b1"}],
-        ],
-        "after": [{"assignee": "qa", "title": "synthesize", "body": "combine"}],
+        "idempotency_key": "e2e-root-key-1",
+        "chains": [[{"assignee": "qa", "title": "A1", "body": "a1"}]],
     }
     out1 = json.loads(kc.kanban_chains(args, task_id=caller, _profile="qa"))
     assert out1["status"] == "blocked"
-    assert not out1.get("recovered")
-    n1 = _task_count()  # caller + root + 3 chain cards + 1 after = 6
+    n1 = _task_count()
 
-    # Re-invoke with the SAME caller + run_id (simulates a respawn/retry).
-    out2 = json.loads(kc.kanban_chains(args, task_id=caller, _profile="qa"))
-    n2 = _task_count()
-
-    assert out2.get("recovered") is True
-    assert out2["root_id"] == out1["root_id"]
-    assert out2["terminal_ids"] == out1["terminal_ids"]
-    assert n2 == n1, f"re-invocation duplicated cards: {n1} -> {n2}"
-    with kb.connect(board=BOARD) as conn:
-        assert _status(conn, caller) == "todo"
-        assert _block_kind(conn, caller) == "dependency"
+    # Second call with the same key: the kernel dedupes the root create.
+    caller2 = _running_caller(monkeypatch)
+    out2 = json.loads(kc.kanban_chains(args, task_id=caller2, _profile="qa"))
+    assert out2["root_id"] == out1["root_id"], \
+        "same idempotency_key must resolve to the same root card"
 
 
-def test_worker_bodies_carry_blackboard_context(kernel, monkeypatch):
-    """Swarm-parity: every worker body gets a pointer to the shared root card
-    (mirrors kanban_swarm._swarm_context)."""
+def test_blackboard_context_lands_on_root_comment(kernel, monkeypatch):
+    """Current blackboard mechanism: context is a prefixed COMMENT on the root
+    card (BLACKBOARD_PREFIX JSON), not text injected into worker bodies —
+    worker bodies keep the author's text verbatim."""
     caller = _running_caller(monkeypatch)
     args = {
-        "goal": "E2E context suffix",
+        "goal": "E2E context",
         "chains": [[{"assignee": "qa", "title": "A1", "body": "do a1"}]],
-        "after": [{"assignee": "qa", "title": "synthesize", "body": "combine"}],
+        "blackboard": {"env_facts": "python3.14", "spec_path": "/tmp/SPEC.md"},
     }
     out = json.loads(kc.kanban_chains(args, task_id=caller, _profile="qa"))
     root = out["root_id"]
     a1 = out["chains"][0][0]
-    after0 = out["after"][0]
-    for tid in (a1, after0):
-        body = _body(tid)
-        assert "## Chains protocol" in body
-        assert root in body, "worker must know the shared root/blackboard id"
+
+    with kb.connect(board=BOARD) as conn:
+        rows = conn.execute(
+            "SELECT body FROM task_comments WHERE task_id = ? ORDER BY id",
+            (root,),
+        ).fetchall()
+    comments = [r["body"] if hasattr(r, "keys") else r[0] for r in rows]
+    bb = [c for c in comments if c.startswith("[swarm:blackboard] ")]
+    assert bb, f"blackboard comment missing on root; comments: {comments}"
+    payload = json.loads(bb[0].removeprefix("[swarm:blackboard] "))
+    assert payload["key"] == "matrix_context"
+    assert payload["value"]["env_facts"] == "python3.14"
+    assert payload["value"]["spec_path"] == "/tmp/SPEC.md"
+    assert payload["value"]["goal"] == "E2E context"
+
+    # worker bodies carry the author's text verbatim (no protocol injection)
+    assert _body(a1) == "do a1"
 
 
 if __name__ == "__main__":
