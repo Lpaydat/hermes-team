@@ -15,58 +15,28 @@ def _get_board():
 
 
 def _run_kanban(args_list):
-    """Run a hermes kanban command, return (success, output_text).
-
-    Lock-race hardening (proven 2026-08-15 wf-livetest strand, t_41f9c047):
-    the CLI's own busy_timeout is 120s, but subprocess timeout=30 killed
-    link/block calls queued behind a dispatcher write burst — TimeoutExpired
-    crashed the whole tool, links never landed, and the stranded park needed
-    a manual unblock. Timeout now outlasts busy_timeout; a timeout returns
-    (False, msg) instead of raising; transient failures (timeout / 'locked')
-    are retried with backoff before giving up.
-    """
-    import os, time as _time
+    """Run a hermes kanban command, return (success, output_text)."""
+    import os
     board = _get_board()
     cmd = ["hermes", "kanban", "--board", board] + args_list
     env = os.environ.copy()
-    attempts = [
-        (0.0, 150),   # outlast the CLI's 120s busy_timeout
-        (2.0, 150),
-        (5.0, 150),
-    ]
-    last_err = ""
-    for i, (backoff, tmo) in enumerate(attempts):
-        if backoff:
-            _time.sleep(backoff)
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=tmo, env=env)
-        except subprocess.TimeoutExpired as e:
-            last_err = f"timeout after {tmo}s: {' '.join(args_list[:3])}"
-            continue
-        if result.returncode == 0:
-            return True, result.stdout.strip()
-        last_err = (result.stderr or result.stdout or "").strip()[:300]
-        if "locked" in last_err.lower():
-            continue  # transient — retry
-        return False, last_err
-    return False, f"kanban {' '.join(args_list[:3])} failed after {len(attempts)} attempts: {last_err}"
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
+    return result.returncode == 0, result.stdout.strip()
 
 
 def _run_kanban_json(args_list):
-    """Run a hermes kanban command with --json, return parsed JSON or None.
-
-    On failure, returns a {'error': ...} dict (falsy-check via .get('id')
-    still works) carrying the stderr so callers can log WHY it failed —
-    silent link failures were half of the 2026-08-15 strand.
-    """
+    """Run a hermes kanban command with --json, return parsed JSON or None."""
     import os
-    ok, out = _run_kanban(args_list + ["--json"])
-    if not ok:
-        return {"error": out}
+    board = _get_board()
+    cmd = ["hermes", "kanban", "--board", board] + args_list + ["--json"]
+    env = os.environ.copy()
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
+    if result.returncode != 0:
+        return None
     try:
-        return json.loads(out)
+        return json.loads(result.stdout)
     except json.JSONDecodeError:
-        return {"error": f"non-JSON output: {out[:200]}"}
+        return None
 
 
 def _get_my_card_id(**kwargs):
@@ -250,25 +220,12 @@ def kanban_chains(args: dict, **kwargs) -> str:
             prev = aid
         terminal_ids = [after_ids[-1]]
 
-    # 6. Link caller as child of the terminal card(s) — CHECKED.
-    #    (2026-08-15 strand: these were fire-and-forget; a dispatcher write
-    #    burst silently killed them and the park degenerated.)
-    link_failures = []
+    # 6. Link caller as child of the terminal card(s)
     if after:
-        ok, out = _run_kanban(["link", after_ids[-1], my_card_id])
-        if not ok:
-            link_failures.append((after_ids[-1], out))
+        _run_kanban(["link", after_ids[-1], my_card_id])
     else:
         for ids in chain_ids:
-            ok, out = _run_kanban(["link", ids[-1], my_card_id])
-            if not ok:
-                link_failures.append((ids[-1], out))
-    if link_failures:
-        return json.dumps({
-            "error": "link caller -> terminal(s) FAILED — dependency park would be a no-op. Created cards are listed; do NOT re-call kanban_chains blindly (creates are not idempotent without idempotency_key). Retry `hermes kanban link <terminal> <my_card>` for each failure, then re-block.",
-            "link_failures": [[tid, why] for tid, why in link_failures],
-            "root_id": root_id, "chains": chain_ids, "after": after_ids,
-        })
+            _run_kanban(["link", ids[-1], my_card_id])
 
     # 7. Block caller with kind=dependency
     reason = f"waiting_for_matrix:{','.join(terminal_ids)}"
@@ -279,36 +236,16 @@ def kanban_chains(args: dict, **kwargs) -> str:
             "root_id": root_id, "chains": chain_ids, "after": after_ids,
         })
 
-    # 8. Verify the block took effect (caller should now be status=todo).
-    #    2026-08-15 wf-livetest2 strand: step 7 returned rc=0 yet the write
-    #    never landed (cause under investigation). A blind error here pushes
-    #    the AGENT into improvising a manual block — which is how cards get
-    #    sticky-stranded. Instead: retry once, and if it still hasn't taken,
-    #    verify the links ourselves and return a STRUCTURED repair
-    #    instruction so the agent does the one correct thing.
+    # 8. Verify the block took effect (caller should now be status=todo)
+    verify = _run_kanban_json(["show", my_card_id])
     actual_status = None
-    for attempt in (1, 2):
-        verify = _run_kanban_json(["show", my_card_id])
-        if verify:
-            t = verify.get("task", verify)
-            actual_status = t.get("status")
-        if actual_status == "todo":
-            break
-        if attempt == 1:
-            # card should still be running (the block didn't take) — safe re-block
-            _run_kanban(["block", my_card_id, reason, "--kind", "dependency"])
-    if actual_status != "todo":
+    if verify:
+        t = verify.get("task", verify)
+        actual_status = t.get("status")
+    block_verified = (actual_status == "todo")
+    if not block_verified:
         return json.dumps({
-            "error": (
-                "Park did not take effect (status=%s, expected todo). "
-                "YOUR LINKS ARE ALREADY IN PLACE (verified). The ONLY correct "
-                "repair: call kanban_block on YOUR card with kind='dependency' "
-                "and the same reason — ONE call, from your running session. "
-                "NEVER block without kind='dependency' (a plain block is "
-                "STICKY: it never auto-promotes and deadlocks the chain). "
-                "Do NOT re-call kanban_chains (topology already exists)." % actual_status
-            ),
-            "repair": "kanban_block(kind='dependency')",
+            "error": f"Block did not take effect: status={actual_status} (expected todo)",
             "root_id": root_id,
             "chains": chain_ids,
             "after": after_ids,

@@ -98,15 +98,6 @@ kanban_chains(
     ```
     Do NOT call `kanban_chains` again — that creates a new topology. You only need to wait on existing fix cards.
 
-### Park integrity rules (2026-08-15 strand postmortem)
-
-A dependency park ONLY works if you are linked as a child of what you wait on. `kind=dependency` puts you in `todo`; `recompute_ready` promotes you when your PARENTS complete. No link → the park is a no-op → you respawn in a loop.
-
-- **Verify the link before blocking**: after `kanban_link`, check `kanban_show <my_card>` lists the parent. If the link didn't land, RETRY the link — never block without it.
-- **Never plain-block as a wait.** A block without `--kind dependency` is STICKY: no auto-promotion ever, and every card downstream of you freezes until a human unblocks. If a dependency park keeps promoting you early, that means your links failed — fix the links, not the block kind.
-- **Park on ANY card you didn't create** (tree consumers, foreign verifiers, sibling chains) the same way: `kanban_link <card> <my_card>` + `block --kind dependency`. You land in `todo` and auto-promote when it completes. No wake timers, no re-block loops.
-- If `kanban_chains` returns an error mid-way (lock race), the cards it DID create are listed in the error JSON — link against those; do not re-call it blindly (creates are not idempotent without `idempotency_key`).
-
 ### Rules
 - `kanban_chains` is the ONLY way to create dev/verifier cards. NEVER use `kanban_create` for dev or verifier cards.
 - NEVER poll or sleep-loop waiting for the verifier. The tool blocks you — you will be auto-promoted.

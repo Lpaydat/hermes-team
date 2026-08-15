@@ -153,7 +153,7 @@ ls .driver/  # should have at least goal.md
 ### Standard settings for all profiles
 ```yaml
 model:
-  default: glm-5.3
+  default: glm-5.2
   provider: zai
   rate_limit_delay: 30
 fallback_model: []

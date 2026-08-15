@@ -1,6 +1,6 @@
 model:
   context_length: 1000000
-  default: glm-5.3
+  default: glm-5.2
   provider: zai
 toolsets:
 - hermes-cli
@@ -16,7 +16,7 @@ kanban:
 auxiliary:
   vision:
     provider: zai
-    model: glm-5.3
+    model: glm-5.2
 display:
   skin: dgx-spark
 skills:

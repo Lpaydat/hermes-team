@@ -8,7 +8,7 @@
       "model": null,
       "provider": null,
       "provider_snapshot": "zai",
-      "model_snapshot": "glm-5.3",
+      "model_snapshot": "glm-5.2",
       "base_url": null,
       "script": "healthcheck.sh",
       "no_agent": true,
