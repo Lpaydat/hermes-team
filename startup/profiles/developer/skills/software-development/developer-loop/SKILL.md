@@ -53,6 +53,7 @@ timeout --signal=TERM --kill-after=30 <wall_secs> \
 
 - **NO turn-cap or budget flag exists** (verified: `--auto-test` and `--max-turns` are REJECTED as unknown options). The wall-clock `timeout` wrapper IS the only cap.
 - JSON output (`--mode json`) provides per-turn tool calls and final result — parse for session metadata.
+- **Output format drift (verified 2026-08-15, pi 0.84.1)**: the stream is now an event log, NOT one response object per line. Events: `session` (carries `sessionId`), `turn_start/turn_end`, `message_start/message_end`, `tool_execution_*`. Session id: take `sessionId` from the `session` event (the old `responseId`-in-first-line rule no longer holds). Turn count = `turn_end` events; per-message cost may be absent (reported $0) — fall back to wall-clock/turns for budget signal.
 - **Warm resume on retry**: `pi --session <session_id> -p "<findings>"` — sessions are stored under `~/.pi/agent/sessions/<cwd-encoded>/`. Resume is cwd-scoped: run from the SAME directory as the original invocation. Do NOT use `--session-dir` — let pi discover sessions by cwd automatically.
 - Session ID is in the first JSONL line of the output stream (`responseId` field) or visible via `pi --list-sessions`.
 
@@ -84,6 +85,8 @@ The harness prompt = contract items (verbatim from contract_ref) + evals command
 ## 3. Mechanical gates (your ONLY judgment surface)
 
 Run after the harness exits: `evals_cmd` → test suite → lint → typecheck. Binary pass/fail only. You never assess quality, design, or spec fit — grading generator output is the reviewer's job, and self-grading is the exact failure mode the role separation exists to prevent.
+
+**ALSO audit git state after EVERY harness run** (verified necessary 2026-08-15): a harness may pass all gates, report success, and still leave the repo dirty — e.g. re-creating a file it just committed as deleted, leaving it staged. The harness's reported numbers then describe a PAST state, not the tree you're handing over. Always re-run: `git status --porcelain` (expect exactly the pre-existing out-of-scope deltas), `git ls-files` on deleted paths, and the full gate suite YOURSELF on the final tree before completing. Stray mechanical state (staged zombie file) may be fixed directly with `git rm -f` — that's index hygiene, not raw-coding fallback.
 
 - Gates green → §4.
 - Gates fail → ONE warm-resume round with the failure output as findings, within the remaining budget.

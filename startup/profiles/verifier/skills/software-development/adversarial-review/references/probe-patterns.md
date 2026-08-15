@@ -537,7 +537,54 @@ print the input's real properties. The failure is in the input, not the code.
 
 ---
 
-## 9. Purity-probe self-contamination (the locals/globals diff trap)
+## 9. Pipe-consumer probes that never break the pipe (input shape vs consumer shape)
+
+**Defect class:** a broken-pipe / early-close probe ("SUT piped into a
+consumer that closes early") quietly tests NOTHING because the **input's line
+structure lets the consumer read the entire stream** before closing — no
+EPIPE ever occurs. The probe then reports the SUT's rc=0/silent behavior as
+either a false PASS (when silence is expected anyway) or a false FAIL (when
+the probe asserts rc must be nonzero). The trap generalizes: the probe's
+PREMISE (early close ⇒ EPIPE) must hold for the actual input+consumer pair.
+
+**Concrete example (real session — broken-pipe verification of a CLI):**
+```
+input: python3 -c "print('abcdefgh'*200000)"   # ONE line, 1.6MB, no \n until EOF
+probe: python3 main.py big.txt | head -n 1
+# head -n 1 consumes the ENTIRE single line (all 1.6MB), producer finishes
+# normally, exits 0. PIPESTATUS[0]=0 — NOT evidence the fix works or fails;
+# the pipe was never broken. Same file with head -c 20 (byte consumer): rc=1.
+```
+
+**Discipline:**
+1. **Match consumer granularity to input shape.** `head -n K` needs an input
+   with MORE than K lines (a one-line file defeats it). Byte consumers
+   (`head -c N`, `dd bs=1 count=N`) work on any input larger than N.
+2. **Assert the premise, not just the outcome.** Before citing the probe,
+   confirm the EPIPE actually fired — rc of the producer must be nonzero
+   (1/SIGPIPE-shaped), or use the deterministic no-race form:
+   `Popen(stdout=PIPE)` then `proc.stdout.close()` BEFORE the child writes.
+   Popen-close is race-free and works for ANY input size, including tiny ones
+   (which is how you probe the small-write/buffered regime).
+3. **Sanity-check rc=0 results.** A rc=0 from a piped producer is only valid
+   if the consumer was expected to drain the stream; otherwise the premise
+   failed and the probe must be re-shaped (multi-line input for `head -n`).
+
+**Common shapes this catches (probe-construction bugs, not code bugs):**
+- `head -n 1` against a single-line/no-newline input file (consumer reads
+  everything; probe vacuous).
+- `less -F` / pager probes where the pager page-fits the whole output and
+  never exits early — vacuous unless output exceeds the page.
+- Asserting "silent exit 1" but getting rc=0, then reading it as a fix
+  failure — first verify the pipe was ever broken (producer rc, or
+  Popen-close determinism).
+- Shell-pipeline race flakes: `cmd | head` where head exits before the
+  producer's first write — nondeterministic across runs; prefer the
+  Popen-close form for the deterministic leg of the claim.
+
+---
+
+## 10. Purity-probe self-contamination (the locals/globals diff trap)
 
 **Defect class:** a probe that verifies "no side effects / no global state
 mutation" (a common AC: "the function is pure") by snapshotting `locals()` or

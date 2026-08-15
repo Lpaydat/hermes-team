@@ -1,12 +1,8 @@
 {
   "active_projects": [
     {
-      "board": "port-csv2md",
-      "repo": "/home/lpaydat/workspace/port-csv2md"
-    },
-    {
-      "board": "compose-dataviz",
-      "repo": "/home/lpaydat/workspace/compose-dataviz"
+      "board": "wf-livetest3",
+      "repo": "/home/lpaydat/workspace/wf-livetest3"
     }
   ]
 }
