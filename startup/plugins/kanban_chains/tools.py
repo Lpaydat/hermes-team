@@ -279,16 +279,36 @@ def kanban_chains(args: dict, **kwargs) -> str:
             "root_id": root_id, "chains": chain_ids, "after": after_ids,
         })
 
-    # 8. Verify the block took effect (caller should now be status=todo)
-    verify = _run_kanban_json(["show", my_card_id])
+    # 8. Verify the block took effect (caller should now be status=todo).
+    #    2026-08-15 wf-livetest2 strand: step 7 returned rc=0 yet the write
+    #    never landed (cause under investigation). A blind error here pushes
+    #    the AGENT into improvising a manual block — which is how cards get
+    #    sticky-stranded. Instead: retry once, and if it still hasn't taken,
+    #    verify the links ourselves and return a STRUCTURED repair
+    #    instruction so the agent does the one correct thing.
     actual_status = None
-    if verify:
-        t = verify.get("task", verify)
-        actual_status = t.get("status")
-    block_verified = (actual_status == "todo")
-    if not block_verified:
+    for attempt in (1, 2):
+        verify = _run_kanban_json(["show", my_card_id])
+        if verify:
+            t = verify.get("task", verify)
+            actual_status = t.get("status")
+        if actual_status == "todo":
+            break
+        if attempt == 1:
+            # card should still be running (the block didn't take) — safe re-block
+            _run_kanban(["block", my_card_id, reason, "--kind", "dependency"])
+    if actual_status != "todo":
         return json.dumps({
-            "error": f"Block did not take effect: status={actual_status} (expected todo)",
+            "error": (
+                "Park did not take effect (status=%s, expected todo). "
+                "YOUR LINKS ARE ALREADY IN PLACE (verified). The ONLY correct "
+                "repair: call kanban_block on YOUR card with kind='dependency' "
+                "and the same reason — ONE call, from your running session. "
+                "NEVER block without kind='dependency' (a plain block is "
+                "STICKY: it never auto-promotes and deadlocks the chain). "
+                "Do NOT re-call kanban_chains (topology already exists)." % actual_status
+            ),
+            "repair": "kanban_block(kind='dependency')",
             "root_id": root_id,
             "chains": chain_ids,
             "after": after_ids,
