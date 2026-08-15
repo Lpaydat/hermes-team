@@ -7,6 +7,10 @@
     {
       "board": "compose-dataviz",
       "path": "/home/lpaydat/workspace/compose-dataviz"
+    },
+    {
+      "board": "wf-livetest4",
+      "path": "/home/lpaydat/workspace/wf-livetest4"
     }
   ]
 }
