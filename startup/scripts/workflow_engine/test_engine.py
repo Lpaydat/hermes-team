@@ -1244,11 +1244,14 @@ def test_no_metadata():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_output_schema_validation():
-    """A card with output not matching the schema should FAIL the node (hard validation).
+    """Schema-invalid completion: retry with a fresh card, then FAIL permanently.
 
-    Enterprise-grade behavior: when a node's card completes with metadata that
-    violates the node's declared output.schema (JSON Schema), the node is marked
-    FAILED (not DONE), and downstream nodes that depend on it must NOT dispatch.
+    Contract (since 2026-08-16): a card completing with metadata that violates
+    the node's output.schema re-dispatches the SAME node with a fresh card
+    (:iterN idempotency key) up to MAX_VALIDATION_RETRIES=2 times — the done
+    card can never be re-completed, so without the retry the instance wedges
+    active forever. Only after the retries are exhausted does the node FAIL
+    hard and downstream get SKIPPED (the pre-retry behavior).
     """
     world = FakeWorld()
     world.add_template({
@@ -1272,28 +1275,108 @@ def test_output_schema_validation():
     world.start("schema-test")
     world.tick()
 
-    # Complete qa with INVALID output (missing verdict)
-    conn = sqlite3.connect(str(world.board_db))
-    qa_card = conn.execute("SELECT id FROM tasks WHERE assignee='qa'").fetchone()[0]
-    conn.close()
-    world.complete_card(qa_card, metadata={"something_else": "no verdict"})
+    def qa_cards():
+        conn = sqlite3.connect(str(world.board_db))
+        rows = conn.execute(
+            "SELECT id, idempotency_key FROM tasks WHERE assignee='qa' ORDER BY created_at"
+        ).fetchall()
+        conn.close()
+        return rows
 
-    # Tick: node should FAIL hard (validation error), not complete
+    # Attempt 1: INVALID output → retry 1/2, fresh card dispatched next tick
+    world.complete_card(qa_cards()[0][0], metadata={"something_else": "no verdict"})
+    actions = world.tick()
+    assert any("VALIDATION FAILED" in a and "retry 1/2" in a for a in actions), \
+        f"Expected retry-1 VALIDATION FAILED, got: {actions}"
+    assert not any("SKIPPED" in a and "done" in a for a in actions), \
+        f"done must NOT be skipped while retrying, got: {actions}"
+
+    # Attempt 2 (iter1 card): still INVALID → retry 2/2
+    world.complete_card(qa_cards()[1][0], metadata={"still": "wrong"})
+    actions = world.tick()
+    assert any("VALIDATION FAILED" in a and "retry 2/2" in a for a in actions), \
+        f"Expected retry-2 VALIDATION FAILED, got: {actions}"
+
+    # Attempt 3 (iter2 card): INVALID again → retries exhausted → FAIL hard,
+    # downstream SKIPPED (the pre-retry permanent behavior)
+    world.complete_card(qa_cards()[2][0], metadata={"never": "valid"})
     actions = world.tick()
     assert any("VALIDATION FAILED" in a and "qa" in a for a in actions), \
-        f"Expected qa VALIDATION FAILED, got: {actions}"
-    # Downstream should NOT advance (dependency failed)
+        f"Expected final qa VALIDATION FAILED, got: {actions}"
     assert not any("DISPATCHED" in a and "done" in a for a in actions), \
         f"done node must NOT dispatch when qa failed validation, got: {actions}"
-
-    # Validation failure detected and downstream skipped
-    assert any("VALIDATION FAILED" in a and "qa" in a for a in actions), \
-        f"Expected qa VALIDATION FAILED, got: {actions}"
     assert any("SKIPPED" in a and "done" in a for a in actions), \
         f"done node should be SKIPPED when qa failed, got: {actions}"
 
     world.cleanup()
     print("OK: test_output_schema_validation")
+
+
+def test_output_schema_validation_retry_heals():
+    """A schema-invalid completion followed by a VALID retry completes normally.
+
+    This is the wedge-heal path proven missing live on wf-livetest4: the first
+    verify card completed without a required field; with the retry, the fresh
+    card's valid completion lets the workflow proceed to done (no wedge).
+    """
+    world = FakeWorld()
+    world.add_template({
+        "id": "schema-heal",
+        "name": "Schema heal",
+        "nodes": [
+            {"id": "qa", "profile": "qa",
+             "body_template": "Test",
+             "output": {"schema": {
+                 "type": "object",
+                 "required": ["verdict"],
+                 "properties": {"verdict": {"type": "string", "enum": ["PASS", "FAIL"]}},
+             }}},
+            {"id": "after", "profile": "product-owner",
+             "body_template": "After ${nodes.qa.output.verdict}",
+             "depends_on": ["qa"]},
+        ],
+    })
+
+    world.start("schema-heal")
+    world.tick()
+
+    def qa_cards():
+        conn = sqlite3.connect(str(world.board_db))
+        rows = conn.execute(
+            "SELECT id, idempotency_key FROM tasks WHERE assignee='qa' ORDER BY created_at"
+        ).fetchall()
+        conn.close()
+        return rows
+
+    # Invalid first completion → retry
+    world.complete_card(qa_cards()[0][0], metadata={"oops": True})
+    actions = world.tick()
+    assert any("VALIDATION FAILED" in a and "retry 1/2" in a for a in actions), actions
+
+    # The retry card carries the :iter1 idempotency suffix (fresh card)
+    assert qa_cards()[1][1].endswith(":qa:iter1"), \
+        f"retry card must use :iter1 idempotency key, got: {qa_cards()}"
+
+    # Valid completion on the retry card → node DONE, downstream dispatched
+    world.complete_card(qa_cards()[1][0], metadata={"verdict": "PASS"})
+    actions = world.tick()
+    assert any("DONE node qa" in a for a in actions), \
+        f"Expected qa DONE after valid retry, got: {actions}"
+    assert any("DISPATCHED" in a and "after" in a for a in actions), \
+        f"Expected downstream dispatch after healed verify, got: {actions}"
+    assert not any("VALIDATION FAILED" in a for a in actions), actions
+
+    # Finish downstream → workflow completes (no wedge)
+    conn = sqlite3.connect(str(world.board_db))
+    after_id = conn.execute("SELECT id FROM tasks WHERE assignee='product-owner'").fetchone()[0]
+    conn.close()
+    world.complete_card(after_id, metadata={})
+    world.tick()
+    active = world.engine.state.load_active_instances()
+    assert len(active) == 0, f"Instance should complete after healed verify, got {len(active)} active"
+
+    world.cleanup()
+    print("OK: test_output_schema_validation_retry_heals")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -4664,6 +4747,7 @@ if __name__ == "__main__":
         test_malformed_metadata,
         test_no_metadata,
         test_output_schema_validation,
+        test_output_schema_validation_retry_heals,
         test_state_cleanup_gc,
         test_dead_branch,
         test_long_chain,

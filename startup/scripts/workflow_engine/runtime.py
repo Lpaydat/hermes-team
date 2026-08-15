@@ -39,6 +39,9 @@ log = logging.getLogger(__name__)
 STATE_DB = Path.home() / ".hermes-teams/startup/kanban/workflow-state.db"
 LOCK_FILE = Path.home() / ".hermes-teams/startup/kanban/workflow-engine.lock"
 TRIGGER_LOOKBACK_SECS = 3600  # 1 hour
+# How many times a node's card may complete with schema-invalid metadata before
+# the node fails permanently (each retry re-dispatches the node with a fresh card).
+MAX_VALIDATION_RETRIES = 2
 
 
 def _extract_parent_workflow(idempotency_key: str) -> str | None:
@@ -1212,6 +1215,35 @@ class Engine:
                     valid, err = validate_output(inst.board, card_id, node.output.schema)
                     if not valid:
                         log.warning("VALIDATION FAILED node %s (card %s): %s", node.id, card_id, err)
+                        # The agent violated its metadata contract. Retry the
+                        # SAME node with a fresh card (next iteration idempotency
+                        # key) up to MAX validation retries — the card itself is
+                        # terminal (done) and can never be re-completed, so
+                        # without this the instance wedges active forever with
+                        # no sanctioned recovery (live-proven on wf-livetest4,
+                        # 2026-08-15: verify completed without a required field;
+                        # workers improvised around it while the engine stuck).
+                        retries = ns.get("validation_retries", 0)
+                        if retries < MAX_VALIDATION_RETRIES:
+                            iterations = ns.get("iterations", [])
+                            iterations.append({
+                                "iteration": ns.get("iteration", 0),
+                                "card_id": card_id,
+                                "card_status": card.status,
+                                "output": {"_validation_error": err},
+                            })
+                            del iterations[10:]  # bounded audit trail, same as reset pass
+                            ns["iterations"] = iterations
+                            ns["card_id"] = None
+                            ns["card_status"] = ""
+                            ns.pop("output", None)
+                            ns["iteration"] = ns.get("iteration", 0) + 1
+                            ns["validation_retries"] = retries + 1
+                            actions.append(
+                                f"VALIDATION FAILED node {node.id} (card {card_id}) on {inst.board}: {err} "
+                                f"— retry {retries + 1}/{MAX_VALIDATION_RETRIES} (fresh card)"
+                            )
+                            continue
                         ns["failed"] = True
                         ns["output"] = {"_validation_error": err}
                         actions.append(f"VALIDATION FAILED node {node.id} (card {card_id}) on {inst.board}: {err}")
