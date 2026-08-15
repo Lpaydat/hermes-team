@@ -1,5 +1,5 @@
 model:
-  default: glm-5.2
+  default: glm-5.3
   provider: zai
   base_url: https://api.z.ai/api/coding/paas/v4
   context_length: 1000000

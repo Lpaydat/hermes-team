@@ -9,7 +9,7 @@
       "model": null,
       "provider": null,
       "provider_snapshot": "zai",
-      "model_snapshot": "glm-5.2",
+      "model_snapshot": "glm-5.3",
       "base_url": null,
       "script": "scan-guard.sh",
       "no_agent": false,
@@ -107,7 +107,7 @@
       "model": null,
       "provider": null,
       "provider_snapshot": "zai",
-      "model_snapshot": "glm-5.2",
+      "model_snapshot": "glm-5.3",
       "base_url": null,
       "script": "pipeline-guard.sh",
       "no_agent": false,
@@ -135,7 +135,7 @@
 =======
       "last_run_at": "2026-08-02T02:00:16.445277+07:00",
       "last_status": "error",
-      "last_error": "RuntimeError: Skipped to prevent unintended spend: global inference config drifted since this job was created (model 'glm-5.2' -> 'glm-4.6'), and this job is unpinned. No inference call was made. To run on the new config, pin it explicitly: `cronjob action=update job_id=7872dbc93ab1 provider=<provider> model=<model>` (or pin the original values to keep them). See #44585.",
+      "last_error": "RuntimeError: Skipped to prevent unintended spend: global inference config drifted since this job was created (model 'glm-5.3' -> 'glm-4.6'), and this job is unpinned. No inference call was made. To run on the new config, pin it explicitly: `cronjob action=update job_id=7872dbc93ab1 provider=<provider> model=<model>` (or pin the original values to keep them). See #44585.",
 >>>>>>> Stashed changes
       "last_delivery_error": null,
       "deliver": "local",
