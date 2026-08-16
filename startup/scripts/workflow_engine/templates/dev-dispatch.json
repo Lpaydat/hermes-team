@@ -188,7 +188,6 @@
         "schema": {
           "type": "object",
           "required": [
-            "decomposed",
             "ticket_count",
             "ticket_ids"
           ],
@@ -254,7 +253,6 @@
         "schema": {
           "type": "object",
           "required": [
-            "decomposed",
             "ticket_count",
             "ticket_ids"
           ],
