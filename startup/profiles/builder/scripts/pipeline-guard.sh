@@ -30,13 +30,26 @@ if [ -f "$MARKER" ]; then
             LAST_ISO=$(date -d "@$LAST_EPOCH" +%Y-%m-%dT%H:%M:%S 2>/dev/null || echo "1970-01-01T00:00:00")
             URGENT=$(echo "$BOARD_JSON" | python3 -c "
 import json, sys
-last = '$LAST_ISO'
+last = $LAST_EPOCH  # epoch int — compare numerically
+def to_epoch(v):
+    # kanban CLI emits epoch ints for created_at/started_at/completed_at and
+    # may emit ISO strings for updated_at; handle both.
+    if v in (None, ''):
+        return 0
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v)[:19]
+    import datetime
+    try:
+        return datetime.datetime.strptime(s, '%Y-%m-%dT%H:%M:%S').replace(tzinfo=datetime.timezone.utc).timestamp()
+    except ValueError:
+        return 0
 try:
     tasks = json.load(sys.stdin)
     if isinstance(tasks, dict): tasks = tasks.get('tasks', [])
     hits = []
     for t in tasks:
-        upd = (t.get('updated_at') or t.get('completed_at') or '')[:19]
+        upd = to_epoch(t.get('updated_at') or t.get('completed_at'))
         if upd > last and t.get('status') in ('done', 'review', 'blocked'):
             hits.append(f\"{t.get('id')}:{t.get('status')}:{(t.get('title') or '')[:40]}\")
     print('; '.join(hits))
