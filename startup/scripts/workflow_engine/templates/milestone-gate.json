@@ -7,7 +7,10 @@
     "condition": {
       "assignee": "product-owner",
       "status": "done",
-      "title_prefix_any": ["[milestone-", "[refactor-request]"]
+      "title_prefix_any": [
+        "[milestone-",
+        "[refactor-request]"
+      ]
     }
   },
   "nodes": [
@@ -20,12 +23,31 @@
       "output": {
         "schema": {
           "type": "object",
-          "required": ["plan_complete", "sizing"],
+          "required": [
+            "plan_complete",
+            "sizing"
+          ],
           "properties": {
-            "plan_complete": {"type": "boolean"},
-            "sizing": {"type": "string", "enum": ["small", "medium", "large"]},
-            "artifact_type": {"type": "string"},
-            "claims": {"type": "array", "items": {"type": "string"}}
+            "plan_complete": {
+              "type": "boolean"
+            },
+            "sizing": {
+              "type": "string",
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ]
+            },
+            "artifact_type": {
+              "type": "string"
+            },
+            "claims": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         }
       }
@@ -39,10 +61,16 @@
       "output": {
         "schema": {
           "type": "object",
-          "required": ["build_success"],
+          "required": [
+            "build_success"
+          ],
           "properties": {
-            "build_success": {"type": "boolean"},
-            "smoke_result": {"type": "string"}
+            "build_success": {
+              "type": "boolean"
+            },
+            "smoke_result": {
+              "type": "string"
+            }
           }
         }
       }
@@ -56,11 +84,23 @@
       "output": {
         "schema": {
           "type": "object",
-          "required": ["verdict"],
+          "required": [
+            "verdict"
+          ],
           "properties": {
-            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
-            "findings": {"type": "array"},
-            "findings_filed": {"type": "integer"}
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL"
+              ]
+            },
+            "findings": {
+              "type": "array"
+            },
+            "findings_filed": {
+              "type": "integer"
+            }
           }
         }
       }
@@ -74,11 +114,23 @@
       "output": {
         "schema": {
           "type": "object",
-          "required": ["verdict"],
+          "required": [
+            "verdict"
+          ],
           "properties": {
-            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
-            "findings": {"type": "array"},
-            "findings_filed": {"type": "integer"}
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL"
+              ]
+            },
+            "findings": {
+              "type": "array"
+            },
+            "findings_filed": {
+              "type": "integer"
+            }
           }
         }
       }
@@ -92,11 +144,23 @@
       "output": {
         "schema": {
           "type": "object",
-          "required": ["verdict"],
+          "required": [
+            "verdict"
+          ],
           "properties": {
-            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
-            "findings": {"type": "array"},
-            "findings_filed": {"type": "integer"}
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL"
+              ]
+            },
+            "findings": {
+              "type": "array"
+            },
+            "findings_filed": {
+              "type": "integer"
+            }
           }
         }
       }
@@ -110,11 +174,23 @@
       "output": {
         "schema": {
           "type": "object",
-          "required": ["verdict"],
+          "required": [
+            "verdict"
+          ],
           "properties": {
-            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
-            "findings": {"type": "array"},
-            "findings_filed": {"type": "integer"}
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL"
+              ]
+            },
+            "findings": {
+              "type": "array"
+            },
+            "findings_filed": {
+              "type": "integer"
+            }
           }
         }
       }
@@ -128,23 +204,65 @@
       "output": {
         "schema": {
           "type": "object",
-          "required": ["verdict", "findings_count", "commit_tested", "verdicts", "checks", "exploration"],
+          "required": [
+            "verdict",
+            "findings_count",
+            "commit_tested",
+            "verdicts",
+            "checks",
+            "exploration"
+          ],
           "properties": {
-            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
-            "findings_count": {"type": "integer"},
-            "findings": {"type": "array", "items": {"type": "object"}},
-            "commit_tested": {"type": "string"},
-            "findings_filed": {"type": "integer"},
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL"
+              ]
+            },
+            "findings_count": {
+              "type": "integer"
+            },
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "commit_tested": {
+              "type": "string"
+            },
+            "findings_filed": {
+              "type": "integer"
+            },
             "verdicts": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["claim_id", "claim", "verdict", "evidence"],
+                "required": [
+                  "claim_id",
+                  "claim",
+                  "verdict",
+                  "evidence"
+                ],
                 "properties": {
-                  "claim_id": {"type": "string"},
-                  "claim": {"type": "string"},
-                  "verdict": {"type": "string", "enum": ["proven", "disproven", "untested"]},
-                  "evidence": {"type": "string"}
+                  "claim_id": {
+                    "type": "string"
+                  },
+                  "claim": {
+                    "type": "string"
+                  },
+                  "verdict": {
+                    "type": "string",
+                    "enum": [
+                      "proven",
+                      "disproven",
+                      "untested"
+                    ]
+                  },
+                  "evidence": {
+                    "type": "string"
+                  }
                 }
               }
             },
@@ -152,11 +270,26 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["check", "result", "reason"],
+                "required": [
+                  "check",
+                  "result",
+                  "reason"
+                ],
                 "properties": {
-                  "check": {"type": "string"},
-                  "result": {"type": "string", "enum": ["pass", "fail", "skip"]},
-                  "reason": {"type": "string"}
+                  "check": {
+                    "type": "string"
+                  },
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "skip"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
                 }
               }
             },
@@ -164,11 +297,21 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["probe", "result", "finding"],
+                "required": [
+                  "probe",
+                  "result",
+                  "finding"
+                ],
                 "properties": {
-                  "probe": {"type": "string"},
-                  "result": {"type": "string"},
-                  "finding": {"type": "string"}
+                  "probe": {
+                    "type": "string"
+                  },
+                  "result": {
+                    "type": "string"
+                  },
+                  "finding": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -185,13 +328,34 @@
       "output": {
         "schema": {
           "type": "object",
-          "required": ["verdict", "findings_count", "commit_tested"],
+          "required": [
+            "verdict",
+            "findings_count",
+            "commit_tested"
+          ],
           "properties": {
-            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
-            "findings_count": {"type": "integer"},
-            "findings": {"type": "array", "items": {"type": "object"}},
-            "commit_tested": {"type": "string"},
-            "findings_filed": {"type": "integer"}
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL"
+              ]
+            },
+            "findings_count": {
+              "type": "integer"
+            },
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "commit_tested": {
+              "type": "string"
+            },
+            "findings_filed": {
+              "type": "integer"
+            }
           }
         }
       }
@@ -205,11 +369,19 @@
       "output": {
         "schema": {
           "type": "object",
-          "required": ["routed"],
+          "required": [
+            "routed"
+          ],
           "properties": {
-            "routed": {"type": "boolean"},
-            "debugger_cards": {"type": "integer"},
-            "tech_lead_cards": {"type": "integer"}
+            "routed": {
+              "type": "boolean"
+            },
+            "debugger_cards": {
+              "type": "integer"
+            },
+            "tech_lead_cards": {
+              "type": "integer"
+            }
           }
         }
       }
@@ -223,28 +395,68 @@
       "output": {
         "schema": {
           "type": "object",
-          "required": ["candidates", "codebase_clean"],
+          "required": [
+            "candidates",
+            "codebase_clean"
+          ],
           "properties": {
             "candidates": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["id", "files", "problem", "solution", "benefits", "strength"],
+                "required": [
+                  "id",
+                  "files",
+                  "problem",
+                  "solution",
+                  "benefits",
+                  "strength"
+                ],
                 "properties": {
-                  "id": {"type": "string"},
-                  "files": {"type": "array", "items": {"type": "string"}},
-                  "problem": {"type": "string"},
-                  "solution": {"type": "string"},
-                  "benefits": {"type": "string"},
-                  "strength": {"type": "string", "enum": ["Strong", "Worth exploring", "Speculative"]},
-                  "deletion_test": {"type": "string"}
+                  "id": {
+                    "type": "string"
+                  },
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "problem": {
+                    "type": "string"
+                  },
+                  "solution": {
+                    "type": "string"
+                  },
+                  "benefits": {
+                    "type": "string"
+                  },
+                  "strength": {
+                    "type": "string",
+                    "enum": [
+                      "Strong",
+                      "Worth exploring",
+                      "Speculative"
+                    ]
+                  },
+                  "deletion_test": {
+                    "type": "string"
+                  }
                 }
               }
             },
-            "codebase_clean": {"type": "boolean"},
-            "total_strong": {"type": "integer"},
-            "total_worth_exploring": {"type": "integer"},
-            "scan_summary": {"type": "string"}
+            "codebase_clean": {
+              "type": "boolean"
+            },
+            "total_strong": {
+              "type": "integer"
+            },
+            "total_worth_exploring": {
+              "type": "integer"
+            },
+            "scan_summary": {
+              "type": "string"
+            }
           }
         }
       }
@@ -258,20 +470,48 @@
       "output": {
         "schema": {
           "type": "object",
-          "required": ["verdict", "valid_candidates"],
+          "required": [
+            "verdict",
+            "valid_candidates"
+          ],
           "properties": {
-            "verdict": {"type": "string", "enum": ["continue", "stop"]},
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "continue",
+                "stop"
+              ]
+            },
             "valid_candidates": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["id", "problem", "solution", "severity"],
+                "required": [
+                  "id",
+                  "problem",
+                  "solution",
+                  "severity"
+                ],
                 "properties": {
-                  "id": {"type": "string"},
-                  "problem": {"type": "string"},
-                  "solution": {"type": "string"},
-                  "severity": {"type": "string", "enum": ["Strong", "Worth exploring"]},
-                  "evidence": {"type": "string"}
+                  "id": {
+                    "type": "string"
+                  },
+                  "problem": {
+                    "type": "string"
+                  },
+                  "solution": {
+                    "type": "string"
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "Strong",
+                      "Worth exploring"
+                    ]
+                  },
+                  "evidence": {
+                    "type": "string"
+                  }
                 }
               }
             },
@@ -279,14 +519,23 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["id", "reason"],
+                "required": [
+                  "id",
+                  "reason"
+                ],
                 "properties": {
-                  "id": {"type": "string"},
-                  "reason": {"type": "string"}
+                  "id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
                 }
               }
             },
-            "refactor_file": {"type": "string"}
+            "refactor_file": {
+              "type": "string"
+            }
           }
         }
       }
@@ -295,38 +544,107 @@
       "id": "refactor-decompose",
       "profile": "product-owner",
       "skill": "to-tickets",
-      "body_template": "## Decompose validated refactor candidates into tickets\n\n**Repo:** ${trigger.card_body}\n**Refactor plan:** ${nodes.refactor-review.output.refactor_file}\n\nThe reviewer validated the candidates in the REFACTOR.md file at the path above.\n\n### What to do\n\nFor each valid candidate, create a refactor ticket via `kanban_create`:\n\n```\nkanban_create(\n  title: \"[ticket-refactor-NN] <candidate id>: <short description>\",\n  assignee: \"tech-lead\",\n  body: \"This is a trigger card. Complete this card IMMEDIATELY. Do NOT implement. Do NOT delegate. Do NOT call kanban_chains or loop_engine. The next workflow (tech-lead-execute) handles all execution.\\n\\n---\\n\\n## Refactor task\\n\\n**Problem:** <candidate problem>\\n**Solution:** <candidate solution>\\n**Evidence:** <reviewer evidence>\\n**Severity:** <candidate severity>\\n\\n**Constraint:** This is a REFACTOR. Existing tests MUST pass before AND after your change. Behavior MUST be preserved. Do NOT add new features.\n\nCRITICAL: Before branching, run `git checkout main && git pull --ff-only` to get the latest code. Do NOT branch from a specific commit SHA. Always work from current main.\"\n)\n```\n\nCreate in dependency order if candidates depend on each other.\n\n### Completion metadata (REQUIRED)\n\n```\n{decomposed: true, ticket_count: N, ticket_ids: [\"<id1>\", ...], refactor_file: \"<path>\"}\n```",
+      "body_template": "## Decompose validated refactor candidates into tickets\n\n**Repo:** ${trigger.card_body}\n**Refactor plan:** ${nodes.refactor-review.output.refactor_file}\n\nThe reviewer validated the candidates in the REFACTOR.md file at the path above.\n\n### What to do\n\nFor each valid candidate, create TWO cards:\n\n1. GATE card first — tracks REAL completion:\n```\nkanban_create(\n  title: \"[done-refactor-NN] <candidate id>: <short description>\",\n  assignee: \"workflow-gate\",\n  body: \"Completion gate for [ticket-refactor-NN]. The tech-lead-execute close step completes this card after the refactor is merged and all tests pass. Do NOT work this card.\"\n)\n```\n(\"workflow-gate\" is a control-plane lane — the dispatcher never spawns a worker on it.)\n\n2. TRIGGER card — fires the implementation workflow:\n```\nkanban_create(\n  title: \"[ticket-refactor-NN] <candidate id>: <short description>\",\n  assignee: \"tech-lead\",\n  body: \"This is a trigger card. Complete this card IMMEDIATELY. Do NOT implement. Do NOT delegate. Do NOT call kanban_chains or loop_engine. The next workflow (tech-lead-execute) handles all execution.\\n\\nGATE: <the [done-refactor-NN] card id>\\n\\n---\\n\\n## Refactor task\\n\\n**Problem:** <candidate problem>\\n**Solution:** <candidate solution>\\n**Evidence:** <reviewer evidence>\\n**Severity:** <candidate severity>\\n\\n**Constraint:** This is a REFACTOR. Existing tests MUST pass before AND after your change. Behavior MUST be preserved. Do NOT add new features.\n\nCRITICAL: Before branching, run `git checkout main && git pull --ff-only` to get the latest code. Do NOT branch from a specific commit SHA. Always work from current main.\"\n)\n```\n\nCreate in dependency order if candidates depend on each other.\n\n### Completion metadata (REQUIRED)\n\n```\n{decomposed: true, ticket_count: N, ticket_ids: [\"<id1>\", ...], refactor_file: \"<path>\"}\n```",
       "title_template": "[refactor-decompose] ${trigger.title}",
       "output": {
         "schema": {
           "type": "object",
-          "required": ["decomposed", "ticket_count"],
+          "required": [
+            "decomposed",
+            "ticket_count"
+          ],
           "properties": {
-            "decomposed": {"type": "boolean"},
-            "ticket_count": {"type": "integer"},
-            "ticket_ids": {"type": "array", "items": {"type": "string"}},
-            "refactor_file": {"type": "string"}
+            "decomposed": {
+              "type": "boolean"
+            },
+            "ticket_count": {
+              "type": "integer"
+            },
+            "ticket_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "refactor_file": {
+              "type": "string"
+            }
           }
         }
       }
     }
   ],
   "edges": [
-    {"from": "qa-receive", "to": "qa-build", "condition": "${nodes.qa-receive.output.sizing} != 'small'"},
-    {"from": "qa-receive", "to": "qa-quick", "condition": "${nodes.qa-receive.output.sizing} == 'small'"},
-    {"from": "qa-build", "to": "qa-functional"},
-    {"from": "qa-build", "to": "qa-journeys"},
-    {"from": "qa-build", "to": "qa-security"},
-    {"from": "qa-build", "to": "qa-explore"},
-    {"from": "qa-functional", "to": "qa-verdict"},
-    {"from": "qa-journeys", "to": "qa-verdict"},
-    {"from": "qa-security", "to": "qa-verdict"},
-    {"from": "qa-explore", "to": "qa-verdict"},
-    {"from": "qa-quick", "to": "refactor-scan", "condition": "${nodes.qa-quick.output.verdict} == 'PASS'"},
-    {"from": "qa-verdict", "to": "refactor-scan", "condition": "${nodes.qa-verdict.output.verdict} == 'PASS'"},
-    {"from": "qa-quick", "to": "route-bug", "condition": "${nodes.qa-quick.output.verdict} == 'FAIL'"},
-    {"from": "qa-verdict", "to": "route-bug", "condition": "${nodes.qa-verdict.output.verdict} == 'FAIL'"},
-    {"from": "refactor-scan", "to": "refactor-review"},
-    {"from": "refactor-review", "to": "refactor-decompose", "condition": "${nodes.refactor-review.output.verdict} == 'continue'"}
+    {
+      "from": "qa-receive",
+      "to": "qa-build",
+      "condition": "${nodes.qa-receive.output.sizing} != 'small'"
+    },
+    {
+      "from": "qa-receive",
+      "to": "qa-quick",
+      "condition": "${nodes.qa-receive.output.sizing} == 'small'"
+    },
+    {
+      "from": "qa-build",
+      "to": "qa-functional"
+    },
+    {
+      "from": "qa-build",
+      "to": "qa-journeys"
+    },
+    {
+      "from": "qa-build",
+      "to": "qa-security"
+    },
+    {
+      "from": "qa-build",
+      "to": "qa-explore"
+    },
+    {
+      "from": "qa-functional",
+      "to": "qa-verdict"
+    },
+    {
+      "from": "qa-journeys",
+      "to": "qa-verdict"
+    },
+    {
+      "from": "qa-security",
+      "to": "qa-verdict"
+    },
+    {
+      "from": "qa-explore",
+      "to": "qa-verdict"
+    },
+    {
+      "from": "qa-quick",
+      "to": "refactor-scan",
+      "condition": "${nodes.qa-quick.output.verdict} == 'PASS'"
+    },
+    {
+      "from": "qa-verdict",
+      "to": "refactor-scan",
+      "condition": "${nodes.qa-verdict.output.verdict} == 'PASS'"
+    },
+    {
+      "from": "qa-quick",
+      "to": "route-bug",
+      "condition": "${nodes.qa-quick.output.verdict} == 'FAIL'"
+    },
+    {
+      "from": "qa-verdict",
+      "to": "route-bug",
+      "condition": "${nodes.qa-verdict.output.verdict} == 'FAIL'"
+    },
+    {
+      "from": "refactor-scan",
+      "to": "refactor-review"
+    },
+    {
+      "from": "refactor-review",
+      "to": "refactor-decompose",
+      "condition": "${nodes.refactor-review.output.verdict} == 'continue'"
+    }
   ]
 }
