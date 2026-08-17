@@ -1047,6 +1047,96 @@ class TestDoDArtifactGate(unittest.TestCase):
         )
         self.assertEqual(parsed["status"], "complete")
 
+    # --- missing defect_traces KEY (bd ngin-tui-lt t_d09184a9) ----------------
+    #
+    # Field incident: a ground-truth verifier returned a fully green,
+    # evidence-cited verdict (dod_met=true, recommendation=advance) with
+    # ``behaviors`` but NO ``defect_traces`` key — zero defects found, the key
+    # simply omitted. The gate treated MISSING as MALFORMED
+    # (isinstance(None, list) fails) -> artifact_complete=False -> spurious
+    # replan minting a redundant execution+verifier pair, contradicting the
+    # engine's own verdict payload in the same response. MISSING must be
+    # normalized to EMPTY (missing != malformed).
+
+    def test_ground_truth_missing_defect_traces_key_advances(self):
+        # THE FIELD REPRO: ground_truth, behaviors + evidence present, the
+        # defect_traces KEY ABSENT, artifact_required=True -> must ADVANCE
+        # (clean pass), not replan.
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        v_gt = dict(_verifier(), metric_type="ground_truth",
+                    artifact_required=True)
+        verdict = {"dod_met": True, "recommendation": "advance", "score": 1.0,
+                   "behaviors": [{"id": f"B{i}", "statement": f"behavior {i}"}
+                                 for i in range(8)],
+                   "evidence": [{"text": f"claim {i}",
+                                 "citations": [{"artifact_type": "file_line",
+                                                "locator": f"test.py:{i}"}],
+                                 "material": True}
+                                for i in range(8)],
+                   "gaps": []}  # NO defect_traces key at all
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": v_gt},
+            create_ids=["t_root"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        self.assertEqual(parsed["status"], "complete")
+        self.assertEqual(parsed["decision"], "advance")
+
+    def test_ground_truth_missing_defect_traces_key_validates(self):
+        # Validator seam: behaviors present + defect_traces key missing
+        # validates True for ground_truth (both artifact_required tiers).
+        verdict = {"dod_met": True, "recommendation": "advance",
+                   "behaviors": [{"behavior": "b1"}], "gaps": []}
+        self.assertTrue(le_tools._validate_dod_artifact(
+            verdict, True, metric_type="ground_truth"))
+        self.assertTrue(le_tools._validate_dod_artifact(
+            verdict, False, metric_type="ground_truth"))
+
+    def test_ground_truth_null_defect_traces_normalizes_like_missing(self):
+        # An explicit JSON null is the same absence as a missing key.
+        verdict = {"dod_met": True, "recommendation": "advance",
+                   "behaviors": [{"behavior": "b1"}],
+                   "defect_traces": None, "gaps": []}
+        self.assertTrue(le_tools._validate_dod_artifact(
+            verdict, True, metric_type="ground_truth"))
+
+    def test_missing_defect_traces_key_still_rejected_for_non_ground_truth(self):
+        # Zero-regression: for proxy / default (design-council judgment) the
+        # coverage requirement stands — behaviors with the defect_traces key
+        # missing is under-covered and must NOT advance, missing or not.
+        verdict = {"dod_met": True, "recommendation": "advance",
+                   "behaviors": [{"behavior": "b1"}], "gaps": []}
+        self.assertFalse(le_tools._validate_dod_artifact(
+            verdict, True, metric_type="proxy"))
+        self.assertFalse(le_tools._validate_dod_artifact(
+            verdict, True, metric_type=None))
+        # ...and at the handler seam (default verifier: no metric_type).
+        seeded = _loop_state_comment_verifier(
+            "t_root", verifier_card="t_verifier", iteration_counter=1)
+        parsed, fake = _run_handler(
+            args={"goal": "x", "execution": _execution_t2(),
+                  "verifier": _verifier()},
+            create_ids=["t_root", "t_exec2", "t_verifier2"],
+            preseed_comments={"t_root": [seeded]},
+            run_for_task={"t_verifier": _verifier_run(verdict)},
+        )
+        self.assertNotEqual(parsed["status"], "complete")
+
+    def test_missing_defect_traces_key_with_junk_still_malformed(self):
+        # A PRESENT non-list defect_traces (string/dict) is malformed and
+        # stays rejected for every metric_type — only a genuinely absent (or
+        # null) key is normalized to empty.
+        for junk in ("oops", {"citation": "c"}, 42):
+            verdict = {"dod_met": True, "recommendation": "advance",
+                       "behaviors": [{"behavior": "b1"}],
+                       "defect_traces": junk, "gaps": []}
+            self.assertFalse(le_tools._validate_dod_artifact(
+                verdict, True, metric_type="ground_truth"),
+                f"junk defect_traces {junk!r} must stay malformed")
+
     def test_ground_truth_rejects_fabricated_trace(self):
         # Universal integrity: ground_truth does NOT skip the fabrication guard.
         seeded = _loop_state_comment_verifier(

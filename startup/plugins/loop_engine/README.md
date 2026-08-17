@@ -103,6 +103,13 @@ dod_verdict = {
   gaps: [{dimension, issue}],            // what's missing (fed to the replan)
   recommendation: "advance"|"replan"|"escalate",
   evidence: [Claim],                     // v2 — every material claim + its citations
+  behaviors: [{...}],                    // v2 optional — what the verifier checked
+                                         //   (required under artifact_required)
+  defect_traces: [{behavior, citation,   // v2 optional — defects found; for
+                   status, fabricated}], //   metric_type="ground_truth" this may
+                                         //   be empty/omitted (zero defects =
+                                         //   clean pass; a missing key is treated
+                                         //   as [], not malformed)
 }
 ```
 

@@ -67,6 +67,14 @@ produced the work you are evaluating.
    with `{item, issue, citation, severity}` — and for `defect_coverage`, the
    concrete `failure` field.
 
+### Plan-review phase (ticket-plan DoD)
+
+When the output is a ticket/issue plan rather than a design doc, check four dimensions: (1) every spec requirement (US/ID/ADR) maps to a ticket; (2) every ticket traces to a spec requirement (no scope creep); (3) atomicity (junior-dev-in-one-sitting, testable ACs); (4) architecture consistency (tech stack + data model inherit the stamped decisions).
+
+**Dependency-closure check (the check "all refs resolve, no cycles" misses):** compute the transitive closure of each ticket's blocked-by set and diff it against every ticket number cited in that ticket's BODY and ACs. A plan can pass resolution+acyclicity machine checks yet cite ticket N in an AC while N is a leaf nothing depends on — the capstone then legally schedules before N lands and its scenario cannot pass. File each such citation-without-closure as a gap demanding one added edge (verify no cycle first). Also check: every behavior named in a ticket BODY appears in at least one of that ticket's own ACs ("named in prose, no AC verifies it" is the iter-1 worker-log defect class).
+
+For a plan-review card that mandates a SIMPLE verdict shape ({dod_met, recommendation, gaps} only, no behaviors/defect_traces/evidence arrays), the card body OVERRIDES the richer verdict schema below — emit exactly what the card demands.
+
 ### ADR-convention phase (artifact-neutral)
 
 Check only what the ADR worker controls: on-disk, 5 sections, cites
@@ -122,9 +130,12 @@ dispatch the battery; the engine does.
 - **`recommendation` MUST NOT be `"advance"` unless `dod_met` is true.** The
   engine no longer trusts `recommendation='advance'` to override a failed DoD.
 - The engine validates the artifact shape and will **not** advance on a
-  `latent_defect` (or a missing/incomplete `defect_traces` table) regardless of
+  `latent_defect` (or an incomplete `defect_traces` table) regardless of
   your `dod_met`. So a lenient verdict cannot defeat the gate — but a
   **complete** verdict that catches the defect is what makes the loop work.
+  (For `metric_type:"ground_truth"` a missing/empty `defect_traces` is a
+  clean pass — zero defects; for proxy/judgment phases every behavior needs
+  ≥1 trace, so an absent table is under-coverage.)
 - If you complete **without** the structured `dod_verdict` key, the engine
   reads `verdict=None`, re-evaluates (fresh verifier), and after 3 attempts
   escalates. Always write the structured key.

@@ -160,17 +160,34 @@ loop_engine(
 )
 ```
 
-**⚠ Two load-bearing gotchas (observed on a real-board smoke):**
+**⚠ Three load-bearing gotchas (two observed on a real-board smoke):**
 
 1. **`metric_type` is a verifier-SPEC FIELD, not body prose.** Write it as a key
    inside each `verifier:{}` dict (`"metric_type": "ground_truth"`), parallel to
-   `assignee`/`title`/`body`. Mentioning "metric_type: ground_truth" *inside the
-   body text* does NOT satisfy the validator — under `strict_fact_basis=True` the
+   `assignee`/`title`/`body`. Mentioning "metric_type: ground_truth" *inside
+   the body text* does NOT satisfy the validator — under `strict_fact_basis=True` the
    engine hard-rejects with *"phases[N].verifier.metric_type is required under
    strict_fact_basis"*. The field is validated at `_validate_metric_type`
    (`verifier.get("metric_type")`), which never reads the body.
 
-2. **`loop_engine` needs a task context (interactive-session escape hatch).** The
+2. **`dod_verdict` should carry `defect_traces` EXPLICITLY (as `[]` on a clean
+   pass).** Observed on ngin-tui-lt: verifier returned dod_met=true / advance /
+   score 1.0 with 8 behaviors + 8 evidence claims but NO `defect_traces` key;
+   `_validate_dod_artifact` (loop_engine/tools.py) treated missing (vs empty)
+   `defect_traces` as malformed → `artifact_complete=False` → the advance gate
+   (`dod_met and artifact_complete`) failed → engine REPLANNED and minted
+   redundant execution+verifier cards (card t_d09184a9). **FIXED in the engine
+   (2026-08-17): a verdict with `behaviors` present and the `defect_traces` KEY
+   ABSENT (or null) is normalized to `[]` — missing ≠ malformed — so a
+   ground_truth clean pass advances.** Belt-and-braces: still bake the exact
+   verdict JSON shape into every verifier card body —
+   `{"dod_met": true, "recommendation": "advance", "score": 1.0, "gaps": [],
+   "behaviors": [...], "defect_traces": [], "evidence": [...]}` — and if a
+   spurious replan already fired, do NOT let the minted cards redo landed work:
+   comment-steer both cards ("fix already landed as <sha>; verify against main,
+   don't re-implement") instead of unwinding the engine's graph.
+
+3. **`loop_engine` needs a task context (interactive-session escape hatch).**
    plugin's `_my_card_id()` reads `kwargs.get("task_id")` first, then falls back
    to `HERMES_KANBAN_TASK`. When you are a dispatcher-spawned worker, the env var
    is set for you and the tool schema carries `task_id` — just call the tool. But

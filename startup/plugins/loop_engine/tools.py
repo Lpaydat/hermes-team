@@ -1068,9 +1068,10 @@ def _validate_dod_artifact(verdict, artifact_required=False, metric_type=None):
       - no trace is left at ``status == "latent_defect"``.
 
     For ``ground_truth``: ``behaviors[]`` must be non-empty when opted in, but
-    ``defect_traces[]`` may be empty (zero defects = clean pass); the
-    fabrication / latent_defect / citation guards still apply to any traces
-    present.
+    ``defect_traces[]`` may be empty (zero defects = clean pass) — and a
+    verdict carrying ``behaviors`` with the ``defect_traces`` KEY ABSENT is
+    normalized to empty (missing ≠ malformed); the fabrication /
+    latent_defect / citation guards still apply to any traces present.
     """
     if not isinstance(verdict, dict):
         return False
@@ -1083,6 +1084,17 @@ def _validate_dod_artifact(verdict, artifact_required=False, metric_type=None):
     #     dod_met). This keeps the engine generic.
     if not behaviors and not traces:
         return not artifact_required
+    # MISSING defect_traces != MALFORMED defect_traces (bd ngin-tui-lt
+    # t_d09184a9): a verdict that carries ``behaviors`` but omits the
+    # ``defect_traces`` KEY is the natural clean-pass shape a ground-truth
+    # verifier produces (zero defects found) — normalize MISSING to EMPTY.
+    # Outcome-equivalent for every metric_type: non-ground_truth still fails
+    # the coverage branch below (empty traces), ground_truth treats it as a
+    # clean pass. A PRESENT non-list defect_traces (string/dict/int) still
+    # fails the isinstance guard — only a genuinely absent (or null) key is
+    # normalized.
+    if behaviors and traces is None:
+        traces = []
     if not isinstance(behaviors, list) or not isinstance(traces, list):
         return False
     is_ground_truth = metric_type == "ground_truth"
