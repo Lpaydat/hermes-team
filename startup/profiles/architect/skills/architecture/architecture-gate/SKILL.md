@@ -58,16 +58,28 @@ Use judgement only at the T1/T2/T3 line; the floor itself is mechanical.
 - **T2 — system.** A yes with wide/irreversible blast radius (a boundary move, a
   cross-cutting data model, a new dependency with lock-in). Demands a **full design doc**
   (the anatomy checklist below, mandatory), an **independent candidate review**
-  (design-it-twice), and **async human approval**. Run the **T2 ceremony** — the ordered
+  (design-it-twice), and approval. Run the **T2 ceremony** — the ordered
   protocol in `references/t2-ceremony.md`, summarised in the T2 protocol section below:
   design-it-twice candidate fan-out via `kanban_chains`, a synthesis that grafts the best
-  non-winning ideas, then an async human-approval escalation on the gate bead. At
-  escalation the gate carries `escalated-t2:` in the block reason/summary (a blocked card
-  has no structured metadata), names what needs human sign-off, and **does not self-approve**. Critically, **do NOT complete a T2 gate card as `done`** — completing a
-  T2 card done would close the gate bead and unblock to-tickets, exactly what escalation
-  must prevent. Instead **block the card** (leave it blocked / needs-input pending human
-  sign-off) so bead-sync leaves the gate bead open and to-tickets stays blocked until a
-  human approves and the card is genuinely completed.
+  non-winning ideas. WHO approves is a **per-project setting** — read it before escalating:
+
+  **Approval mode check (do this before blocking):** read
+  `~/.hermes-teams/startup/active-projects.json` and match this project's entry
+  (by board name, else by repo path prefix). The `t2_approval` key decides:
+  - `"human"` or absent (the default): escalate for **async human approval**. The gate
+    carries `escalated-t2:` in the block reason/summary (a blocked card has no
+    structured metadata), names what needs human sign-off, and **does not
+    self-approve**. Critically, **do NOT complete a T2 gate card as `done`** — completing a
+    T2 card done would close the gate bead and unblock to-tickets, exactly what escalation
+    must prevent. Instead **block the card** (leave it blocked / needs-input pending human
+    sign-off) so bead-sync leaves the gate bead open and to-tickets stays blocked until a
+    human approves and the card is genuinely completed.
+  - `"auto"`: the project owner has pre-delegated T2 approval. Do NOT block. Complete
+    the card as done with `approval: "auto-approved-config"`, and in the ADR series
+    record: the synthesis decision, the grafted dissenting ideas, and a note that
+    approval was auto-granted per project config (`t2_approval: "auto"`). The design
+    doc and candidate review are still MANDATORY — auto-approve skips the human wait,
+    never the ceremony.
 - **T3 — platform.** A change too large to be one decision. Do not ADR it: hand it back
   as a vision for **wayfinder decomposition** into sub-changes, each of which re-enters
   the gate at its own tier (usually T1/T2). Like a T2 a T3 **blocks the card** (do not
