@@ -200,3 +200,42 @@ def test_templates_pin_gate_contracts():
         "milestone cards must parent on gate ids"
     assert "GATE: <card-id>" in close and "hermes kanban --board" in close, \
         "close step must complete the gate via the CLI (worker-tool ownership would refuse)"
+
+
+def _template(template_id):
+    return json.loads((TEMPLATES / f"{template_id}.json").read_text())
+
+
+def test_templates_pin_milestone_barrier():
+    """Milestone barrier contracts: route-milestone wires qa-done gates +
+    group_cards; milestone-gate closes the gate ONLY on the PASS path."""
+    dd = _template("dev-dispatch")
+    mg = _template("milestone-gate")
+
+    # route-milestone: qa-done gate cards created upfront on the control lane,
+    # id embedded in the milestone body, barrier wired via group_cards
+    milestones = next(n for n in dd["nodes"] if n["id"] == "route-milestone")["body_template"]
+    assert "[qa-done-NN]" in milestones and "workflow-gate" in milestones, \
+        "route-milestone must create [qa-done-NN] gates on the workflow-gate lane upfront"
+    assert "QA gate: <the [qa-done-NN] card id" in milestones, \
+        "milestone card body must embed the QA gate id (gate-close parses it)"
+    assert 'key: "m<NN>"' in milestones and "group_cards" in milestones, \
+        "route-milestone must wire the barrier through group_cards with key m<NN>"
+    assert "pre: [{gate:" in milestones, "barrier pre = previous milestone's qa-done gate"
+    assert "ENTRY ticket" in milestones, "barrier members = entry tickets only"
+
+    # milestone-gate: gate-close terminal node on the PASS path only
+    gc = next(n for n in mg["nodes"] if n["id"] == "gate-close")
+    gc_body = gc["body_template"]
+    assert "QA gate:" in gc_body and "hermes kanban --board" in gc_body, \
+        "gate-close must parse the QA gate id and complete it via the CLI"
+    assert "kanban_complete tool" in gc_body and "NOT the" in gc_body, \
+        "gate-close must forbid the worker tool (ownership: control-lane card)"
+    edges = {(e["from"], e["to"]) for e in mg["edges"]}
+    assert ("refactor-decompose", "gate-close") in edges, \
+        "PASS path (refactor tickets created) must close the gate"
+    assert ("refactor-review", "gate-close") in edges, \
+        "clean-codebase stop must ALSO close the gate — else a clean milestone deadlocks the next"
+    bug_edges = [e for e in mg["edges"] if e["to"] == "gate-close" and e["from"] == "route-bug"]
+    assert not bug_edges, \
+        "FAIL path must NOT close the gate — QA failure holds the next milestone (by design)"

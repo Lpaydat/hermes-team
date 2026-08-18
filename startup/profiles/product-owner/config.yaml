@@ -77,12 +77,15 @@ fallback_providers:
 plugins:
   enabled:
     - kanban_chains
+    - kanban_group
     - context_graph
     - skill_enforcer
     - loop_engine
   disabled: []
   entries:
     kanban_chains:
+      allow_tool_override: false
+    kanban_group:
       allow_tool_override: false
 onboarding:
   seen:

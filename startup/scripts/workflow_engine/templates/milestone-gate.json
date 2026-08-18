@@ -572,6 +572,29 @@
           }
         }
       }
+    },
+    {
+      "id": "gate-close",
+      "profile": "tech-lead",
+      "skill": "",
+      "body_template": "## Close the milestone QA gate\n\n**Milestone:** ${trigger.title}\n\nThis workflow just finished the PASS path (QA passed, refactor cycle complete). The milestone card body contains a line `QA gate: <card-id>` — that gate card holds back the NEXT milestone's entry tickets.\n\n### Step 1: Find the gate id\n\nRead the milestone body (${trigger.card_body}) and find the `QA gate:` line. If there is NO such line (legacy milestone or a [refactor-request] trigger), skip this card's CLI step silently and complete with gate_closed=false.\n\n### Step 2: Complete the gate card via the CLI\n\nRun the CLI form (NOT the kanban_complete tool — the gate card belongs to the workflow-gate control lane, not to you; worker tool ownership would refuse it. The CLI is the orchestrator path):\n\n```\nhermes kanban --board ${trigger.board} complete <gate-id> --result \"milestone gate passed: QA PASS + refactor cycle complete\"\n```\n\nIf the CLI reports the card is already done, treat that as success (idempotent close).\n\n### Step 3: Complete\n\n**Completion metadata:**\n```\n{gate_closed: true|false, gate_id: \"<id or empty>\"}\n```",
+      "title_template": "[gate-close] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "gate_closed"
+          ],
+          "properties": {
+            "gate_closed": {
+              "type": "boolean"
+            },
+            "gate_id": {
+              "type": "string"
+            }
+          }
+        }
+      }
     }
   ],
   "edges": [
@@ -645,6 +668,15 @@
       "from": "refactor-review",
       "to": "refactor-decompose",
       "condition": "${nodes.refactor-review.output.verdict} == 'continue'"
+    },
+    {
+      "from": "refactor-decompose",
+      "to": "gate-close"
+    },
+    {
+      "from": "refactor-review",
+      "to": "gate-close",
+      "condition": "${nodes.refactor-review.output.verdict} == 'stop'"
     }
   ]
 }

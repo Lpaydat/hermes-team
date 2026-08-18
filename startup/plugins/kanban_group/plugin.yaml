@@ -1,0 +1,5 @@
+name: kanban_group
+version: 1.0.0
+description: Deterministic group wiring — milestone barriers and sign-offs via marker cards + verified dependency links (pure shape, never executes work)
+provides_tools:
+  - group_cards
