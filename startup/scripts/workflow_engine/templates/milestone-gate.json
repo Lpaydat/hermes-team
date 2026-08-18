@@ -671,7 +671,8 @@
     },
     {
       "from": "refactor-decompose",
-      "to": "gate-close"
+      "to": "gate-close",
+      "condition": "${nodes.refactor-review.output.verdict} == 'continue'"
     },
     {
       "from": "refactor-review",

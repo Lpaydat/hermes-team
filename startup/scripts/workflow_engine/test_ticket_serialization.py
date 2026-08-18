@@ -236,6 +236,15 @@ def test_templates_pin_milestone_barrier():
         "PASS path (refactor tickets created) must close the gate"
     assert ("refactor-review", "gate-close") in edges, \
         "clean-codebase stop must ALSO close the gate — else a clean milestone deadlocks the next"
+    # Merge-node convention (engine semantics): a node with ANY conditional
+    # incoming edge makes the conditional firing MANDATORY (U_sat AND C_sat).
+    # gate-close merges two ALTERNATIVE routes — every incoming edge must be
+    # conditional, else the continue-path dead-branch-skips it (live bug on
+    # grp-lt1 2026-08-18: unconditional decompose edge + conditional stop edge
+    # → gate skipped, M2 held forever).
+    gc_in = [e for e in mg["edges"] if e["to"] == "gate-close"]
+    assert gc_in and all(e.get("condition") for e in gc_in), \
+        "gate-close merge edges must ALL be conditional (engine AND/OR edge semantics)"
     bug_edges = [e for e in mg["edges"] if e["to"] == "gate-close" and e["from"] == "route-bug"]
     assert not bug_edges, \
         "FAIL path must NOT close the gate — QA failure holds the next milestone (by design)"
