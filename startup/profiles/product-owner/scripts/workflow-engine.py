@@ -7,7 +7,8 @@ Runs six phases per project board, every tick:
   2. dispatch:     bd ready → create PO dispatch card (bugs → debugger directly)
   3. human-escal:  human-flagged beads → operator HQ card
   4. scanner:      detect blocked tasks → escalate to proper profile
-  5. qa-trigger:   verifier/debugger card with "merged" in summary → create QA re-test card
+  5. qa-trigger:   origin/master advanced (fresh fetch, D5 gate) + verifier/debugger
+                   card completed → create QA re-test card citing the merge commit
   6. stale-reclaim: reclaim tasks with a dead worker PID and stale heartbeat
 
 Reads active-projects.json for the project list. Empty list = silent exit.
@@ -35,6 +36,10 @@ CONFIG_FILE = Path(
     or str(Path.home() / ".hermes-teams/startup/active-projects.json")
 )
 KANBAN_ROOT = Path.home() / ".hermes-teams/startup/kanban/boards"
+
+# QA-trigger tracker state (D5 gate — hermes-hq t_b5d33aeb). Factored out
+# as a constant so tests can point it at a sandbox.
+QA_TRIGGER_STATE_FILE = Path.home() / ".hermes-teams/startup/kanban/qa-trigger-state.json"
 
 # Stale-claim reaper: a task is considered stale when its heartbeat is older
 # than this threshold (seconds). Default 900 = 15 min. The hermes-agent
@@ -503,6 +508,32 @@ def scan_board(board):
 # PHASE 4: QA TRIGGER — verifier/debugger card completes → create QA card
 # ══════════════════════════════════════════════════════════════════════════
 
+def _resolve_origin_master(git_dir):
+    """D5 gate helper: resolve origin/master tip after a fresh fetch.
+
+    Returns (sha12, full_sha) or (None, None) if origin/master can't be
+    resolved (no remote, fetch failed, branch missing). Origin is the
+    source of truth — local HEAD may be a debug branch or unpushed master
+    (the wrong-HEAD class, hermes-hq t_b5d33aeb).
+    """
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(git_dir)] + list(args),
+            capture_output=True, text=True, timeout=30
+        )
+
+    # Fresh fetch — origin is the source of truth for "landed".
+    # Failure is tolerated (offline / repo without remote): fall through and
+    # let the rev-parse fail, which makes the phase a no-op this tick.
+    git("fetch", "origin", "--prune", "--quiet")
+
+    r = git("rev-parse", "origin/master")
+    if r.returncode != 0 or not r.stdout.strip():
+        return None, None
+    full = r.stdout.strip()
+    return full[:12], full
+
+
 def phase_qa_trigger(board, project_dir):
     """When a verifier or debugger card completes AND master advanced, create a QA card.
 
@@ -514,6 +545,13 @@ def phase_qa_trigger(board, project_dir):
     a verifier card, or verifier cards without a merge).
     Dedup via idempotency key qa-after-<sha>.
 
+    D5 gate (hermes-hq t_b5d33aeb — wrong-HEAD class, 6 instances on
+    grp-lt1): completion ≠ merge. Before cutting a card we now require the
+    fix/feature to be *on origin/master* (fresh fetch), cite the
+    origin/master merge commit only, and instruct QA to verify landed
+    content via merge-diff rather than summary SHAs. Local HEAD, debug
+    branches, and unpushed master no longer produce cards.
+
     A/B test isolation: skip boards ending in '-b' (handled by engine only).
     """
     actions = []
@@ -524,24 +562,17 @@ def phase_qa_trigger(board, project_dir):
     if not db.exists():
         return actions
 
-    # Signal 1: check if master advanced
     git_dir = Path(project_dir)
     if not (git_dir / ".git").exists():
         return actions
 
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(git_dir), capture_output=True, text=True, timeout=10
-        )
-        if result.returncode != 0:
-            return actions
-        current_sha = result.stdout.strip()[:12]
-    except Exception:
-        return actions
+    # Signal 1: master advanced ON ORIGIN (fresh fetch; local HEAD is not
+    # trusted — it may be a debug branch or unpushed master).
+    current_sha, full_sha = _resolve_origin_master(git_dir)
+    if current_sha is None:
+        return actions  # no origin/master (offline / remoteless) — no-op
 
-    # State tracking: last SHA we triggered QA for
-    state_file = Path.home() / ".hermes-teams/startup/kanban/qa-trigger-state.json"
+    state_file = QA_TRIGGER_STATE_FILE
     state = {}
     if state_file.exists():
         try:
@@ -557,11 +588,34 @@ def phase_qa_trigger(board, project_dir):
         state_file.write_text(json.dumps(state, indent=2))
         return actions
 
-    # No change on master — nothing to do
+    # No change on origin/master — nothing to do
     if last_sha == current_sha:
         return actions
 
-    # Master advanced — check if code files changed (not just docs/specs)
+    # D5 gate: the previously-cut SHA must still be an ancestor of the new
+    # origin/master tip. If not (rebase/force-push rewrote history), reset
+    # the tracker WITHOUT cutting a card — a card cut against a rewritten
+    # history would cite a merge commit that no longer exists upstream.
+    try:
+        anc = subprocess.run(
+            ["git", "-C", str(git_dir), "merge-base", "--is-ancestor",
+             str(last_sha), str(full_sha)],
+            capture_output=True, text=True, timeout=10
+        )
+        ancestor_ok = anc.returncode == 0
+    except Exception:
+        ancestor_ok = False
+    if not ancestor_ok:
+        state[board] = current_sha
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps(state, indent=2))
+        actions.append(
+            f"qa-trigger: history rewrite detected on {board} "
+            f"({last_sha} not ancestor of {current_sha}) — tracker reset, no card cut"
+        )
+        return actions
+
+    # Origin/master advanced — check if code files changed (not just docs/specs)
     try:
         diff_result = subprocess.run(
             ["git", "diff", "--name-only", f"{last_sha}..{current_sha}"],
@@ -625,13 +679,23 @@ def phase_qa_trigger(board, project_dir):
     summary_text = (source["summary"] or "")[:500]
 
     body = (
-        f"## Automated QA re-test — {source_type} landed on master\n\n"
-        f"**New HEAD:** `{current_sha}`\n"
+        f"## Automated QA re-test — {source_type} landed on origin/master\n\n"
+        f"**Merge commit (origin/master):** `{current_sha}`\n"
+        f"**Landed range:** `{last_sha}..{current_sha}` (verified: merge-base "
+        f"--is-ancestor {last_sha} {current_sha} = 0, fresh fetch)\n"
         f"**Source card:** `{source['id']}` ({source['assignee']})\n"
         f"**What landed:** {title}\n\n"
         f"**Completion summary:**\n{summary_text}\n\n"
-        f"Build the project, run it as a real user, and verify nothing is broken. "
-        f"File any findings as beads linked to the parent epic."
+        f"**Verify landed content, not summary SHAs:** the only trusted "
+        f"reference is the merge commit `{current_sha}` on origin/master "
+        f"(and the range `{last_sha}..{current_sha}`). SHAs quoted in the "
+        f"completion summary above may be stale or debug-branch-only — do "
+        f"NOT pin or re-test against them. Confirm the fix content via "
+        f"`git diff {last_sha}..{current_sha}` / `git show {current_sha}` "
+        f"after `git fetch origin`.\n\n"
+        f"Build the project at `{current_sha}`, run it as a real user, and "
+        f"verify nothing is broken. File any findings as beads linked to "
+        f"the parent epic."
     )
 
     if DRY_RUN:
