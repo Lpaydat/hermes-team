@@ -27,15 +27,15 @@
       "schedule_display": "0 */4 * * *",
       "repeat": {
         "times": 999999,
-        "completed": 196
+        "completed": 207
       },
       "enabled": true,
       "state": "scheduled",
       "paused_at": null,
       "paused_reason": null,
       "created_at": "2026-07-02T09:00:32.413473+07:00",
-      "next_run_at": "2026-08-18T00:00:00+07:00",
-      "last_run_at": "2026-08-17T20:16:51.967117+07:00",
+      "next_run_at": "2026-08-19T20:00:00+07:00",
+      "last_run_at": "2026-08-19T16:22:03.158420+07:00",
       "last_status": "ok",
       "last_error": null,
       "last_delivery_error": "no delivery target resolved for deliver=telegram",
@@ -53,5 +53,5 @@
       "fire_claim": null
     }
   ],
-  "updated_at": "2026-08-17T20:16:51.967613+07:00"
+  "updated_at": "2026-08-19T16:22:03.159890+07:00"
 }
