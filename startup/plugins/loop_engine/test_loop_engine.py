@@ -1137,6 +1137,53 @@ class TestDoDArtifactGate(unittest.TestCase):
                 verdict, True, metric_type="ground_truth"),
                 f"junk defect_traces {junk!r} must stay malformed")
 
+    def test_object_citation_traces_validate(self):
+        # v2 Citation-object citations (bd hermes-teams-4gm canonical shape,
+        # accepted by validate_citation / the evidence gate) must not crash
+        # _validate_dod_artifact — the pre-fix ``(dict or "").strip()`` raised
+        # AttributeError and killed the driver mid-decide.
+        verdict = {"dod_met": True, "recommendation": "advance",
+                   "behaviors": [{"behavior": "b1"}, {"behavior": "b2"}],
+                   "defect_traces": [
+                       {"behavior": "b1", "status": "traced",
+                        "fabricated": False,
+                        "citation": {"artifact_type": "commit_sha",
+                                     "locator": "git show --stat 65f1dae"}},
+                       {"behavior": "b2", "status": "traced",
+                        "fabricated": False,
+                        "citation": {"artifact_type": "file_line",
+                                     "locator": ".gitignore:4",
+                                     "quote": ".pi/"}},
+                   ], "gaps": []}
+        self.assertTrue(le_tools._validate_dod_artifact(
+            verdict, True, metric_type="ground_truth"))
+
+    def test_object_citation_bad_shape_fails_not_crashes(self):
+        # A dict citation that FAILS validate_citation (unknown artifact_type)
+        # counts as invalid — returns False, never raises.
+        verdict = {"dod_met": True, "recommendation": "advance",
+                   "behaviors": [{"behavior": "b1"}],
+                   "defect_traces": [
+                       {"behavior": "b1", "status": "traced",
+                        "fabricated": False,
+                        "citation": {"artifact_type": "not_a_type",
+                                     "locator": "x"}},
+                   ], "gaps": []}
+        self.assertFalse(le_tools._validate_dod_artifact(
+            verdict, True, metric_type="ground_truth"))
+
+    def test_string_citation_traces_still_validate(self):
+        # v1 string citations keep working (zero-regression tier).
+        verdict = {"dod_met": True, "recommendation": "advance",
+                   "behaviors": [{"behavior": "b1"}],
+                   "defect_traces": [
+                       {"behavior": "b1", "status": "traced",
+                        "fabricated": False,
+                        "citation": "git show --stat 65f1dae: only 2 files"},
+                   ], "gaps": []}
+        self.assertTrue(le_tools._validate_dod_artifact(
+            verdict, True, metric_type="ground_truth"))
+
     def test_ground_truth_rejects_fabricated_trace(self):
         # Universal integrity: ground_truth does NOT skip the fabrication guard.
         seeded = _loop_state_comment_verifier(

@@ -1031,6 +1031,26 @@ def _extract_verdict(run):
     return None
 
 
+def _citation_nonempty(citation) -> bool:
+    """True when a defect-trace citation is non-empty, supporting BOTH the v1
+    string form and the v2 Citation object form (bd hermes-teams-4gm).
+
+    v1: ``"git show --stat 65f1dae ..."`` — a bare string locator.
+    v2: ``{"artifact_type": "commit_sha", "locator": "...", "quote": ...}`` —
+    the canonical structure validated by :func:`validate_citation` (which the
+    evidence gate already accepts). A verdict carrying object citations is the
+    RECOMMENDED shape; crashing on it (the pre-fix ``(dict or "").strip()`)
+    took the whole driver down with an AttributeError. This helper accepts
+    either form; anything else (None, empty, wrong scalar types, an object
+    failing :func:`validate_citation`) counts as an empty/invalid citation.
+    """
+    if isinstance(citation, str):
+        return bool(citation.strip())
+    if isinstance(citation, dict):
+        return validate_citation(citation) is None
+    return False
+
+
 def _validate_dod_artifact(verdict, artifact_required=False, metric_type=None):
     """Mechanically validate the DoD artifact shape before trusting ``dod_met``.
 
@@ -1112,7 +1132,7 @@ def _validate_dod_artifact(verdict, artifact_required=False, metric_type=None):
     for tr in traces:
         if not isinstance(tr, dict):
             return False
-        if not (tr.get("citation") or "").strip():
+        if not _citation_nonempty(tr.get("citation")):
             return False
         if tr.get("fabricated"):
             return False

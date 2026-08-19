@@ -200,13 +200,34 @@ loop_engine(
 
    ```python
    import importlib, os
+   os.environ["HERMES_KANBAN_BOARD"] = "<board-slug>"   # CRITICAL — the sandbox does NOT inherit it
    os.environ["HERMES_KANBAN_TASK"] = "<driver-card-id>"   # belt-and-braces
-   os.environ["HERMES_KANBAN_BOARD"] = "<board-slug>"
+   os.environ["HERMES_KANBAN_DB"] = "<path/to/boards/<board-slug>/kanban.db>"
    PLUGINS = "/home/<user>/.hermes-teams/startup/plugins"
    import sys; sys.path.insert(0, PLUGINS)
+   sys.path.insert(0, "/home/<user>/.hermes/hermes-agent")   # hermes_cli lives here
    le = importlib.import_module("loop_engine.tools")
    result = le.loop_engine(args_dict, task_id="<driver-card-id>", _profile="debugger")
    ```
+
+   Two MORE observed gotchas (2026-08-19, grp-lt1 board):
+   - **The sandbox drops board context.** Without `os.environ["HERMES_KANBAN_BOARD"]` set INSIDE the
+     script (before importing `kanban_db`), the plugin resolves the DEFAULT board and MINTS A STRAY
+     ROOT CARD in the wrong DB mid-call (create_task succeeds, then add_comment fails with
+     `unknown task`). Cleanup: find `title LIKE 'Loop: <goal-prefix>%'` in
+     `~/.hermes-teams/startup/boards/team/kanban.db` (or default board) and delete the task +
+     event rows (check links/runs/comments are empty first).
+   - **`_validate` requires `phases` OR `execution` on EVERY call — including re-invocations.**
+     The stored `loop_state.phases` takes precedence for routing (`_resolve_phase_specs`), so echo
+     the stored phases back: read the latest `loop_state` blackboard comment from the board DB
+     (`task_comments` table, body LIKE '%[swarm:blackboard]%', parse JSON, take `value.phases`)
+     and pass them as `args["phases"]` — byte-exact, no retyping.
+   - **Phase-body verdict templates can teach the WRONG Claim shape.** The engine's evidence gate
+     (tools.py:887) requires `{"text": ..., "citations": [...]}` per Claim; card bodies that
+     template `{"claim": ...}` produce substantively-green verdicts that trip the gate and burn
+     iterations. Phase bodies are MUTABLE between calls (only `goal` is frozen): patch the stored
+     `loop_state.phases[*].{execution,verifier}.body` via `_write_blackboard` so future minted
+     cards teach `{"text": ...}`, and comment-steer already-minted cards with the exact shape.
 
    This bypasses the schema-stripping tool layer while honoring the exact same
    contract. (Root cause: `model_tools.py` passes `task_id=<process-env-captured>`
