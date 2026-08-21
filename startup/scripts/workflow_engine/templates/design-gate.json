@@ -1,0 +1,89 @@
+{
+  "id": "design-gate",
+  "name": "Design Gate — UI spec, tokens, mockups, adversarial review",
+  "description": "Fires when a [design] card completes. The designer runs a loop_engine converge cycle producing the four design artifacts (component-system choice, UI spec + wireframes, design tokens, HTML mockups), each revision verified by an adversarial design review (state coverage, a11y, consistency, spec traceability). PASS closes the [design-done] gate, which holds every UI ticket of the project.",
+  "trigger": {
+    "source": "card_completed",
+    "condition": {
+      "assignee": "designer",
+      "status": "done",
+      "title_prefix_any": [
+        "[design]"
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "id": "design-cycle",
+      "profile": "designer",
+      "skill": "ui-design",
+      "body_template": "## Design cycle — produce and prove the four design artifacts\n\n**Project:** ${trigger.title}\n**Design card:** ${trigger.card_body}\n\nThe [design] card body contains a line `DESIGN GATE: <card-id>` — that gate holds every UI ticket of this project until it closes. It also names the repo path and the stamped spec file.\n\nYou are the designer. Load your `ui-design` skill. Run the design work as a loop_engine converge cycle — the same discipline decompose uses.\n\n### Call loop_engine with\n\n- `goal`: \"Prove the design for: ${trigger.title}\"\n- `runner`: \"designer\"\n- `max_iterations`: 3\n- `execution`: {\n    title: \"[design-exec] Produce design artifacts\",\n    body: \"Load the ui-design skill. Work in the project repo (path from the design card body). Produce ALL FOUR layers, in order — each constrains the next:\\n1. COMPONENT SYSTEM — read ~/.hermes-teams/startup/tech-preferences.json (tailwind + the matching ui-library for the architect's tech stack). Record the choice + why in docs/ui-spec.md.\\n2. UI SPEC + WIREFRAMES — docs/ui-spec.md: every screen with ASCII/mermaid wireframes; for EVERY screen: empty state, error state, loading state (if async); user flows between screens; every user story in the spec maps to at least one screen (traceability table).\\n3. DESIGN TOKENS — design-tokens.json at repo root: colors, spacing scale, type scale, radii — mostly INHERITED from the chosen system, customized only where the spec demands (e.g. brand color).\\n4. HTML MOCKUPS — docs/mockups/<screen>.html per screen: static HTML using inline styles derived STRICTLY from design-tokens.json (the real components come at build time; mockups approximate with tokens so they render offline). Verify each renders: playwright screenshot each mockup to docs/mockups/<screen>.png.\",\n    assignee: \"designer\",\n    skill: \"ui-design\"\n  }\n- `verifier`: {\n    title: \"[design-review] Adversarial design review\",\n    body: \"You are adversarially reviewing design artifacts in the project repo. Read docs/ui-spec.md, design-tokens.json, docs/mockups/*.html and the original stamped spec. Fan out via kanban_chains one reviewer card per probe, then synthesize:\\n1. STATE COVERAGE — every screen has empty/error/loading states designed. Missing state = finding.\\n2. A11Y — contrast basics (WCAG AA text), focus order described, text alternatives for any imagery, semantic headings.\\n3. CONSISTENCY — mockup inline styles actually derive from design-tokens.json values (drift = finding); tokens actually inherit from the chosen component system.\\n4. SPEC TRACEABILITY — every user story ↔ screen mapping exists BOTH ways; orphan screens = scope creep finding.\\nAlso screenshot each mockup with playwright and confirm it renders without errors (blank page = Critical).\\nComplete with metadata dod_verdict: {dod_met: true|false, recommendation: \\\"advance\\\"|\\\"replan\\\", gaps: [specific gaps]}\",\n    assignee: \"verifier\",\n    metric_type: \"ground_truth\"\n  }\n\n### On every promotion\n\nRe-call loop_engine with the SAME parameters. Do not read verdicts yourself. On advance: complete this card with metadata {designed: true, system: \"<chosen>\", ui_spec: \"<path>\", tokens: \"<path>\", mockups: N, gate: \"<DESIGN GATE id>\", converged: true, iterations: N}.\n\nDo NOT complete the DESIGN GATE card yourself — the next node owns that.",
+      "title_template": "[design-cycle] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "designed",
+            "gate"
+          ],
+          "properties": {
+            "designed": {
+              "type": "boolean"
+            },
+            "system": {
+              "type": "string"
+            },
+            "ui_spec": {
+              "type": "string"
+            },
+            "tokens": {
+              "type": "string"
+            },
+            "mockups": {
+              "type": "integer"
+            },
+            "gate": {
+              "type": "string"
+            },
+            "converged": {
+              "type": "boolean"
+            },
+            "iterations": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "design-close",
+      "profile": "tech-lead",
+      "skill": "",
+      "body_template": "## Close the design gate\n\n**Project:** ${trigger.title}\n**Design gate:** ${nodes.design-cycle.output.gate}\n\nThe design cycle converged (adversarial review PASSED). The design card body contains a line `DESIGN GATE: <card-id>`.\n\nRun the CLI form (NOT the kanban_complete tool — the gate card belongs to the workflow-gate control lane; the CLI is the orchestrator path):\n\n```\nhermes kanban --board ${trigger.board} complete <gate-id> --result \"design approved: ${nodes.design-cycle.output.system}, ${nodes.design-cycle.output.mockups} mockups verified\"\n```\n\nIf the CLI reports the gate already done, treat as success. Closing the gate releases every UI ticket held by the design barrier.\n\n**Completion metadata:**\n```\n{gate_closed: true|false, gate_id: \"<id>\"}\n```",
+      "title_template": "[design-close] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "gate_closed"
+          ],
+          "properties": {
+            "gate_closed": {
+              "type": "boolean"
+            },
+            "gate_id": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "design-cycle",
+      "to": "design-close",
+      "condition": "${nodes.design-cycle.output.designed} == true"
+    }
+  ]
+}
