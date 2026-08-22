@@ -248,3 +248,50 @@ def test_templates_pin_milestone_barrier():
     bug_edges = [e for e in mg["edges"] if e["to"] == "gate-close" and e["from"] == "route-bug"]
     assert not bug_edges, \
         "FAIL path must NOT close the gate — QA failure holds the next milestone (by design)"
+
+
+def test_templates_pin_design_gate():
+    """UX design barrier contracts: architect classifies UI, route-design wires
+    the [design-done] barrier and parks, decompose parents UI triggers on it,
+    design-gate closes it via CLI only, milestone-gate checks the built UI."""
+    dd = _template("dev-dispatch")
+    dg = _template("design-gate")
+    mg = _template("milestone-gate")
+
+    # architect must classify the artifact (drives design routing)
+    arch = next(n for n in dd["nodes"] if n["id"] == "route-architect")
+    at = arch["output"]["schema"]["properties"].get("artifact_type", {})
+    assert at.get("enum") and "webapp" in at["enum"] and "tui" in at["enum"], \
+        "architect must emit artifact_type incl. UI-bearing kinds"
+
+    # route-design: creates the design gate, parks on it, all-conditional merge at setup
+    rd = next(n for n in dd["nodes"] if n["id"] == "route-design")
+    rd_body = rd["body_template"]
+    assert "[design-done]" in rd_body and "workflow-gate" in rd_body, \
+        "route-design must create the design gate on the control lane"
+    assert "DESIGN GATE:" in rd_body, "design trigger card must embed the gate id"
+    assert "--kind dependency" in rd_body, "route-design must dependency-park on the gate"
+    setup_in = [e for e in dd["edges"] if e["to"] == "route-setup"]
+    assert setup_in and all(e.get("condition") for e in setup_in), \
+        "route-setup merge edges must ALL be conditional (UI + non-UI routes)"
+
+    # decompose parents UI triggers on the design gate
+    dec = next(n for n in dd["nodes"] if n["id"] == "route-decompose")["body_template"]
+    assert "${nodes.route-design.output.design_gate}" in dec, \
+        "UI ticket triggers must parent on the design gate"
+
+    # design-gate: converge cycle + CLI-only close
+    assert [n["id"] for n in dg["nodes"]] == ["design-cycle", "design-close"]
+    dc = next(n for n in dg["nodes"] if n["id"] == "design-close")["body_template"]
+    assert "DESIGN GATE:" in dc and "hermes kanban --board" in dc, \
+        "design-close must parse the gate id and complete it via the CLI"
+    assert "NOT the kanban_complete tool" in dc, "control-lane ownership rule"
+
+    # milestone-gate: design-visual sits between QA PASS and refactor
+    dv = next(n for n in mg["nodes"] if n["id"] == "design-visual")["body_template"]
+    assert "docs/ui-spec.md" in dv and "n/a" in dv, \
+        "design-visual must skip cleanly for non-UI projects"
+    dv_in = [e for e in mg["edges"] if e["to"] == "design-visual"]
+    assert all(e.get("condition") for e in dv_in), "all-conditional merge at design-visual"
+    assert any(e["from"] == "design-visual" and e["to"] == "refactor-scan" for e in mg["edges"]), \
+        "QA-PASS path must flow through design conformance"

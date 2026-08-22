@@ -387,6 +387,41 @@
       }
     },
     {
+      "id": "design-visual",
+      "profile": "designer",
+      "skill": "ui-design",
+      "body_template": "## Design conformance — built app vs approved design\n\n**Milestone:** ${trigger.title}\n\nLoad your `ui-design` skill.\n\n### Skip condition\n\nIf the repo has NO `docs/ui-spec.md`, this is not a UI project — complete immediately with `verdict: \"n/a\"` and move on.\n\n### Check the built artifact against the design\n\n1. Read `docs/ui-spec.md` (screen list + states) and `docs/mockups/`.\n2. Run the built app the way qa-build did (its card on this board records how). If it cannot run, complete with `verdict: \"n/a\"` and a note — do not fake a review.\n3. For EVERY screen in ui-spec: playwright-screenshot the built screen, then check STRUCTURALLY (pixel diff is flaky — do not use it):\n   - the screen exists and shows its spec'd purpose (headings, primary action)\n   - the spec'd empty/error/loading states are reachable (at minimum the error state)\n   - colors used derive from `design-tokens.json` (drift = finding)\n4. File findings as kanban cards exactly like QA findings (Critical → the milestone must not pass; others → follow-ups).\n\n**Completion metadata:**\n```\n{verdict: \"PASS\"|\"FAIL\"|\"n/a\", screens_checked: N, findings_filed: <count>, notes: \"<one-line>\"}\n```",
+      "title_template": "[design-visual] ${trigger.title}",
+      "output": {
+        "schema": {
+          "type": "object",
+          "required": [
+            "verdict",
+            "screens_checked"
+          ],
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "PASS",
+                "FAIL",
+                "n/a"
+              ]
+            },
+            "screens_checked": {
+              "type": "integer"
+            },
+            "findings_filed": {
+              "type": "integer"
+            },
+            "notes": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
       "id": "refactor-scan",
       "profile": "tech-lead",
       "skill": "codebase-design",
@@ -642,16 +677,6 @@
     },
     {
       "from": "qa-quick",
-      "to": "refactor-scan",
-      "condition": "${nodes.qa-quick.output.verdict} == 'PASS'"
-    },
-    {
-      "from": "qa-verdict",
-      "to": "refactor-scan",
-      "condition": "${nodes.qa-verdict.output.verdict} == 'PASS'"
-    },
-    {
-      "from": "qa-quick",
       "to": "route-bug",
       "condition": "${nodes.qa-quick.output.verdict} == 'FAIL'"
     },
@@ -678,6 +703,21 @@
       "from": "refactor-review",
       "to": "gate-close",
       "condition": "${nodes.refactor-review.output.verdict} == 'stop'"
+    },
+    {
+      "from": "qa-quick",
+      "to": "design-visual",
+      "condition": "${nodes.qa-quick.output.verdict} == 'PASS'"
+    },
+    {
+      "from": "qa-verdict",
+      "to": "design-visual",
+      "condition": "${nodes.qa-verdict.output.verdict} == 'PASS'"
+    },
+    {
+      "from": "design-visual",
+      "to": "refactor-scan",
+      "condition": "${nodes.design-visual.output.verdict} != 'FAIL'"
     }
   ]
 }
