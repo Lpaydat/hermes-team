@@ -68,3 +68,6 @@ plugins:
   entries:
     kanban_chains:
       allow_tool_override: false
+onboarding:
+  seen:
+    tool_progress_prompt: true

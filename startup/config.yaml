@@ -221,11 +221,14 @@ plugins:
   enabled:
     - kanban_chains
     - loop_engine
+    - bd_tools
   disabled: []
   entries:
     loop_engine:
       allow_tool_override: false
     kanban_chains:
+      allow_tool_override: false
+    bd_tools:
       allow_tool_override: false
 
 # ── Security ──────────────────────────────────────────────────────────

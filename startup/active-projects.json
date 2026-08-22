@@ -1,9 +1,3 @@
 {
-  "active_projects": [
-    {
-      "board": "grp-lt1",
-      "path": "/home/lpaydat/workspace/grp-lt1",
-      "t2_approval": "auto"
-    }
-  ]
+  "active_projects": []
 }
